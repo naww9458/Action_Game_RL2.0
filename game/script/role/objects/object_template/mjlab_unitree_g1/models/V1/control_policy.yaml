@@ -1,0 +1,52 @@
+# G1 control policy V1 — weights live in this directory; external configs only reference "V1".
+id: V1
+description: "Mjlab velocity locomotion flat terrain (99-dim obs, 29-dim joint action, 3-dim commands)."
+control_task: velocity_locomotion
+
+policy:
+  module: policy_PPO_g1_velocity
+  default_checkpoint: model_1250.pt
+
+observation:
+  provider: g1_velocity_locomotion
+  obs_dim: 99
+
+action:
+  low_level_dim: 29
+  control_mode: 3
+
+commands:
+  dim: 3
+  labels:
+    - "vx (m/s)"
+    - "vy (m/s)"
+    - "wz (rad/s)"
+  ranges:
+    - [-1.0, 1.0]
+    - [-1.0, 1.0]
+    - [-1.0, 1.0]
+  human_control:
+    keyboard:
+      command_0_positive: [w]
+      command_0_negative: [s]
+      command_1_positive: [a]
+      command_1_negative: [d]
+      command_2_positive: [q]
+      command_2_negative: [e]
+    mouse: {}
+
+# Direct articulation-body human control (non-RL-assisted path).
+articulation_ability:
+  control_mode: 3
+  gait_torque: 50.0
+  force: 150.0
+  human_control:
+    bindings:
+      - local_x
+      - local_y
+    keyboard:
+      local_x_positive: [w]
+      local_x_negative: [s]
+      local_y_positive: [a]
+      local_y_negative: [d]
+    mouse: {}

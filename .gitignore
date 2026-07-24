@@ -1,0 +1,11 @@
+__pycache__
+/newton/
+compare*
+game_history/
+runs/
+fps_testing/
+assets/
+.cursor/
+
+.venv/
+.idea/

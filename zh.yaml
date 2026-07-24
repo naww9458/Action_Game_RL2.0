@@ -1,0 +1,102 @@
+abilities_select: '配置能力列表 (Abilities):'
+ability_generated_object_cfg: ⚡ 能力生成物件配置
+add_ability_generated_object: + 能力生成物件
+add_entity: + 實體
+add_new: 新增
+add_platform: + 平台
+add_player: + 玩家
+attr_edit: 屬性修改區域
+back_main: 返回主菜單
+browse: 📁 瀏覽
+calc_level_path: '關卡讀取路徑 (自動):'
+calc_reward_path: '獎勵函數路徑 (自動):'
+calc_shape_path: '形狀讀取路徑 (自動):'
+cancel: 取消
+cancel_no_save: 放棄保存並返回
+capture_per_second: '每秒截圖 (capture_per_second):'
+checkpoint_select: 檢查點
+config_dir: '設置文件儲存目錄:'
+confirm: 確定
+controller: '控制者:'
+delete_obj: 刪除選中
+edit: 編輯
+edit_mode: 編輯模式
+entity_cfg: 📦 實體物件配置
+env_cfg: 🌍 環境全局配置
+eval_already_running: 已有評估進程在運行，請先停止。
+eval_apg: APG 評估
+eval_apg_hint: 已選 APG 實驗，將使用 Differentiable 物理步進。
+eval_episodes: '評估回合數:'
+eval_headless: 無視窗評估 (headless)
+eval_model: 評估模型
+eval_num_envs: '評估環境數 (num_envs):'
+eval_ppo_hint: 已選 PPO 實驗，將使用 CUDA Graph 物理步進。
+eval_started: 評估已在子進程啟動
+eval_stopped: 評估已終止
+exp_hub_title: 實驗中心
+font_size: '全局字體大小 (px):'
+headless_train: 無視窗訓練 (headless)
+is_lock_fps: '鎖定幀率 (is_lock_fps):'
+language_select: '語言選擇:'
+launch_tb: 啟動 TensorBoard
+level_list: 關卡列表
+level_path: '關卡路徑:'
+max_episode_step: '最大步數 (max_episode_step):'
+model_obs_type: '觀察類型 (model_obs_type):'
+new_level_series: 新增關卡系列
+new_sub_level: 新增子關卡
+none_tip: 輸入 None 表示禁用
+num_env: '環境數量 (num_env):'
+num_envs: '環境數量 (num_envs):'
+obj_key: 物件 ID (唯一鍵)
+obj_list: 物件列表
+obj_name: 物件顯示名稱
+obs_height: '觀察高度 (obs_height):'
+obs_width: '觀察寬度 (obs_width):'
+open_folder: 打開目錄
+open_tb_browser: 在瀏覽器打開
+placeholder_path: 請選擇 levels 文件夾...
+platform_cfg: 🧱 平台物件配置
+player_cfg: 👤 玩家物件配置
+player_ids: '玩家 ID 列表 (player_ids):'
+preset_editor: 預設配置編輯
+preset_list: 預設列表
+project_path: '項目根目錄:'
+refresh: 刷新
+reload_preset: 重新載入
+render_mode: '渲染模式 (render_mode):'
+requires_grad: '需要梯度 (requires_grad):'
+resume_checkpoint: '恢復檢查點路徑 (可選):'
+run_list: 實驗列表
+save_back: 保存並返回
+save_preset: 保存預設
+save_success: 保存成功
+select_series_desc: 請選擇要在哪個系列下新增子關卡：
+select_series_title: 選擇關卡系列
+start_test: 🚀 開始測試
+start_train: 開始訓練
+stop_eval: 停止評估
+stop_tb: 關閉 TensorBoard
+stop_train: 終止並清理訓練
+sub_item: 子關卡
+sys_settings: 系統設置
+tab_launch: 啟動訓練
+tab_preset: 訓練預設
+tab_runs: 實驗與檢查點
+tb_started: TensorBoard 已啟動
+tb_stopped: TensorBoard 已關閉
+tb_switching: 正在切換 TensorBoard
+test: 測試
+test_mode: 測試模式
+test_settings: 模擬測試參數配置
+tip_select_first: 請先選擇一個子關卡（例如：子關卡 0）才能進行此操作
+train: 訓練
+train_mode: 訓練模式
+train_started: 訓練已在子進程啟動
+train_stopped: 訓練已終止並清理
+view_3d: 3D 交互視圖區域
+window_envs: '視窗顯示環境數量 (window_envs):'
+window_envs_prompt: 請輸入在視窗內顯示多少個環境（1-{max_envs}）：
+window_envs_title: 視窗顯示環境數量
+window_title: 關卡管理器
+yaml_error: YAML 格式錯誤

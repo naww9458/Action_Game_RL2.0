@@ -1,0 +1,8 @@
+.cursor/
+.vscode/
+.gitignore
+.git/
+
+capture/
+runs/
+

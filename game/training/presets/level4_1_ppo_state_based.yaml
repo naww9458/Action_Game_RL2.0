@@ -1,0 +1,77 @@
+meta:
+  id: level4_1_ppo_state_based
+  display_name: "Level 4.1 射擊 PPO (diff rewards)"
+  level: 4
+  sub_level: 1
+  obs_type: state_based
+  algorithm: PPO
+  policy_module: skrl_script.policy_PPO2_state_based
+  trainer_module: skrl_script.trainer_PPO
+
+model:
+  state_obs_size: 42
+  obs_width: 0
+  obs_height: 0
+  stack_size: 1
+  ppo:
+    rollouts: 512
+    grad_norm_clip: 0.5
+    entropy_loss_scale: 0.05
+    value_loss_scale: 0.5
+    ratio_clip: 0.2
+    value_clip: 0.2
+    discount_factor: 0.99
+    lambda: 0.95
+    learning_epochs: 8
+    mini_batches: 2
+    random_timesteps: 0
+    learning_rate: 0.00008
+    kl_threshold: 0.01
+    checkpoint_interval: 10000
+    mixed_precision: false
+  preprocessors:
+    state:
+      type: null
+    value:
+      type: null
+
+train:
+  timesteps: 800000
+  write_interval: 100
+  enable_namespaces: true
+  max_episode_step: 3000
+  seed: 31415926
+  num_agents_each_env: 1
+  num_envs_default: 4096
+  reward_components:
+    - PlayerFaceToTargetReward1_diff
+    - BulletTrajectoryEvasionReward_diff
+    - ProximityPenaltyReward_diff
+  reward_components_diff: []
+  reward_parameters:
+    shoot_hit_reward: 5.0
+    shoot_being_hit_penalty: -2.0
+    shoot_total_approach_budget: 2.0
+    shoot_penalty: -0.5
+    max_reward_fov_degrees: 0.01
+    min_reward_fov_degrees: 80.0
+    max_dist: 30.0
+    focus_fov_degrees: 5.0
+    face_to_target_reward: 0.002
+    decrease_starting_step: 100000
+    max_reward_fov_degrees_final: 1.0
+    focus_fov_degrees_final: 5.0
+    decrease_fov_speed: 0.0
+    threat_radius: 1.5
+    evasion_penalty: 0.0
+    evasion_bonus: 0.1
+    robot_proximity_threshold: 10.0
+    robot_proximity_scale: 0.01
+    robot_proximity_alpha: 0.5
+    wall_proximity_threshold: 2.0
+    wall_proximity_scale: 0.01
+    wall_proximity_alpha: 3.0
+    episode_end_reward: 1000
+  player_ids:
+    - RL
+    - Bot

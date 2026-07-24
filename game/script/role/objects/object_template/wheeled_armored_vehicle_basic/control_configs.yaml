@@ -1,0 +1,77 @@
+# Wheeled armored vehicle (6-wheel, differential-drive ready).
+# Suspension / wheel-hinge springs use MuJoCo POSITION actuators (see vehicle_control_config.py).
+
+wheeled_armored_vehicle_basic:
+  differential_drive:
+    soft_limit_factor: 0.95
+
+    init_state:
+      root_pos: [0.0, 0.0, 0.0]
+      root_rot: [0.0, 0.0, 0.0, 1.0]
+
+    joint_pos:
+      # Overridden at load by signed target_angle_deg (L− / R+).
+      "VB_Susp_.*_RevoluteJoint": 0.0
+      "D6Joint": 0.0
+
+    non_rl_patterns: ["VB_Susp_.*_RevoluteJoint"]
+
+    drive:
+      max_linear_speed_m_s: 14.0
+      max_yaw_rate_rad_s: 1.8
+      wheel_radius_m: 0.35
+      track_width_m: 2.2
+      # Same local ω sign on L/R → same ground direction for this USD (axes are not mirrored).
+      # Using opposite signs swaps throttle/steer behavior (W turns, D drives).
+      left_spin_sign: 1.0
+      right_spin_sign: 1.0
+
+    # Wheel spin: Newton/MuJoCo VELOCITY actuator uses joint_target_kd as kv (ke must be 0).
+    wheel_spin:
+      velocity_gain: 800.0
+      armature: 0.01
+      max_torque_nm: 90000.0
+
+    human_control:
+      keyboard:
+        throttle_positive: [w, up]
+        throttle_negative: [s, down]
+        steer_positive: [d, right]
+        steer_negative: [a, left]
+      mouse: {}
+
+    body_masses:
+      chassis_mass_kg: 14000.0
+      suspension_mass_kg: 200.0
+      wheel_mass_kg: 300.0
+
+    # Swing arm vs chassis (diagram left). target_angle_deg is the hard pose.
+    # stiffness_scale ≈ how tightly gravity may pull past that pose (residual ≈ target/scale).
+    suspension:
+      num_corners: 6
+      lever_arm_m: 0.65
+      target_angle_deg: 3.0
+      include_wheel_load: false
+      stiffness_scale: 5.0
+      damping_ratio: 0.55
+      effective_inertia_kgm2: 540.0
+      armature: 0.05
+      servo_max_torque_nm: 50000.0
+
+    # Wheel vs swing arm (diagram right). Combined with arm target, wheel stays ~level.
+    wheel_hinge:
+      lever_arm_m: 0.6
+      target_angle_deg: 1.0
+      stiffness_multiplier: 5.0
+      damping_ratio: 0.65
+      effective_inertia_kgm2: 80.0
+      armature: 0.02
+      servo_max_torque_nm: 5000.0
+
+    wheel_materials:
+      friction: 0.4
+      torsional_friction: 0.001
+      rolling_friction: 0.0005
+      friction_stiffness: 500.0
+
+    possess_offset: [0.0, 0.0, 1.5]

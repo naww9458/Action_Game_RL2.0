@@ -1,0 +1,96 @@
+# ==========================================
+# 角色能力與動作配置 (Abilities Configs)
+# ==========================================
+
+# 俯視角移動 (Top-down Movement)
+Move_topdown_viewing_angle:
+  force: 80000.0
+  speed: 8.0
+  cooldown: 0.0
+  key:
+    keyboard:
+      front: [w, up]
+      left: [a, left]
+      back: [s, down]
+      right: [d, right]
+    mouse: {}
+  action_space:
+    type: "box"
+    dtype: "float32"
+    shape: 2
+    range: [-1.0, 1.0]
+    description: "Multiply the output by Force for moving"
+
+# 跳躍 (Jump)
+Jump:
+  force: 3000.0
+  speed: 0.0
+  cooldown: 1.0
+  key:
+    keyboard:
+      action: [space]
+    mouse: {}
+  action_space:
+    type: "discrete"
+    dtype: "int64"
+    shape: 1
+    n: 2
+
+# 俯視角轉向 (Top-down Rotation)
+Turning_topdown_viewing_angle:
+  force: 0.0
+  speed: 10.0
+  cooldown: 0.0
+  key:
+    keyboard: {}
+    mouse: {}
+  action_space:
+    type: "box"
+    dtype: "float32"
+    shape: 2
+    range: [-1.0, 1.0]
+    description: "Multiply the output by 180 degrees for rotation"
+
+# 射擊 (Shoot)
+Shoot:
+  force: 0.0
+  speed: 100.0
+  cooldown: 1.0
+  key:
+    keyboard: {}
+    mouse:
+      action: [left]
+  action_space:
+    type: "box"
+    dtype: "float32"
+    shape: 1
+    range: [-1.0, 1.0]
+
+Articulation_body_control:
+  force: 0.0
+  speed: 0.0
+  cooldown: 0.0
+  key:
+    keyboard: {}
+    mouse: {}
+  action_space:
+    type: "box"
+    dtype: "float32"
+    shape: "auto"
+    range: [-1.0, 1.0]
+    description: "Low-level joint targets resolved at runtime via mjlab_components.act."
+
+Articulation_body_control_rl_assisted:
+  force: 0.0
+  speed: 0.0
+  cooldown: 0.0
+  key:
+    keyboard: {}
+    mouse: {}
+  action_space:
+    type: "box"
+    dtype: "float32"
+    shape: "auto"
+    range: [-1.0, 1.0]
+    description: "Policy command vector resolved at runtime from policy bundle; low-level actions use mjlab_components.act."
+

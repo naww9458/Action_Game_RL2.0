@@ -1,0 +1,311 @@
+environment_configs:
+  space_xyz:
+  - 20
+  - 20
+  - 20
+  interval_distance: 5.0
+  gravity:
+  - 0
+  - 0
+  - -9.8
+  damping:
+  - 0.1
+  - 0.1
+  fps_action: 60
+  sub_steps: 5
+  ground_shape_friction: 0.5
+  solver_config:
+    type: vbd
+    iterations: 10
+    friction_epsilon: 0.01
+    integrate_with_external_rigid_solver: false
+    particle_enable_self_contact: false
+    particle_self_contact_radius: 0.2
+    particle_self_contact_margin: 0.2
+    particle_conservative_bound_relaxation: 0.85
+    particle_vertex_contact_buffer_size: 32
+    particle_edge_contact_buffer_size: 64
+    particle_collision_detection_interval: 0
+    particle_edge_parallel_epsilon: 1.0e-05
+    particle_enable_tile_solve: true
+    particle_topological_contact_filter_threshold: 2
+    particle_rest_shape_contact_exclusion_radius: 0
+    particle_external_vertex_contact_filtering_map: null
+    particle_external_edge_contact_filtering_map: null
+    rigid_avbd_alpha: 0.95
+    rigid_avbd_joint_alpha: null
+    rigid_avbd_contact_alpha: 0.0
+    rigid_avbd_beta: 0
+    rigid_avbd_linear_beta: null
+    rigid_avbd_angular_beta: null
+    rigid_avbd_gamma: 0.999
+    rigid_contact_hard: true
+    rigid_contact_history: false
+    rigid_contact_stick_motion_eps: 0.0001
+    rigid_contact_stick_freeze_translation_eps: 0.0001
+    rigid_contact_stick_freeze_angular_eps: 0.0001
+    rigid_contact_k_start: 100
+    rigid_body_contact_buffer_size: 64
+    rigid_body_particle_contact_buffer_size: 25600
+    rigid_joint_linear_ke: 100000
+    rigid_joint_angular_ke: 100000
+    rigid_joint_linear_k_start: 100
+    rigid_joint_angular_k_start: 10
+    rigid_joint_linear_kd: 0
+    rigid_joint_angular_kd: 0
+    rigid_enable_dahl_friction: null
+platform_configs: []
+player_configs:
+- name: Player_1
+  team_id: 1
+  color:
+  - 200
+  - 200
+  - 200
+  health: 5.0
+  default_position:
+  - -2.0
+  - 0.0
+  - 0.7
+  default_rotation:
+  - 0.0
+  - 0.0
+  abilities:
+  - Jump
+  - Move_topdown_viewing_angle
+  - Turning_topdown_viewing_angle
+  type: player
+  default_velocity:
+  - 0.0
+  - 0.0
+  - 0.0
+  default_angular_velocity:
+  - 0.0
+  - 0.0
+  - 0.0
+  object:
+    type: rigid_sphere
+    object_friction: 0.0
+    object_elasticity: 0.5
+    radius: 0.5
+    object_mass: 0.0
+    lock_inertia: false
+    is_kinematic: false
+    pattern: default
+    as_site: false
+  controller: Human
+entity_configs:
+  new_entity_0:
+    type: entity
+    name: Avatar
+    color:
+    - 200
+    - 200
+    - 200
+    default_position:
+    - 0.0
+    - 0.0
+    - 0.0
+    default_rotation:
+    - 0.0
+    - 0.0
+    default_velocity:
+    - 0.0
+    - 0.0
+    - 0.0
+    default_angular_velocity:
+    - 0.0
+    - 0.0
+    - 0.0
+    abilities: []
+    object:
+      pattern: avatars_female
+      type: rigid_usd
+      object_friction: 0.5
+      object_elasticity: 0.5
+      object_mass: 0.0
+      lock_inertia: false
+      is_kinematic: true
+      file_name: avatars/Female.usd
+      file_path_or_source: Nvidia
+      mesh_path: /Root/Female/Root_SkinnedMesh_Avatar_0_Sub_2
+      scale: null
+      color: null
+      label: null
+    separation:
+    - 1
+    - 1
+    - 1
+  new_entity_1:
+    type: entity
+    name: Cloth
+    color:
+    - 200
+    - 200
+    - 200
+    default_position:
+    - 0.0
+    - 0.0
+    - 0.0
+    default_rotation:
+    - 0.0
+    - 0.0
+    default_velocity:
+    - 0.0
+    - 0.0
+    - 0.0
+    default_angular_velocity:
+    - 0.0
+    - 0.0
+    - 0.0
+    abilities: []
+    object:
+      pattern: women_sweatshirt
+      type: soft_usd_cloth
+      object_friction: 0.5
+      object_elasticity: 0.5
+      file_name: garments/Women_Sweatshirt.usd
+      file_path_or_source: Nvidia
+      mesh_path: /Root/Women_Sweatshirt/Root_Garment
+      scale: 1.0
+      density: 0.02
+      tri_ke: 10000.0
+      tri_ka: 10000.0
+      tri_kd: -100.0
+      tri_drag: null
+      tri_lift: null
+      edge_ke: 5
+      edge_kd: 0.01
+      add_springs: false
+      spring_ke: null
+      spring_kd: null
+      particle_radius: 0.005
+      custom_attributes_particles: null
+      custom_attributes_edges: null
+      custom_attributes_triangles: null
+      custom_attributes_springs: null
+    separation:
+    - 1
+    - 1
+    - 1
+  new_entity_2:
+    type: entity
+    name: HollowSphere
+    color:
+    - 200
+    - 200
+    - 200
+    default_position:
+    - 2.0
+    - 0.0
+    - 2.0
+    default_rotation:
+    - 0.0
+    - 0.0
+    default_velocity:
+    - 0.0
+    - 0.0
+    - 0.0
+    default_angular_velocity:
+    - 0.0
+    - 0.0
+    - 0.0
+    abilities: []
+    object:
+      pattern: hollow_sphere2_soft
+      type: soft_usd_general
+      object_friction: 0.5
+      object_elasticity: 0.5
+      file_name: hollow_sphere2_TetMesh.usdc
+      file_path_or_source: ./Action_Game_RL_Assets/assets/
+      mesh_path: /root/sphere/TetMesh
+      scale: 1.0
+      density: null
+      k_mu: null
+      k_lambda: null
+      k_damp: null
+      tri_ke: 0
+      tri_ka: 0
+      tri_kd: 0
+      tri_drag: 0
+      tri_lift: 0
+      add_surface_mesh_edges: true
+      edge_ke: 0
+      edge_kd: 0
+      particle_radius: 0.15
+    separation:
+    - 1
+    - 1
+    - 1
+  new_entity_3:
+    type: entity
+    name: RigidShpere1
+    color:
+    - 200
+    - 200
+    - 200
+    default_position:
+    - 1.9
+    - 0.0
+    - 2.0
+    default_rotation:
+    - 0.0
+    - 0.0
+    default_velocity:
+    - 0.0
+    - 0.0
+    - 0.0
+    default_angular_velocity:
+    - 0.0
+    - 0.0
+    - 0.0
+    abilities: []
+    object:
+      pattern: default_sphere
+      type: rigid_sphere
+      object_friction: 0.5
+      object_elasticity: 0.5
+      radius: 0.2
+      object_mass: 0.0
+      lock_inertia: false
+      is_kinematic: false
+    separation:
+    - 1
+    - 1
+    - 1
+  new_entity_4:
+    type: entity
+    name: RigidShpere2
+    color:
+    - 200
+    - 200
+    - 200
+    default_position:
+    - 2.1
+    - 0.0
+    - 2.0
+    default_rotation:
+    - 0.0
+    - 0.0
+    default_velocity:
+    - 0.0
+    - 0.0
+    - 0.0
+    default_angular_velocity:
+    - 0.0
+    - 0.0
+    - 0.0
+    abilities: []
+    object:
+      pattern: default_sphere
+      type: rigid_sphere
+      object_friction: 0.5
+      object_elasticity: 0.5
+      radius: 0.2
+      object_mass: 0.0
+      lock_inertia: false
+      is_kinematic: false
+    separation:
+    - 1
+    - 1
+    - 1

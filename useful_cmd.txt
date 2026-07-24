@@ -1,0 +1,36 @@
+python.exe -m pyinstrument --html [project_root_dir]/game/test_game_without_render.py > report.html
+python.exe -m pyinstrument [project_root_dir]/game/test_game_without_render.py
+
+tensorboard --logdir runs/26-06-15_04-25-34-576219_PPO
+tensorboard --logdir fps_testing/Action_Game_RL_FPS_testing
+
+[project_root_dir]/.venv/Scripts/python.exe -m pyinstrument [project_root_dir]/game/test_env.py
+[project_root_dir]/.venv/Scripts/python.exe -m pyinstrument [project_root_dir]/game/test_game_only_ViewerGL.py
+[project_root_dir]/.venv/Scripts/python.exe -m pyinstrument [project_root_dir]/game/test_game_without_render.py
+
+
+nsys profile -t cuda,nvtx,osrt [project_root_dir]/.venv/Scripts/python.exe [project_root_dir]/game/test_game_without_render.py
+nsys profile -t cuda,nvtx [project_root_dir]/.venv/Scripts/python.exe [project_root_dir]/game/test_game_without_render.py
+
+
+scalene run [project_root_dir]2.0/game/test_game_without_render.py
+
+scalene run [project_root_dir]2.0/game/test_env.py
+
+scalene view
+
+
+uv sync
+
+uv cache clean
+
+
+
+
+
+
+
+
+
+
+

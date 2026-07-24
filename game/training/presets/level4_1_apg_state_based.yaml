@@ -1,0 +1,84 @@
+meta:
+  id: level4_1_apg_state_based
+  display_name: Level 4.1 射擊 APG (diff rewards)
+  level: 4
+  sub_level: 1
+  obs_type: state_based
+  algorithm: APG
+  policy_module: skrl_script.policy_APG1_state_based
+  trainer_module: skrl_script.trainer_APG
+model:
+  state_obs_size: 42
+  obs_width: 0
+  obs_height: 0
+  stack_size: 1
+  ppo:
+    rollouts: 1
+    grad_norm_clip: 0.0
+    entropy_loss_scale: 0.0
+    value_loss_scale: 0.0
+    ratio_clip: 0.0
+    value_clip: 0.0
+    discount_factor: 0.0
+    lambda: 0.0
+    learning_epochs: 1
+    mini_batches: 1
+    random_timesteps: 0
+    learning_rate: 0.0
+    kl_threshold: 0.0
+    checkpoint_interval: 1
+    mixed_precision: false
+  apg:
+    learning_rate: 0.0001
+    checkpoint_interval: 40
+    mixed_precision: false
+  preprocessors:
+    state:
+      type: null
+      kwargs: {}
+    value:
+      type: null
+      kwargs: {}
+  learning_rate_scheduler: null
+train:
+  timesteps: 30000
+  write_interval: 1
+  enable_namespaces: true
+  max_episode_step: 120
+  horizon: 3
+  max_episode_epochs: 40
+  total_epochs: 10000
+  max_episode_step_evaluate: 3000
+  seed: 31415926
+  num_agents_each_env: 1
+  num_envs_default: 4096
+  reward_components: []
+  reward_components_diff:
+    - BulletTrajectoryEvasionReward_diff
+    - PlayerFaceToTargetReward1_diff
+    - ProximityPenaltyReward_diff
+  reward_parameters:
+    shoot_hit_reward: 5
+    shoot_being_hit_penalty: -2
+    shoot_total_approach_budget: 2
+    shoot_penalty: -0.5
+    max_reward_fov_degrees: 1.0
+    min_reward_fov_degrees: 80.0
+    max_dist: 30.0
+    face_to_target_reward: 0.02
+    decrease_starting_step: 100000
+    max_reward_fov_degrees_final: 1.0
+    decrease_fov_speed: 0.0
+    threat_radius: 1.5
+    evasion_penalty: 0.0
+    evasion_bonus: 0.1
+    robot_proximity_threshold: 10.0
+    robot_proximity_scale: 0.01
+    robot_proximity_alpha: 0.5
+    wall_proximity_threshold: 2.0
+    wall_proximity_scale: 0.01
+    wall_proximity_alpha: 3.0
+    episode_end_reward: 1000
+  player_ids:
+  - RL
+  - Bot

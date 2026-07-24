@@ -1,0 +1,292 @@
+from __future__ import annotations
+
+import sys
+from typing import List, Optional, TYPE_CHECKING
+
+from PyQt6.QtWidgets import QApplication
+
+from script.role.abilities.ability import Ability
+from script.viewer_controls import format_keys
+
+from .control_bridge import ControlBridge
+from .inspector_window import InspectorWindow
+from .metadata import InspectorCatalog
+from .raycast_select import RaycastSelector
+
+if TYPE_CHECKING:
+    from script.custom_viewergl import CustomViewerGL
+    from script.game import Game
+
+
+class ObjectInspectorPlugin:
+    def __init__(self):
+        self._app: Optional[QApplication] = None
+        self._window: Optional[InspectorWindow] = None
+        self._game: Optional["Game"] = None
+        self._viewer: Optional["CustomViewerGL"] = None
+        self._catalog: Optional[InspectorCatalog] = None
+        self._bridge: Optional[ControlBridge] = None
+        self._selector: Optional[RaycastSelector] = None
+        self._visible = False
+        self._pending_impulse: Optional[dict] = None
+
+    def attach(self, game: "Game", viewer: "CustomViewerGL"):
+        self._game = game
+        self._viewer = viewer
+        self._catalog = InspectorCatalog.build_from_game(game)
+        self._bridge = ControlBridge(game)
+        self._selector = RaycastSelector(game.physics_manager.model, game.physics_manager.device)
+        self._ensure_qt()
+        labels = self._catalog.list_catalog_keys()
+        self._window.set_labels(labels)
+        self._window.set_label_changed_callback(self._on_label_selected)
+        self._window.set_world_changed_callback(self._on_world_changed)
+        self._window.set_impulse_callback(self._on_impulse)
+        self._window.set_gravity_changed_callback(self._on_gravity_changed)
+        if labels:
+            self._select_catalog_key(labels[0], 0)
+        game.physics_manager.pre_substep_callback = self._on_pre_substep
+        self._window.setup_controls_tab(
+            simulation_control=viewer.simulation_control,
+            viewer_controls_cfg=viewer.viewer_controls_cfg,
+            gameplay_bindings=self._collect_gameplay_bindings(game),
+            initial_gravity=self._bridge.read_gravity() if self._bridge else None,
+        )
+        if self._bridge.has_commands():
+            self._window.set_command_labels(list(game.level.command_labels))
+
+    def apply_command_pins(self):
+        if not self._bridge or not self._window or not self.is_visible or not self._game:
+            return
+        if not self._bridge.has_commands():
+            return
+        self._window.flush_pinned_storage()
+        for world_idx, values, pinned_dims in self._window.iter_stored_command_pins():
+            self._bridge.apply_command_pins(world_idx, values, pinned_dims)
+
+    def _collect_gameplay_bindings(self, game: "Game") -> List[dict]:
+        if Ability._default_configs is None:
+            Ability._initialize_class_assets()
+
+        bindings: List[dict] = []
+        from script.role.base_role import BaseRole
+        from script.role.controller_utils import normalize_controller
+
+        for index_player in game.players.index_obj_role:
+            params = BaseRole._object_game_params[index_player]
+            controller = normalize_controller(params.get("controller"))
+            if controller != "Human":
+                continue
+            for ability_idx in game.players.get_player_abilities(index_player):
+                ability = game.players.abilities_instance_list[ability_idx]
+                cfg = Ability._default_configs.root.get(ability.ability_name)
+                if cfg is None:
+                    continue
+                key_names: List[str] = []
+                for key_list in cfg.key.keyboard.values():
+                    key_names.extend(key_list)
+                for key_list in cfg.key.mouse.values():
+                    key_names.extend(key_list)
+                if not key_names:
+                    continue
+                description = cfg.action_space.description or ability.ability_name
+                bindings.append({
+                    "keys": format_keys(key_names),
+                    "description": f"{ability.ability_name}: {description}",
+                })
+            break
+        return bindings
+
+    def _on_pre_substep(self, substep_idx: int):
+        if self.is_visible:
+            self.apply_pinned_controls(substep_idx=substep_idx)
+
+    def _ensure_qt(self):
+        if QApplication.instance() is None:
+            self._app = QApplication(sys.argv if hasattr(sys, "argv") else [])
+        else:
+            self._app = QApplication.instance()
+        if self._window is None:
+            self._window = InspectorWindow()
+
+    def toggle_window(self):
+        self._ensure_qt()
+        if self._window is None:
+            return
+        if self._window.isVisible():
+            self._window.hide()
+            self._visible = False
+        else:
+            self._window.show()
+            self._window.raise_()
+            self._visible = True
+            self.refresh_from_sim()
+
+    @property
+    def is_visible(self) -> bool:
+        return self._visible and self._window is not None and self._window.isVisible()
+
+    def tick(self):
+        if self._app is None:
+            return
+        self._app.processEvents()
+        if self._window is not None and self._viewer is not None and self._game is not None:
+            self._window.sync_controls_status(game_over=self._game.game_over)
+        if self.is_visible:
+            self.refresh_from_sim()
+
+    def apply_pinned_controls(self, substep_idx: int = 0):
+        if not self._bridge or not self._window or not self.is_visible or not self._game or not self._catalog:
+            return
+        self._window.flush_pinned_storage()
+        self._game.physics_manager.clear_inspector_body_f()
+
+        for spec, world, body, values, pinned in self._window.iter_stored_body_pins(self._catalog):
+            self._bridge.apply_body_pinned(spec, world, body, values, pinned)
+
+        for spec, world, joint, values, pinned in self._window.iter_stored_joint_pins(self._catalog):
+            self._bridge.apply_joint_pinned(spec, world, joint, values, pinned)
+
+        spec = self._window.current_spec()
+        if spec is None:
+            return
+        world = self._window.current_world()
+        body = self._window.current_body()
+        joint = self._window.current_joint()
+        if self._pending_impulse and substep_idx == 0:
+            impulse = self._pending_impulse
+            self._pending_impulse = None
+            if impulse.get("joint") and joint is not None:
+                self._bridge.apply_joint_impulse(spec, world, joint, self._window.get_joint_state().torque)
+            elif body is not None:
+                self._bridge.apply_body_impulse(
+                    spec,
+                    world,
+                    body,
+                    self._window.get_body_state(),
+                    apply_force=impulse.get("force", False),
+                    apply_torque=impulse.get("torque", False),
+                )
+
+    def apply_rl_action_pins(self, actions_wp):
+        if not self._bridge or not self._window or not self.is_visible or not self._game or not self._catalog:
+            return
+        if not self._window.is_rl_action_enabled():
+            return
+        self._window.flush_pinned_storage()
+        for spec, world_idx, values in self._window.iter_stored_rl_actions(self._catalog):
+            pinned_dims = list(values.keys())
+            if not pinned_dims:
+                continue
+            self._bridge.apply_rl_action_pins_to_buffer(
+                actions_wp,
+                spec.player_action,
+                world_idx,
+                spec.local_role_idx,
+                values,
+                pinned_dims,
+            )
+
+    def select_from_ray(self, x: float, y: float):
+        if not self._game or not self._viewer or not self._selector or not self._catalog:
+            return
+        pm = self._game.physics_manager
+        if pm.shape_to_role_np is None or pm.state_0 is None:
+            return
+        ray_start, ray_dir = self._viewer.camera.get_world_ray(x, y)
+        world_offsets = getattr(self._viewer, "world_offsets", None)
+        visible_worlds_mask = None
+        picking = getattr(self._viewer, "picking", None)
+        if picking is not None:
+            visible_worlds_mask = getattr(picking, "visible_worlds_mask", None)
+        result = self._selector.query(
+            state=pm.state_0,
+            ray_start=ray_start,
+            ray_dir=ray_dir,
+            shape_to_role=pm.shape_to_role_np,
+            world_offsets=world_offsets,
+            num_objects_env=pm.num_objects_env,
+            role_labels=pm.role_object_labels,
+            visible_worlds_mask=visible_worlds_mask,
+        )
+        if result.local_role_idx >= 0:
+            self._select_role(result.local_role_idx, result.world_idx)
+            if not self.is_visible:
+                self.toggle_window()
+
+    def _select_catalog_key(self, catalog_key: str, world_idx: int):
+        if not self._catalog or not self._window:
+            return
+        current = self._window.current_spec()
+        if (
+            current is not None
+            and current.catalog_key == catalog_key
+            and self._window.current_world() == world_idx
+        ):
+            self.refresh_from_sim(resync_rl=True)
+            return
+        spec = self._catalog.get_by_catalog_key(catalog_key)
+        if spec is None:
+            return
+        self._window.blockSignals(True)
+        if self._window.label_combo.findText(catalog_key) >= 0:
+            self._window.label_combo.setCurrentText(catalog_key)
+        self._window.set_spec(spec, world_idx)
+        self._window.blockSignals(False)
+        self.refresh_from_sim(resync_rl=True)
+
+    def _select_role(self, local_role_idx: int, world_idx: int):
+        if not self._catalog or not self._window:
+            return
+        spec = self._catalog.get_by_role(local_role_idx, self._game.num_objects_env if self._game else 1)
+        if spec is None:
+            return
+        self._select_catalog_key(spec.catalog_key, world_idx)
+
+    def _on_label_selected(self, catalog_key: str, world_idx: int):
+        self._select_catalog_key(catalog_key, world_idx)
+
+    def _on_world_changed(self, world_idx: int):
+        if not self._window or not self._catalog:
+            return
+        spec = self._window.current_spec()
+        if spec is None:
+            return
+        self._window.set_spec(spec, world_idx)
+        self.refresh_from_sim(resync_rl=True)
+
+    def _on_impulse(self, force: bool = False, torque: bool = False, joint: bool = False):
+        self._pending_impulse = {"force": force, "torque": torque, "joint": joint}
+
+    def _on_gravity_changed(self, gx: float, gy: float, gz: float):
+        if self._bridge:
+            self._bridge.set_gravity([gx, gy, gz])
+
+    def refresh_from_sim(self, resync_rl: bool = False):
+        if not self._bridge or not self._window or not self.is_visible:
+            return
+        self._window.set_gravity_values(self._bridge.read_gravity())
+        spec = self._window.current_spec()
+        if spec is None:
+            return
+        world = self._window.current_world()
+        body = self._window.current_body()
+        joint = self._window.current_joint()
+        if body is not None:
+            state = self._bridge.read_body(spec, world, body)
+            self._window.set_body_state(state)
+        if joint is not None:
+            jstate = self._bridge.read_joint(spec, world, joint)
+            self._window.set_joint_state(jstate)
+        if spec.player_action is not None and not self._window.is_rl_action_enabled():
+            rl_values = self._bridge.read_rl_actions(
+                spec.player_action,
+                world,
+                spec.local_role_idx,
+            )
+            self._window.set_rl_action_values(rl_values, force=resync_rl)
+            if resync_rl:
+                self._window._save_rl_action_values()
+        if self._bridge.has_commands():
+            cmd_values = self._bridge.read_commands(world)
+            self._window.set_command_values(cmd_values, force=False)

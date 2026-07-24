@@ -1,0 +1,449 @@
+# Training preset YAML editor schema.
+# Defines the three top-level sections (meta / model / train), editable fields,
+# and validation constraints used by the Experiment Hub form editor.
+
+version: 1
+
+sections:
+  - id: meta
+    label_zh: "元資料 (meta)"
+    label_en: "Meta"
+    default_expanded: true
+    fields:
+      - key: id
+        type: string
+        required: true
+        nullable: false
+        description_zh: "預設唯一識別碼，用於 --preset 參數"
+        description_en: "Unique preset id used by --preset"
+
+      - key: display_name
+        type: string
+        required: false
+        nullable: false
+        description_zh: "在 UI 中顯示的名稱"
+        description_en: "Display name shown in the UI"
+
+      - key: level
+        type: int
+        required: true
+        nullable: false
+        min: 0
+        max: 99
+        description_zh: "關卡編號"
+        description_en: "Level index"
+
+      - key: sub_level
+        type: int
+        required: true
+        nullable: false
+        min: 0
+        max: 99
+        description_zh: "子關卡編號"
+        description_en: "Sub-level index"
+
+      - key: obs_type
+        type: enum
+        required: true
+        nullable: false
+        options: [state_based, game_screen, mixed]
+        description_zh: "觀察空間類型"
+        description_en: "Observation space type"
+
+      - key: algorithm
+        type: enum
+        required: true
+        nullable: false
+        options: [PPO, APG]
+        description_zh: "強化學習算法"
+        description_en: "RL algorithm"
+
+      - key: policy_module
+        type: enum
+        required: true
+        nullable: false
+        allow_custom: false
+        options:
+          - skrl_script.policy_PPO1_state_based
+          - skrl_script.policy_PPO2_state_based
+          - skrl_script.policy_PPO3_mixed
+          - skrl_script.policy_PPO_g1_velocity
+          - skrl_script.policy_APG1_state_based
+        description_zh: "策略網路模組路徑"
+        description_en: "Policy module import path"
+
+      - key: trainer_module
+        type: enum
+        required: true
+        nullable: false
+        allow_custom: false
+        options:
+          - skrl_script.trainer_PPO
+          - skrl_script.trainer_APG
+        description_zh: "訓練器模組路徑"
+        description_en: "Trainer module import path"
+
+  - id: model
+    label_zh: "模型 (model)"
+    label_en: "Model"
+    default_expanded: true
+    fields:
+      - key: state_obs_size
+        type: int
+        required: true
+        nullable: false
+        min: 1
+        max: 100000
+        description_zh: "狀態觀察向量維度"
+        description_en: "State observation vector size"
+
+      - key: obs_width
+        type: int
+        required: false
+        nullable: false
+        min: 0
+        max: 10000
+        description_zh: "圖像觀察寬度（state_based 時通常為 0）"
+        description_en: "Image observation width (usually 0 for state_based)"
+
+      - key: obs_height
+        type: int
+        required: false
+        nullable: false
+        min: 0
+        max: 10000
+        description_zh: "圖像觀察高度（state_based 時通常為 0）"
+        description_en: "Image observation height (usually 0 for state_based)"
+
+      - key: stack_size
+        type: int
+        required: false
+        nullable: false
+        min: 1
+        max: 64
+        description_zh: "幀堆疊數量"
+        description_en: "Frame stack size"
+
+    groups:
+      - id: ppo
+        label_zh: "PPO 超參數 (model.ppo)"
+        label_en: "PPO Hyperparameters (model.ppo)"
+        default_expanded: true
+        path: [ppo]
+        fields:
+          - key: rollouts
+            type: int
+            required: false
+            nullable: false
+            min: 1
+            max: 100000
+            description_zh: "每次更新收集的 rollout 數"
+            description_en: "Number of rollouts per update"
+
+          - key: grad_norm_clip
+            type: float
+            required: false
+            nullable: false
+            min: 0.0
+            max: 100.0
+            decimals: 4
+            description_zh: "梯度裁剪閾值"
+            description_en: "Gradient norm clip threshold"
+
+          - key: entropy_loss_scale
+            type: float
+            required: false
+            nullable: false
+            min: 0.0
+            max: 10.0
+            decimals: 6
+            description_zh: "熵損失係數"
+            description_en: "Entropy loss scale"
+
+          - key: value_loss_scale
+            type: float
+            required: false
+            nullable: false
+            min: 0.0
+            max: 10.0
+            decimals: 4
+            description_zh: "價值損失係數"
+            description_en: "Value loss scale"
+
+          - key: ratio_clip
+            type: float
+            required: false
+            nullable: false
+            min: 0.0
+            max: 1.0
+            decimals: 4
+            description_zh: "PPO ratio clip"
+            description_en: "PPO ratio clip"
+
+          - key: value_clip
+            type: float
+            required: false
+            nullable: false
+            min: 0.0
+            max: 1.0
+            decimals: 4
+            description_zh: "價值函數 clip"
+            description_en: "Value function clip"
+
+          - key: discount_factor
+            type: float
+            required: false
+            nullable: false
+            min: 0.0
+            max: 1.0
+            decimals: 4
+            description_zh: "折扣因子 gamma"
+            description_en: "Discount factor gamma"
+
+          - key: lambda
+            type: float
+            required: false
+            nullable: false
+            min: 0.0
+            max: 1.0
+            decimals: 4
+            description_zh: "GAE lambda"
+            description_en: "GAE lambda"
+
+          - key: learning_epochs
+            type: int
+            required: false
+            nullable: false
+            min: 1
+            max: 1000
+            description_zh: "每次更新的學習 epoch 數"
+            description_en: "Learning epochs per update"
+
+          - key: mini_batches
+            type: int
+            required: false
+            nullable: false
+            min: 1
+            max: 1000
+            description_zh: "Mini-batch 數量"
+            description_en: "Number of mini-batches"
+
+          - key: random_timesteps
+            type: int
+            required: false
+            nullable: false
+            min: 0
+            max: 10000000
+            description_zh: "隨機探索步數"
+            description_en: "Random exploration timesteps"
+
+          - key: learning_rate
+            type: float
+            required: false
+            nullable: false
+            min: 0.0
+            max: 1.0
+            decimals: 8
+            description_zh: "學習率"
+            description_en: "Learning rate"
+
+          - key: kl_threshold
+            type: float
+            required: false
+            nullable: false
+            min: 0.0
+            max: 1.0
+            decimals: 6
+            description_zh: "KL 散度閾值"
+            description_en: "KL divergence threshold"
+
+          - key: checkpoint_interval
+            type: int
+            required: false
+            nullable: false
+            min: 1
+            max: 10000000
+            description_zh: "檢查點保存間隔（更新次數）"
+            description_en: "Checkpoint save interval (updates)"
+
+          - key: mixed_precision
+            type: bool
+            required: false
+            nullable: false
+            description_zh: "是否啟用混合精度訓練"
+            description_en: "Enable mixed precision training"
+
+      - id: preprocessors
+        label_zh: "預處理器 (model.preprocessors)"
+        label_en: "Preprocessors (model.preprocessors)"
+        default_expanded: false
+        path: [preprocessors]
+        subgroups:
+          - id: state
+            label_zh: "狀態預處理 (state)"
+            label_en: "State Preprocessor"
+            path: [state]
+            fields:
+              - key: type
+                type: enum_nullable
+                required: false
+                nullable: true
+                options: [RunningStandardScaler]
+                description_zh: "狀態預處理器類型，null 表示不使用"
+                description_en: "State preprocessor type; null disables it"
+
+              - key: kwargs.size
+                type: int
+                required: false
+                nullable: false
+                min: 1
+                max: 100000
+                visible_when:
+                  field: type
+                  not_null: true
+                description_zh: "預處理器輸入維度"
+                description_en: "Preprocessor input size"
+
+              - key: kwargs.device
+                type: string
+                required: false
+                nullable: false
+                visible_when:
+                  field: type
+                  not_null: true
+                description_zh: "運行設備，例如 cuda:0 或 cpu"
+                description_en: "Device string, e.g. cuda:0 or cpu"
+
+          - id: value
+            label_zh: "價值預處理 (value)"
+            label_en: "Value Preprocessor"
+            path: [value]
+            fields:
+              - key: type
+                type: enum_nullable
+                required: false
+                nullable: true
+                options: [RunningStandardScaler]
+                description_zh: "價值預處理器類型，null 表示不使用"
+                description_en: "Value preprocessor type; null disables it"
+
+              - key: kwargs.size
+                type: int
+                required: false
+                nullable: false
+                min: 1
+                max: 100000
+                visible_when:
+                  field: type
+                  not_null: true
+                description_zh: "預處理器輸入維度"
+                description_en: "Preprocessor input size"
+
+              - key: kwargs.device
+                type: string
+                required: false
+                nullable: false
+                visible_when:
+                  field: type
+                  not_null: true
+                description_zh: "運行設備，例如 cuda:0 或 cpu"
+                description_en: "Device string, e.g. cuda:0 or cpu"
+
+  - id: train
+    label_zh: "訓練 (train)"
+    label_en: "Training"
+    default_expanded: true
+    fields:
+      - key: timesteps
+        type: int
+        required: false
+        nullable: false
+        min: 1
+        max: 1000000000
+        description_zh: "總訓練步數"
+        description_en: "Total training timesteps"
+
+      - key: write_interval
+        type: int
+        required: false
+        nullable: false
+        min: 1
+        max: 1000000
+        description_zh: "TensorBoard 寫入間隔"
+        description_en: "TensorBoard write interval"
+
+      - key: enable_namespaces
+        type: bool
+        required: false
+        nullable: false
+        description_zh: "是否啟用 TensorBoard namespace"
+        description_en: "Enable TensorBoard namespaces"
+
+      - key: max_episode_step
+        type: int
+        required: false
+        nullable: false
+        min: 1
+        max: 10000000
+        description_zh: "單回合最大步數"
+        description_en: "Max steps per episode"
+
+      - key: seed
+        type: int
+        required: false
+        nullable: false
+        min: 0
+        max: 2147483647
+        description_zh: "隨機種子"
+        description_en: "Random seed"
+
+      - key: num_agents_each_env
+        type: int
+        required: false
+        nullable: false
+        min: 1
+        max: 1024
+        description_zh: "每個環境的智能體數量"
+        description_en: "Agents per environment"
+
+      - key: num_envs_default
+        type: int
+        required: false
+        nullable: false
+        min: 1
+        max: 65536
+        description_zh: "預設並行環境數"
+        description_en: "Default parallel environment count"
+
+      - key: reward_components
+        type: multi_select_unique
+        required: false
+        nullable: false
+        options_source: reward_components
+        unique: true
+        description_zh: "啟用的獎勵元件（不可重複）"
+        description_en: "Enabled reward components (unique)"
+
+      - key: reward_components_diff
+        type: multi_select_unique
+        required: false
+        nullable: false
+        options_source: reward_components
+        unique: true
+        description_zh: "差分獎勵元件（不可重複）"
+        description_en: "Differential reward components (unique)"
+
+      - key: reward_parameters
+        type: yaml_mapping
+        required: false
+        nullable: false
+        description_zh: "獎勵參數字典，結構依關卡而異，支援嵌套 YAML"
+        description_en: "Reward parameter mapping; structure varies by level"
+
+      - key: player_ids
+        type: string_list
+        required: false
+        nullable: false
+        unique: false
+        description_zh: "玩家控制器覆寫 ID 列表，例如 RL、Bot"
+        description_en: "Player controller override ids, e.g. RL, Bot"

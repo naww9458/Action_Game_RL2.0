@@ -1,0 +1,111 @@
+meta:
+  id: level5_0_ppo_state_based
+  display_name: "G1 速度行走 PPO"
+  level: 5
+  sub_level: 0
+  obs_type: state_based
+  algorithm: PPO
+  policy_module: skrl_script.policy_PPO_g1_velocity
+  trainer_module: skrl_script.trainer_PPO
+
+model:
+  state_obs_size: 99
+  obs_width: 0
+  obs_height: 0
+  stack_size: 1
+  ppo:
+    rollouts: 24
+    grad_norm_clip: 1.0
+    entropy_loss_scale: 0.01
+    value_loss_scale: 1.0
+    ratio_clip: 0.2
+    value_clip: 0.2
+    discount_factor: 0.99
+    lambda: 0.95
+    learning_epochs: 5
+    mini_batches: 4
+    random_timesteps: 0
+    learning_rate: 0.001
+    kl_threshold: 0.01
+    checkpoint_interval: 50
+    mixed_precision: false
+  preprocessors:
+    state:
+      type: RunningStandardScaler
+      kwargs:
+        size: 99
+        device: cuda:0
+    value:
+      type: RunningStandardScaler
+      kwargs:
+        size: 1
+        device: cuda:0
+
+train:
+  # ~50k control steps. With rollouts=24 that is ~2000 PPO updates, the point where
+  # mjlab's G1 already stands and walks. The old value (5000) was only ~208 updates.
+  timesteps: 50000
+  write_interval: 1
+  enable_namespaces: true
+  max_episode_step: 1000
+  seed: 31415926
+  num_agents_each_env: 1
+  num_envs_default: 4096
+  reward_components:
+    - TrackLinearVelocityReward
+    - TrackAngularVelocityReward
+    - ActionRateL2Reward
+    - AngularMomentumPenaltyReward
+    - BodyAngularVelocityPenaltyReward
+    - FeetAirTimeReward
+    - FeetClearanceReward
+    - FeetSlipReward
+    - FeetSwingHeightReward
+    - JointPosLimitsReward
+    - SelfCollisionCostReward
+    - SoftLandingReward
+    - UprightReward
+    - VariablePostureReward
+  reward_components_diff: []
+  reward_parameters:
+    VariablePostureReward:
+      walking_threshold: 0.05
+      running_threshold: 1.5
+
+      # 站立：所有關節 ±0.05 rad
+      std_standing:
+        ".*": 0.05
+
+      # 行走：依關節名稱 regex 匹配
+      std_walking:
+        ".*hip_pitch.*": 0.3
+        ".*hip_roll.*": 0.15
+        ".*hip_yaw.*": 0.15
+        ".*knee.*": 0.35
+        ".*ankle_pitch.*": 0.25
+        ".*ankle_roll.*": 0.1
+        ".*waist_yaw.*": 0.2
+        ".*waist_roll.*": 0.08
+        ".*waist_pitch.*": 0.1
+        ".*shoulder_pitch.*": 0.15
+        ".*shoulder_roll.*": 0.15
+        ".*shoulder_yaw.*": 0.1
+        ".*elbow.*": 0.15
+        ".*wrist.*": 0.3
+
+      # 跑步：約為 walking 的 1.5–2 倍
+      std_running:
+        ".*hip_pitch.*": 0.5
+        ".*hip_roll.*": 0.2
+        ".*hip_yaw.*": 0.2
+        ".*knee.*": 0.6
+        ".*ankle_pitch.*": 0.35
+        ".*ankle_roll.*": 0.15
+        ".*waist_yaw.*": 0.3
+        ".*waist_roll.*": 0.08
+        ".*waist_pitch.*": 0.2
+        ".*shoulder_pitch.*": 0.5
+        ".*shoulder_roll.*": 0.2
+        ".*shoulder_yaw.*": 0.15
+        ".*elbow.*": 0.35
+        ".*wrist.*": 0.3

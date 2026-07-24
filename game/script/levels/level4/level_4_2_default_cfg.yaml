@@ -1,0 +1,292 @@
+environment_configs:
+  space_xyz:
+  - 20
+  - 20
+  - 20
+  interval_distance: 5.0
+  gravity:
+  - 0.0
+  - 0.0
+  - -98.1
+  damping:
+  - 1.0
+  - 1.0
+  fps_action: 30
+  sub_steps: 24
+  ground_shape_friction: 0.0
+  solver_config:
+    type: xpbd
+    iterations: 1
+    soft_body_relaxation: 0.9
+    soft_contact_relaxation: 0.9
+    joint_linear_relaxation: 0.7
+    joint_angular_relaxation: 0.4
+    joint_linear_compliance: 0
+    joint_angular_compliance: 0
+    rigid_contact_relaxation: 0.8
+    rigid_contact_con_weighting: true
+    angular_damping: 0
+    enable_restitution: false
+player_configs:
+- name: Player_1
+  team_id: 1
+  color:
+  - 255
+  - 213
+  - 79
+  health: 5.0
+  default_position:
+  - - -2.0
+    - -8.0
+  - - 8.0
+    - -8.0
+  - - 1.0
+    - 1.0
+  default_rotation:
+  - - -180.0
+    - 180.0
+  - - 0.0
+    - 0.0
+  abilities:
+  - Move_topdown_viewing_angle
+  - Shoot
+  - Turning_topdown_viewing_angle
+  type: player
+  default_velocity: &id001
+  - 0.0
+  - 0.0
+  - 0.0
+  default_angular_velocity: &id002
+  - 0.0
+  - 0.0
+  - 0.0
+  object:
+    type: rigid_sphere
+    object_friction: 0.0
+    object_elasticity: 0.8
+    radius: 0.5
+    object_mass: 0.0
+    lock_inertia: false
+    is_kinematic: false
+    pattern: default
+    as_site: false
+  controller: Human
+- name: Player_2
+  team_id: 2
+  color:
+  - 200
+  - 12
+  - 59
+  health: 5.0
+  default_position:
+  - - 8.0
+    - 2.0
+  - - 8.0
+    - -8.0
+  - - 1.0
+    - 1.0
+  default_rotation:
+  - - -180.0
+    - 180.0
+  - - 0.0
+    - 0.0
+  abilities:
+  - Move_topdown_viewing_angle
+  - Shoot
+  - Turning_topdown_viewing_angle
+  type: player
+  default_velocity: *id001
+  default_angular_velocity: *id002
+  object:
+    type: rigid_sphere
+    object_friction: 0.0
+    object_elasticity: 0.8
+    radius: 0.5
+    object_mass: 0.0
+    lock_inertia: false
+    is_kinematic: false
+    pattern: default
+    as_site: false
+  controller: Bot
+.wall_template:
+  color: &id003
+  - 235
+  - 64
+  - 52
+platform_configs:
+- color: *id003
+  name: Wall_North
+  default_position:
+  - 0.0
+  - 10.0
+  - 2.0
+  default_rotation:
+  - 0.0
+  - 0.0
+  type: platform
+  default_velocity: &id004
+  - 0.0
+  - 0.0
+  - 0.0
+  default_angular_velocity: &id005
+  - 0.0
+  - 0.0
+  - 0.0
+  abilities: &id006 []
+  object:
+    type: rigid_box
+    object_friction: 0.0
+    object_elasticity: 0.1
+    size:
+    - 10.0
+    - 1.0
+    - 2.0
+    object_mass: 0.0
+    lock_inertia: false
+    is_kinematic: true
+- color: *id003
+  name: Wall_South
+  default_position:
+  - 0.0
+  - -10.0
+  - 2.0
+  default_rotation:
+  - 0.0
+  - 0.0
+  type: platform
+  default_velocity: *id004
+  default_angular_velocity: *id005
+  abilities: *id006
+  object:
+    type: rigid_box
+    object_friction: 0.0
+    object_elasticity: 0.1
+    size:
+    - 10.0
+    - 1.0
+    - 2.0
+    object_mass: 0.0
+    lock_inertia: false
+    is_kinematic: true
+- color: *id003
+  name: Wall_East
+  default_position:
+  - 10.0
+  - 0.0
+  - 2.0
+  default_rotation:
+  - 0.0
+  - 0.0
+  type: platform
+  default_velocity: *id004
+  default_angular_velocity: *id005
+  abilities: *id006
+  object:
+    type: rigid_box
+    object_friction: 0.0
+    object_elasticity: 0.1
+    size:
+    - 1.0
+    - 10.0
+    - 2.0
+    object_mass: 0.0
+    lock_inertia: false
+    is_kinematic: true
+- color: *id003
+  name: Wall_West
+  default_position:
+  - -10.0
+  - 0.0
+  - 2.0
+  default_rotation:
+  - 0.0
+  - 0.0
+  type: platform
+  default_velocity: *id004
+  default_angular_velocity: *id005
+  abilities: *id006
+  object:
+    type: rigid_box
+    object_friction: 0.0
+    object_elasticity: 0.1
+    size:
+    - 1.0
+    - 10.0
+    - 2.0
+    object_mass: 0.0
+    lock_inertia: false
+    is_kinematic: true
+ability_generated_object_configs:
+  bullet:
+    name: bullet
+    ability_class_name: Shoot
+    quantity: 2
+    default_expired_step: 0.8
+    color:
+    - 66
+    - 165
+    - 245
+    default_position:
+    - -12.0
+    - -12.0
+    - 0.2
+    default_rotation:
+    - 0.0
+    - 0.0
+    type: ability_generated_object
+    default_velocity:
+    - 0.0
+    - 0.0
+    - 0.0
+    default_angular_velocity:
+    - 0.0
+    - 0.0
+    - 0.0
+    abilities: []
+    object:
+      type: rigid_sphere
+      object_friction: 0.0
+      object_elasticity: 0.5
+      radius: 0.15
+      object_mass: 0.0
+      lock_inertia: false
+      is_kinematic: false
+entity_configs:
+  new_entity_0:
+    type: entity
+    name: NewObject
+    color:
+    - 200
+    - 200
+    - 200
+    default_position:
+    - 0.0
+    - 0.0
+    - 0.9
+    default_rotation:
+    - 0.0
+    - 0.0
+    default_velocity:
+    - 0.0
+    - 0.0
+    - 0.0
+    default_angular_velocity:
+    - 0.0
+    - 0.0
+    - 0.0
+    abilities: []
+    object:
+      type: rigid_box
+      object_friction: 0.5
+      object_elasticity: 0.5
+      size:
+      - 0.2
+      - 1.6
+      - 0.8
+      object_mass: 0.0
+      lock_inertia: false
+      is_kinematic: false
+    separation:
+    - 1
+    - 8.0
+    - 4.0

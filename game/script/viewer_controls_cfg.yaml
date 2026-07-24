@@ -1,0 +1,96 @@
+defaults:
+  auto_reset_on_env_end: false
+  manual_reset_enabled: true
+
+category_labels:
+  camera: Camera
+  ui: UI
+  simulation: Simulation
+  follow: Follow Target
+
+bindings:
+  - category: camera
+    id: move_forward
+    keys: [w, up]
+    context: free_camera
+    description: "Move camera forward"
+
+  - category: camera
+    id: move_back
+    keys: [s, down]
+    context: free_camera
+    description: "Move camera backward"
+
+  - category: camera
+    id: move_left
+    keys: [a, left]
+    context: free_camera
+    description: "Strafe camera left"
+
+  - category: camera
+    id: move_right
+    keys: [d, right]
+    context: free_camera
+    description: "Strafe camera right"
+
+  - category: camera
+    id: move_up
+    keys: [space]
+    context: free_camera
+    description: "Move camera up"
+
+  - category: camera
+    id: move_down
+    keys: [r]
+    context: free_camera
+    description: "Move camera down"
+
+  - category: camera
+    id: unfollow_body
+    keys: [b]
+    description: "Stop following object (free camera)"
+
+  - category: camera
+    id: mouse_look
+    keys: [tab]
+    description: "Toggle mouse-look exclusive mode"
+
+  - category: camera
+    id: zoom_fov
+    keys: [ctrl+scroll]
+    description: "Adjust camera FOV (Ctrl + scroll)"
+
+  - category: ui
+    id: toggle_newton_ui
+    keys: [h]
+    description: "Toggle Newton built-in UI"
+
+  - category: ui
+    id: toggle_inspector
+    keys: [i]
+    description: "Toggle object inspector window"
+
+  - category: follow
+    id: follow_digit
+    keys: ["0", "1", "2", "3", "4", "5", "6", "7", "8", "9"]
+    description: "Enter body index to follow (when not following)"
+
+  - category: follow
+    id: follow_confirm
+    keys: [return]
+    description: "Confirm follow target index"
+
+  - category: follow
+    id: follow_backspace
+    keys: [backspace]
+    description: "Delete last digit while entering follow index"
+
+  - category: simulation
+    id: pause
+    keys: [p]
+    description: "Toggle physics pause (camera still moves)"
+
+  - category: simulation
+    id: manual_reset
+    keys: [y]
+    description: "Reset environment"

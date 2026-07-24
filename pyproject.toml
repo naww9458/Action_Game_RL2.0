@@ -1,0 +1,49 @@
+[project]
+name = "action-game-rl"
+version = "0.1.0"
+description = "Add your description here"
+readme = "README.md"
+requires-python = ">=3.12"
+dependencies = [
+    "glfw==2.10.0",
+    "newton==1.2.0",
+    "ninja==1.13.0",
+    "opencv-python==4.13.0.92",
+    "pyglet==2.1.12",
+    "pyinstrument==5.1.2",
+    "scalene==2.1.4",
+    "setuptools==80.10.1",
+    "skrl==1.4.3",
+    "torch==2.10.0",
+    "torchaudio==2.10.0",
+    "torchvision==0.25.0",
+    "wheel==0.46.3",
+    "wheel-stub==0.5.0",
+    "usd-core>=26.5",
+    "gitpython>=3.1.49",
+    "imgui-bundle>=1.92.700",
+    "pyqt6>=6.11.0",
+    "pyqtgraph>=0.14.0",
+    "pyopengl>=3.1.10",
+    "mujoco-warp==3.8.1",
+    "scipy>=1.17.1",
+    "trimesh>=4.0.0",
+    "onnx>=1.21.0",
+    "tensorboard>=2.20.0",
+    "pyyaml>=6.0.3",
+]
+
+[[tool.uv.index]]
+name = "pytorch-cu128"
+url = "https://download.pytorch.org/whl/cu128"
+explicit = true
+
+[tool.uv.sources]
+torch = { index = "pytorch-cu128" }
+torchvision = { index = "pytorch-cu128" }
+torchaudio = { index = "pytorch-cu128" }
+nvdiffrast = { git = "https://github.com/NVlabs/nvdiffrast.git" }
+
+[tool.uv.extra-build-dependencies]
+warp-lang = ["wheel_stub"]
+nvdiffrast = ["setuptools", "wheel", "ninja"]

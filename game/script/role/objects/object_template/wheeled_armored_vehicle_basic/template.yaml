@@ -1,0 +1,40 @@
+id: wheeled_armored_vehicle_basic
+display_name: Wheeled Armored Vehicle (Basic)
+control_config_path: control_configs.yaml
+object_type: usd
+object:
+  pattern: wheeled_armored_vehicle_basic
+  type: usd
+  object_friction: 0.5
+  object_elasticity: 0.0
+  file_name: wheeled_armored_vehicle_basic.usdc
+  file_path_or_source: Action_Game_RL_Assets/assets/
+  floating: null
+  base_joint: null
+  parent_body: -1
+  only_load_enabled_rigid_bodies: false
+  only_load_enabled_joints: true
+  joint_drive_gains_scaling: 1
+  verbose: false
+  ignore_paths:
+    - /root/GroundPlane
+  collapse_fixed_joints: false
+  enable_self_collisions: false
+  apply_up_axis_from_stage: false
+  root_path: /
+  joint_ordering: dfs
+  bodies_follow_joint_ordering: true
+  skip_mesh_approximation: true
+  load_sites: true
+  load_visual_shapes: true
+  hide_collision_shapes: true
+  force_show_colliders: false
+  parse_mujoco_options: true
+  mesh_maxhullvert: null
+  schema_resolvers: null
+  force_position_velocity_actuation: true
+  override_root_xform: false
+  use_mujoco_policy_init: true
+  control_task: differential_drive
+  control_policy_version: null
+possess_offset: [0.0, 0.0, 2.5]

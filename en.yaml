@@ -1,0 +1,101 @@
+abilities_select: 'Abilities List:'
+ability_generated_object_cfg: ⚡ Ability Objects
+add_ability_generated_object: + Ability Generated Object
+add_entity: + Entity
+add_new: Add
+add_platform: + Platform
+add_player: + Player
+attr_edit: Attribute Editor
+back_main: Back to Menu
+browse: 📁 Browse
+calc_level_path: 'Level Path (Auto):'
+calc_reward_path: 'Reward Path (Auto):'
+calc_shape_path: 'Shape Path (Auto):'
+cancel: Cancel
+cancel_no_save: Discard and Back
+capture_per_second: 'Capture Per Second (capture_per_second):'
+checkpoint_select: Checkpoint
+config_dir: 'Config Save Dir:'
+confirm: OK
+delete_obj: Delete Selected
+edit: Edit
+edit_mode: Edit Mode
+entity_cfg: 📦 Entity Configs
+env_cfg: 🌍 Global Environment
+eval_already_running: An evaluation process is already running. Stop it first.
+eval_apg: APG Eval
+eval_apg_hint: APG run selected; uses differentiable physics stepping.
+eval_episodes: 'Eval Episodes:'
+eval_headless: Headless Eval
+eval_model: Evaluate Model
+eval_num_envs: 'Eval Num Envs (num_envs):'
+eval_ppo_hint: PPO run selected; uses CUDA Graph physics stepping.
+eval_started: Evaluation started in subprocess
+eval_stopped: Evaluation stopped
+exp_hub_title: Experiment Hub
+font_size: 'Global Font Size (px):'
+headless_train: Headless Training
+is_lock_fps: 'Lock FPS (is_lock_fps):'
+language_select: 'Language:'
+launch_tb: Launch TensorBoard
+level_list: Level List
+level_path: 'Level Path:'
+max_episode_step: 'Max Episode Step (max_episode_step):'
+model_obs_type: 'Obs Type (model_obs_type):'
+new_level_series: New Level Series
+new_sub_level: New Sub Level
+none_tip: Enter 'None' for disable
+num_env: 'Num Environments (num_env):'
+num_envs: 'Num Envs (num_envs):'
+obj_key: Object ID (Key)
+obj_list: Object List
+obj_name: Display Name
+obs_height: 'Obs Height (obs_height):'
+obs_width: 'Obs Width (obs_width):'
+open_folder: Open Folder
+open_tb_browser: Open in Browser
+placeholder_path: Please select levels folder...
+platform_cfg: 🧱 Platform Configs
+player_cfg: 👤 Player Configs
+player_ids: 'Player ID List (player_ids):'
+preset_editor: Preset Config Editor
+preset_list: Preset List
+project_path: 'Project Path:'
+refresh: Refresh
+reload_preset: Reload
+render_mode: 'Render Mode (render_mode):'
+requires_grad: 'Requires Gradient (requires_grad):'
+resume_checkpoint: 'Resume Checkpoint (optional):'
+run_list: Run List
+save_back: Save and Back
+save_preset: Save Preset
+save_success: Saved successfully
+select_series_desc: 'Select the series to add a sub-level to:'
+select_series_title: Select Level Series
+start_test: 🚀 Start Test
+start_train: Start Training
+stop_eval: Stop Eval
+stop_tb: Stop TensorBoard
+stop_train: Stop & Cleanup Training
+sub_item: Sub Level
+sys_settings: System Settings
+tab_launch: Launch Training
+tab_preset: Training Presets
+tab_runs: Runs & Checkpoints
+tb_started: TensorBoard started
+tb_stopped: TensorBoard stopped
+tb_switching: Switching TensorBoard
+test: Test
+test_mode: Test Mode
+test_settings: Test Configuration
+tip_select_first: Please select a sub-level first
+train: Train
+train_mode: Train Mode
+train_started: Training started in subprocess
+train_stopped: Training stopped and cleaned up
+view_3d: 3D Interactive View
+window_envs: 'Window Display Envs (window_envs):'
+window_envs_prompt: How many environments to display in the window? (1-{max_envs})
+window_envs_title: Window Display Environments
+window_title: Level Manager
+yaml_error: Invalid YAML

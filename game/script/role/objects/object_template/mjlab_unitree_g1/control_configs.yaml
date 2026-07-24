@@ -1,0 +1,111 @@
+# This file contains code adapted from:
+# https://github.com/mujocolab/mjlab
+#
+# Modified for Action_Game_RL.
+#
+# The original project is licensed under the Apache License 2.0.
+
+# Unitree G1 control config (mjlab velocity_locomotion).
+# Stiffness/damping/armature/scale are computed at runtime from g1_actuator_model.py.
+
+unitree_g1:
+  velocity_locomotion:
+    soft_limit_factor: 0.9
+
+    init_state:
+      keyframe: knees_bent # knees_bent / home
+      root_pos: [0.0, 0.0, 0.76]
+      root_rot: [0.0, 0.0, 0.7071, 0.7071]
+
+    joint_pos:
+      ".*_hip_pitch_joint": -0.312
+      ".*_knee_joint": 0.669
+      ".*_ankle_pitch_joint": -0.363
+      ".*_elbow_joint": 0.6
+      left_shoulder_roll_joint: 0.2
+      left_shoulder_pitch_joint: 0.2
+      right_shoulder_roll_joint: -0.2
+      right_shoulder_pitch_joint: 0.2
+
+    home_joint_pos:
+      ".*_hip_pitch_joint": -0.1
+      ".*_knee_joint": 0.3
+      ".*_ankle_pitch_joint": -0.2
+      ".*_shoulder_pitch_joint": 0.2
+      ".*_elbow_joint": 1.28
+      left_shoulder_roll_joint: 0.2
+      right_shoulder_roll_joint: -0.2
+
+    home_init_state:
+      root_pos: [0.0, 0.0, 0.783675]
+      root_rot: [0.0, 0.0, 0.7071, 0.7071]
+
+    non_rl_patterns: [finger, thumb, hand]
+
+    # Hand joints (g1_29dof_with_hand only; not in mjlab). Values from g1_29dof.yaml.
+    hand_joints:
+      stiffness: 10.0
+      damping: 2.0
+      armature: 0.1
+      nominal: 0.0
+      rl_controllable: false
+      names:
+        - left_hand_index_0_joint
+        - left_hand_index_1_joint
+        - left_hand_middle_0_joint
+        - left_hand_middle_1_joint
+        - left_hand_thumb_0_joint
+        - left_hand_thumb_1_joint
+        - left_hand_thumb_2_joint
+        - right_hand_index_0_joint
+        - right_hand_index_1_joint
+        - right_hand_middle_0_joint
+        - right_hand_middle_1_joint
+        - right_hand_thumb_0_joint
+        - right_hand_thumb_1_joint
+        - right_hand_thumb_2_joint
+
+    mjw_joint_names:
+      - left_hip_pitch_joint
+      - left_hip_roll_joint
+      - left_hip_yaw_joint
+      - left_knee_joint
+      - left_ankle_pitch_joint
+      - left_ankle_roll_joint
+      - right_hip_pitch_joint
+      - right_hip_roll_joint
+      - right_hip_yaw_joint
+      - right_knee_joint
+      - right_ankle_pitch_joint
+      - right_ankle_roll_joint
+      - waist_yaw_joint
+      - waist_roll_joint
+      - waist_pitch_joint
+      - left_shoulder_pitch_joint
+      - left_shoulder_roll_joint
+      - left_shoulder_yaw_joint
+      - left_elbow_joint
+      - left_wrist_roll_joint
+      - left_wrist_pitch_joint
+      - left_wrist_yaw_joint
+      - left_hand_index_0_joint
+      - left_hand_index_1_joint
+      - left_hand_middle_0_joint
+      - left_hand_middle_1_joint
+      - left_hand_thumb_0_joint
+      - left_hand_thumb_1_joint
+      - left_hand_thumb_2_joint
+      - right_shoulder_pitch_joint
+      - right_shoulder_roll_joint
+      - right_shoulder_yaw_joint
+      - right_elbow_joint
+      - right_wrist_roll_joint
+      - right_wrist_pitch_joint
+      - right_wrist_yaw_joint
+      - right_hand_index_0_joint
+      - right_hand_index_1_joint
+      - right_hand_middle_0_joint
+      - right_hand_middle_1_joint
+      - right_hand_thumb_0_joint
+      - right_hand_thumb_1_joint
+      - right_hand_thumb_2_joint
