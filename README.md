@@ -78,6 +78,6 @@ tensorboard --logdir [dir]
 
 如果你想支持我繼續開發這個開源專案:
 
-- Patreon: https://patreon.com/yourname
+- Patreon: https://patreon.com/naww9458
 
 非常感謝你的支持!
