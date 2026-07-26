@@ -4,19 +4,11 @@ Asset: `Action_Game_RL_Assets/assets/wheeled_armored_vehicle_basic.usdc`
 
 - Bodies: 13
 - Joints: 13
-- Total DOFs: 21
+- Total DOFs: 18
 - Left wheel DOFs: 3
-- Right wheel DOFs: 6
+- Right wheel DOFs: 3
 
-## Body masses (config override)
-
-| Part | Mass (kg) |
-|------|-----------|
-| Chassis (`vehicle_body`) | 14000 |
-| Suspension arm (`Susp_*`) | 200 |
-| Wheel (`Wheels_*`) | 300 |
-
-Suspension PD gains are computed from chassis weight in `control_configs.yaml` → `suspension` (default ke ≈ 412000 N·m/rad at g=9.81). Do not use the old hardcoded ke=800.
+## Bodies
 
 - `0`: `/root/vehicle_body/vehicle_body`
 - `1`: `/root/vehicle_body/Susp_L1/Susp_L1`
@@ -42,11 +34,11 @@ Suspension PD gains are computed from chassis weight in `control_configs.yaml` �
 - `/root/vehicle_body/Susp_L3/Susp_L3/VB_Susp_L3_RevoluteJoint` — REVOLUTE, qd=[10:11], dofs=1
 - `/root/vehicle_body/Susp_L3/Wheels_L3/Wheels_L3/D6Joint` — D6, qd=[11:12], dofs=1
 - `/root/vehicle_body/Susp_R1/Susp_R1/VB_Susp_R1_RevoluteJoint` — REVOLUTE, qd=[12:13], dofs=1
-- `/root/vehicle_body/Susp_R1/Wheels_R1/Wheels_R1/D6Joint` — D6, qd=[13:15], dofs=2
-- `/root/vehicle_body/Susp_R2/Susp_R2/VB_Susp_R2_RevoluteJoint` — REVOLUTE, qd=[15:16], dofs=1
-- `/root/vehicle_body/Susp_R2/Wheels_R2/Wheels_R2/D6Joint` — D6, qd=[16:18], dofs=2
-- `/root/vehicle_body/Susp_R3/Susp_R3/VB_Susp_R3_RevoluteJoint` — REVOLUTE, qd=[18:19], dofs=1
-- `/root/vehicle_body/Susp_R3/Wheels_R3/Wheels_R3/D6Joint` — D6, qd=[19:21], dofs=2
+- `/root/vehicle_body/Susp_R1/Wheels_R1/Wheels_R1/D6Joint` — D6, qd=[13:14], dofs=1
+- `/root/vehicle_body/Susp_R2/Susp_R2/VB_Susp_R2_RevoluteJoint` — REVOLUTE, qd=[14:15], dofs=1
+- `/root/vehicle_body/Susp_R2/Wheels_R2/Wheels_R2/D6Joint` — D6, qd=[15:16], dofs=1
+- `/root/vehicle_body/Susp_R3/Susp_R3/VB_Susp_R3_RevoluteJoint` — REVOLUTE, qd=[16:17], dofs=1
+- `/root/vehicle_body/Susp_R3/Wheels_R3/Wheels_R3/D6Joint` — D6, qd=[17:18], dofs=1
 
 ## Per-DOF (non-FREE)
 
@@ -59,13 +51,8 @@ Suspension PD gains are computed from chassis weight in `control_configs.yaml` �
 | 10 | `/root/vehicle_body/Susp_L3/Susp_L3/VB_Susp_L3_RevoluteJoint` | REVOLUTE | 0 | suspension | POSITION |
 | 11 | `/root/vehicle_body/Susp_L3/Wheels_L3/Wheels_L3/D6Joint` | D6 | 0 | wheel_spin_primary | VELOCITY |
 | 12 | `/root/vehicle_body/Susp_R1/Susp_R1/VB_Susp_R1_RevoluteJoint` | REVOLUTE | 0 | suspension | POSITION |
-| 13 | `/root/vehicle_body/Susp_R1/Wheels_R1/Wheels_R1/D6Joint` | D6 | 0 | wheel_spin_extra (rotX) | POSITION (locked) |
-| 14 | `/root/vehicle_body/Susp_R1/Wheels_R1/Wheels_R1/D6Joint` | D6 | 1 | wheel_spin_primary (rotY) | VELOCITY |
-| 15 | `/root/vehicle_body/Susp_R2/Susp_R2/VB_Susp_R2_RevoluteJoint` | REVOLUTE | 0 | suspension | POSITION |
-| 16 | `/root/vehicle_body/Susp_R2/Wheels_R2/Wheels_R2/D6Joint` | D6 | 0 | wheel_spin_extra (rotX) | POSITION (locked) |
-| 17 | `/root/vehicle_body/Susp_R2/Wheels_R2/Wheels_R2/D6Joint` | D6 | 1 | wheel_spin_primary (rotY) | VELOCITY |
-| 18 | `/root/vehicle_body/Susp_R3/Susp_R3/VB_Susp_R3_RevoluteJoint` | REVOLUTE | 0 | suspension | POSITION |
-| 19 | `/root/vehicle_body/Susp_R3/Wheels_R3/Wheels_R3/D6Joint` | D6 | 0 | wheel_spin_extra (rotX lock) | POSITION (locked) |
-| 20 | `/root/vehicle_body/Susp_R3/Wheels_R3/Wheels_R3/D6Joint` | D6 | 1 | wheel_spin_primary (rotY) | VELOCITY |
-
-All six wheels are symmetric (2 DOF each: locked axis + spin axis).
+| 13 | `/root/vehicle_body/Susp_R1/Wheels_R1/Wheels_R1/D6Joint` | D6 | 0 | wheel_spin_primary | VELOCITY |
+| 14 | `/root/vehicle_body/Susp_R2/Susp_R2/VB_Susp_R2_RevoluteJoint` | REVOLUTE | 0 | suspension | POSITION |
+| 15 | `/root/vehicle_body/Susp_R2/Wheels_R2/Wheels_R2/D6Joint` | D6 | 0 | wheel_spin_primary | VELOCITY |
+| 16 | `/root/vehicle_body/Susp_R3/Susp_R3/VB_Susp_R3_RevoluteJoint` | REVOLUTE | 0 | suspension | POSITION |
+| 17 | `/root/vehicle_body/Susp_R3/Wheels_R3/Wheels_R3/D6Joint` | D6 | 0 | wheel_spin_primary | VELOCITY |

@@ -46,33 +46,10 @@ class SuspensionGainSpec:
 
 
 @dataclass(frozen=True)
-class WheelHingeGainSpec:
-    lever_arm_m: float = 0.6
-    # Hard pose target: wheel vs swing-arm (diagram right 3°).
-    target_angle_rad: float = math.radians(3.0)
-    damping_ratio: float = 0.65
-    effective_inertia_kgm2: float = 80.0
-    armature: float = 0.02
-    # Residual past target ≈ target_angle / stiffness_multiplier.
-    stiffness_multiplier: float = 5.0
-    servo_stiffness_nm_rad: Optional[float] = None
-    servo_damping_nm_s_rad: Optional[float] = None
-    servo_max_torque_nm: float = 5000.0
-    stiffness: Optional[float] = None
-    damping: Optional[float] = None
-
-    @property
-    def nominal_lift_rad(self) -> float:
-        return self.target_angle_rad
-
-
-@dataclass(frozen=True)
 class WheelSpinGainSpec:
-    """MuJoCo VELOCITY actuator for wheel spin (kv -> joint_target_kd, ke must stay 0)."""
+    """Wheel spin properties used by the direct-torque drive."""
 
-    velocity_gain: float = 800.0
     armature: float = 0.01
-    max_torque_nm: float = 90000.0
 
 
 def classify_body_mass(label: str, spec: BodyMassSpec) -> Optional[float]:
@@ -155,38 +132,6 @@ def compute_suspension_spec(
     )
 
 
-def compute_wheel_hinge_spec(
-    body_spec: BodyMassSpec,
-    gain_spec: WheelHingeGainSpec,
-    gravity: float = 9.81,
-) -> DofPhysicsSpec:
-    load_n = body_spec.wheel_mass_kg * gravity
-    ke = gain_spec.stiffness
-    if ke is None:
-        ke = (
-            load_n
-            * gain_spec.lever_arm_m
-            / max(gain_spec.nominal_lift_rad, 1e-4)
-            * gain_spec.stiffness_multiplier
-        )
-
-    kd = gain_spec.damping
-    if kd is None:
-        kd = (
-            2.0
-            * gain_spec.damping_ratio
-            * math.sqrt(max(ke, 1.0) * max(gain_spec.effective_inertia_kgm2, 1e-3))
-        )
-
-    return DofPhysicsSpec(
-        stiffness=float(ke),
-        damping=float(kd),
-        armature=gain_spec.armature,
-        target_mode=JointTargetMode.POSITION,
-        nominal=0.0,
-    )
-
-
 def parse_body_mass_spec(raw: Mapping[str, float] | None) -> BodyMassSpec:
     raw = raw or {}
     return BodyMassSpec(
@@ -204,25 +149,29 @@ class WheelMaterialSpec:
     friction_stiffness: float = 500.0
 
 
+@dataclass(frozen=True)
+class VehicleContactSpec:
+    """Contact response for chassis / wheel / suspension collision proxies."""
+
+    ke: float = 80.0
+    kd: float = 20.0
+    restitution: float = 0.0
+    margin: float = 0.03
+    chassis_box_shrink: float = 0.98
+
+
+@dataclass(frozen=True)
+class RolloverSpec:
+    """Mitigate rollover bounce by releasing suspension pose servos when tipped."""
+
+    passive_suspension_upright_dot: float = 0.5
+
+
 def is_chassis_shape_label(label: str) -> bool:
     lower = str(label).lower().rstrip("/")
     parts = lower.split("/")
     name = parts[-1] if parts else lower
     return name == "vehicle_body"
-
-
-def apply_chassis_visual_only(builder_env) -> int:
-    """Keep concave chassis mesh for rendering; wheels provide ground contact."""
-    applied = 0
-    for shape_idx in range(builder_env.shape_count):
-        label = str(builder_env.shape_label[shape_idx])
-        if not is_chassis_shape_label(label):
-            continue
-        flags = int(builder_env.shape_flags[shape_idx])
-        if flags & int(ShapeFlags.COLLIDE_SHAPES):
-            builder_env.shape_flags[shape_idx] = flags & ~int(ShapeFlags.COLLIDE_SHAPES)
-            applied += 1
-    return applied
 
 
 def is_suspension_shape_label(label: str) -> bool:
@@ -262,7 +211,11 @@ def _add_visual_mesh_copy(builder_env, shape_idx: int) -> bool:
     return True
 
 
-def _replace_shape_with_aabb_box(builder_env, shape_idx: int) -> None:
+def _replace_shape_with_aabb_box(
+    builder_env,
+    shape_idx: int,
+    shrink: float = 1.0,
+) -> None:
     mesh = builder_env.shape_source[shape_idx]
     if mesh is None:
         return
@@ -273,7 +226,7 @@ def _replace_shape_with_aabb_box(builder_env, shape_idx: int) -> None:
     vmin = vertices.min(axis=0)
     vmax = vertices.max(axis=0)
     center = (vmin + vmax) * 0.5
-    half = np.maximum((vmax - vmin) * 0.5, 1e-4)
+    half = np.maximum((vmax - vmin) * 0.5, 1e-4) * max(float(shrink), 1e-3)
 
     shape_tf = builder_env.shape_transform[shape_idx]
     builder_env.shape_type[shape_idx] = int(GeoType.BOX)
@@ -307,9 +260,14 @@ def _replace_shape_with_bounding_sphere(builder_env, shape_idx: int) -> None:
     )
 
 
-def apply_vehicle_collision_proxies(builder_env) -> tuple[int, int, int]:
-    """Split authored visuals from stable collision proxies (no scipy/coacd)."""
+def apply_vehicle_collision_proxies(
+    builder_env,
+    contact_spec: VehicleContactSpec | None = None,
+) -> tuple[int, int, int, int]:
+    """Split authored visuals from stable convex collision proxies."""
+    contact_spec = contact_spec or VehicleContactSpec()
     visual_copies = 0
+    chassis_proxies = 0
     wheel_proxies = 0
     suspension_proxies = 0
 
@@ -329,14 +287,53 @@ def apply_vehicle_collision_proxies(builder_env) -> tuple[int, int, int]:
         if _add_visual_mesh_copy(builder_env, shape_idx):
             visual_copies += 1
 
-        if is_wheel_shape_label(label):
+        if is_chassis_shape_label(label):
+            _replace_shape_with_aabb_box(
+                builder_env,
+                shape_idx,
+                shrink=contact_spec.chassis_box_shrink,
+            )
+            chassis_proxies += 1
+        elif is_wheel_shape_label(label):
             _replace_shape_with_bounding_sphere(builder_env, shape_idx)
             wheel_proxies += 1
         elif is_suspension_shape_label(label):
             _replace_shape_with_aabb_box(builder_env, shape_idx)
             suspension_proxies += 1
 
-    return visual_copies, wheel_proxies, suspension_proxies
+    return visual_copies, chassis_proxies, wheel_proxies, suspension_proxies
+
+
+def is_vehicle_collision_shape_label(label: str) -> bool:
+    return (
+        is_chassis_shape_label(label)
+        or is_wheel_shape_label(label)
+        or is_suspension_shape_label(label)
+    )
+
+
+def apply_vehicle_contact_properties(
+    builder_env,
+    spec: VehicleContactSpec,
+) -> int:
+    """Apply soft, non-bouncy contact to all vehicle collision proxies."""
+    applied = 0
+    for shape_idx in range(builder_env.shape_count):
+        label = str(builder_env.shape_label[shape_idx])
+        if label.endswith("_visual"):
+            continue
+        if not is_vehicle_collision_shape_label(label):
+            continue
+        flags = int(builder_env.shape_flags[shape_idx])
+        if not (flags & int(ShapeFlags.COLLIDE_SHAPES)):
+            continue
+
+        builder_env.shape_material_ke[shape_idx] = float(spec.ke)
+        builder_env.shape_material_kd[shape_idx] = float(spec.kd)
+        builder_env.shape_material_restitution[shape_idx] = float(spec.restitution)
+        builder_env.shape_margin[shape_idx] = float(spec.margin)
+        applied += 1
+    return applied
 
 
 def is_wheel_shape_label(label: str) -> bool:
@@ -371,6 +368,31 @@ def parse_wheel_material_spec(raw: Mapping[str, float] | None) -> WheelMaterialS
         rolling_friction=float(raw.get("rolling_friction", 0.0005)),
         friction_stiffness=float(raw.get("friction_stiffness", 500.0)),
     )
+
+
+def parse_vehicle_contact_spec(raw: Mapping[str, float] | None) -> VehicleContactSpec:
+    raw = raw or {}
+    return VehicleContactSpec(
+        ke=float(raw.get("ke", 80.0)),
+        kd=float(raw.get("kd", 20.0)),
+        restitution=float(raw.get("restitution", 0.0)),
+        margin=float(raw.get("margin", 0.03)),
+        chassis_box_shrink=float(raw.get("chassis_box_shrink", 0.98)),
+    )
+
+
+def parse_rollover_spec(raw: Mapping[str, float] | None) -> RolloverSpec:
+    raw = raw or {}
+    return RolloverSpec(
+        passive_suspension_upright_dot=float(
+            raw.get("passive_suspension_upright_dot", 0.5)
+        ),
+    )
+
+
+def is_suspension_joint_label(label: str) -> bool:
+    lower = str(label).lower()
+    return "vb_susp" in lower and "revolute" in lower
 
 
 def parse_possess_offset(raw) -> Tuple[float, float, float]:
@@ -420,53 +442,8 @@ def parse_suspension_gain_spec(raw: Mapping[str, float] | None) -> SuspensionGai
     )
 
 
-def parse_wheel_hinge_gain_spec(raw: Mapping[str, float] | None) -> WheelHingeGainSpec:
-    raw = raw or {}
-    stiffness = raw.get("stiffness")
-    damping = raw.get("damping")
-    if raw.get("target_angle_deg") is not None:
-        target_angle_rad = math.radians(float(raw["target_angle_deg"]))
-    elif raw.get("nominal_lift_deg") is not None:
-        target_angle_rad = math.radians(float(raw["nominal_lift_deg"]))
-    elif raw.get("target_angle_rad") is not None:
-        target_angle_rad = float(raw["target_angle_rad"])
-    elif raw.get("nominal_lift_rad") is not None:
-        target_angle_rad = float(raw["nominal_lift_rad"])
-    else:
-        target_angle_rad = math.radians(3.0)
-    return WheelHingeGainSpec(
-        lever_arm_m=float(raw.get("lever_arm_m", 0.6)),
-        target_angle_rad=target_angle_rad,
-        damping_ratio=float(raw.get("damping_ratio", 0.65)),
-        effective_inertia_kgm2=float(raw.get("effective_inertia_kgm2", 80.0)),
-        armature=float(raw.get("armature", 0.02)),
-        stiffness_multiplier=float(raw.get("stiffness_multiplier", 5.0)),
-        servo_stiffness_nm_rad=(
-            None
-            if raw.get("servo_stiffness_nm_rad") is None
-            else float(raw["servo_stiffness_nm_rad"])
-        ),
-        servo_damping_nm_s_rad=(
-            None
-            if raw.get("servo_damping_nm_s_rad") is None
-            else float(raw["servo_damping_nm_s_rad"])
-        ),
-        servo_max_torque_nm=float(raw.get("servo_max_torque_nm", 5000.0)),
-        stiffness=None if stiffness is None else float(stiffness),
-        damping=None if damping is None else float(damping),
-    )
-
-
 def parse_wheel_spin_gain_spec(raw: Mapping[str, float] | None) -> WheelSpinGainSpec:
     raw = raw or {}
-    velocity_gain = float(
-        raw.get(
-            "velocity_gain",
-            raw.get("kv", raw.get("damping", 800.0)),
-        )
-    )
     return WheelSpinGainSpec(
-        velocity_gain=velocity_gain,
         armature=float(raw.get("armature", 0.01)),
-        max_torque_nm=float(raw.get("max_torque_nm", 90000.0)),
     )

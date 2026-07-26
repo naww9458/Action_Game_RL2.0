@@ -10,7 +10,7 @@ from script.role.objects.base_object import BaseObjectModel, BaseObject
 class SoftUsdGeneralModel(BaseObjectModel):
     type: Literal["soft_usd_general"] = "soft_usd_general"
 
-    file_name: str = str("hollow_sphere2_TetMesh.usdc") # USD 文件名稱
+    file_name: str = str("hollow_sphere_TetMesh.usdc") # USD 文件名稱
     file_path_or_source: str = "./Action_Game_RL_Assets/assets/" # USDC 路徑或來源
     mesh_path: str = str("/root/sphere/TetMesh") # USDC Mesh 或者 TetMesh 路徑
 

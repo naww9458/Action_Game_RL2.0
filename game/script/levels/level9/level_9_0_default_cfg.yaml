@@ -18,7 +18,7 @@ environment_configs:
     type: mujoco
     separate_worlds: null
     njmax: 300
-    nconmax: null
+    nconmax: '500'
     iterations: 10
     ls_iterations: 50
     ccd_iterations: 50
@@ -111,3 +111,46 @@ player_configs:
   controller: Human
   team_id: 1
   health: 5.0
+platform_configs:
+- type: platform
+  name: New_Platform
+  color:
+  - 200
+  - 200
+  - 200
+  default_position:
+  - 5.0
+  - 0.0
+  - 1.0
+  default_rotation:
+  - 0.0
+  - 0.0
+  default_velocity:
+  - 0.0
+  - 0.0
+  - 0.0
+  default_angular_velocity:
+  - 0.0
+  - 0.0
+  - 0.0
+  possess_offset:
+  - 0.0
+  - 0.0
+  - 0.0
+  abilities: []
+  object:
+    type: rigid_box
+    pattern: default
+    object_friction: 0.5
+    object_elasticity: 0.5
+    size:
+    - 1.0
+    - 1.0
+    - 1.0
+    object_mass: 0.0
+    lock_inertia: false
+    is_kinematic: true
+    as_site: false
+    color: null
+ability_generated_object_configs: {}
+entity_configs: {}

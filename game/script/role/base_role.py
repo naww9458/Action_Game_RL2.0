@@ -173,17 +173,16 @@ class BaseRole(ABC):
 
         job_pattern = object.get("pattern", "default")
         possess_offset_raw = kwargs.get("possess_offset", object.get("possess_offset"))
-        if possess_offset_raw is None and job_pattern == "wheeled_armored_vehicle_basic":
-            try:
-                from script.role.objects.object_template.wheeled_armored_vehicle_basic.vehicle_control_config import (
-                    get_vehicle_possess_offset,
-                )
+        if possess_offset_raw is None:
+            from script.role.abilities.articulation_control_config.joint_config_registry import (
+                resolve_possess_offset_for_pattern,
+            )
 
-                possess_offset = list(get_vehicle_possess_offset())
-            except Exception:
-                possess_offset = [0.0, 0.0, 0.0]
-        elif possess_offset_raw is None:
-            possess_offset = [0.0, 0.0, 0.0]
+            resolved = resolve_possess_offset_for_pattern(
+                job_pattern,
+                object.get("control_task"),
+            )
+            possess_offset = list(resolved) if resolved is not None else [0.0, 0.0, 0.0]
         else:
             possess_offset = [float(v) for v in possess_offset_raw[:3]]
             while len(possess_offset) < 3:

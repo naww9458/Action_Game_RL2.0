@@ -1,77 +1,79 @@
-# Wheeled armored vehicle (6-wheel, differential-drive ready).
-# Suspension / wheel-hinge springs use MuJoCo POSITION actuators (see vehicle_control_config.py).
+# Six-wheel armored vehicle control configuration / 六輪裝甲車控制配置。
+# Direct drive applies torque to each wheel-spin D6Joint DOF / 直接驅動對每個輪子旋轉 D6Joint 自由度施加扭矩。
 
 wheeled_armored_vehicle_basic:
   differential_drive:
-    soft_limit_factor: 0.95
+    soft_limit_factor: 0.95  # 關節軟限位比例；soft joint-limit fraction。
+    gravity: 9.81  # 重力加速度 (m/s²)，用於計算懸吊彈簧；gravity used for suspension spring calculations。
 
     init_state:
-      root_pos: [0.0, 0.0, 0.0]
-      root_rot: [0.0, 0.0, 0.0, 1.0]
+      root_pos: [0.0, 0.0, 0.0]  # 車體初始位置 [x, y, z]（公尺）；initial chassis position [m]。
+      root_rot: [0.0, 0.0, 0.0, 1.0]  # 車體初始四元數 [x, y, z, w]；initial chassis quaternion。
 
     joint_pos:
-      # Overridden at load by signed target_angle_deg (L− / R+).
-      "VB_Susp_.*_RevoluteJoint": 0.0
-      "D6Joint": 0.0
+      # 下列為檢視/預設姿勢值；實際懸吊目標由 target_angle_deg 的左右符號覆寫。
+      # Display/default pose values; suspension targets are overridden by signed target_angle_deg.
+      "VB_Susp_.*_RevoluteJoint": 0.0  # 懸吊關節預設角度 [rad]；suspension default angle [rad]。
+      "D6Joint": 0.0  # 輪子 D6 關節預設角度 [rad]；wheel D6 default angle [rad]。
 
-    non_rl_patterns: ["VB_Susp_.*_RevoluteJoint"]
+    non_rl_patterns: ["VB_Susp_.*_RevoluteJoint"]  # 不交給 RL 的關節名稱正則；joint-name regexes excluded from RL actions。
 
     drive:
-      max_linear_speed_m_s: 14.0
-      max_yaw_rate_rad_s: 1.8
-      wheel_radius_m: 0.35
-      track_width_m: 2.2
-      # Same local ω sign on L/R → same ground direction for this USD (axes are not mirrored).
-      # Using opposite signs swaps throttle/steer behavior (W turns, D drives).
-      left_spin_sign: 1.0
-      right_spin_sign: 1.0
+      # action[0] = throttle：W=+1、S=-1；action[1] = steer：A=+1、D=-1。
+      # 側向指令 ±1 對應 ±max_wheel_speed_rad_s；target=0 時直接扭矩控制器會主動煞停。
+      # A side command ±1 maps to ±max_wheel_speed_rad_s; direct torque control actively brakes target=0.
+      max_wheel_speed_rad_s: 40.0  # action=±1 時每個輪子旋轉 DOF 的目標最大角速度 [rad/s]；maximum target wheel speed at action=±1 [rad/s]。
+      max_wheel_torque_nm: 1000000.0  # 單個輪子旋轉 DOF 的直接扭矩上限 [N·m]；direct torque limit per wheel-spin DOF [N·m]。
+      velocity_control_gain_nm_per_rad_s: 800.0  # 速度誤差到扭矩的比例增益；proportional gain from speed error to torque [N·m/(rad/s)]。
+      left_spin_sign: 1.0  # 左輪關節軸方向校正（±1）；left wheel joint-axis sign correction (±1)。
+      right_spin_sign: 1.0  # 右輪關節軸方向校正（±1）；right wheel joint-axis sign correction (±1)。
 
-    # Wheel spin: Newton/MuJoCo VELOCITY actuator uses joint_target_kd as kv (ke must be 0).
+    # Wheel spin DOFs use direct joint torque; their built-in VELOCITY actuator is disabled.
     wheel_spin:
-      velocity_gain: 800.0
-      armature: 0.01
-      max_torque_nm: 90000.0
+      armature: 0.01  # 輪子旋轉關節附加轉動慣量 [kg·m²]；added wheel-spin joint armature [kg·m²]。
 
     human_control:
       keyboard:
-        throttle_positive: [w, up]
-        throttle_negative: [s, down]
-        steer_positive: [d, right]
-        steer_negative: [a, left]
-      mouse: {}
+        throttle_positive: [w, up]  # action[0] 正向（前進）；positive action[0] / forward。
+        throttle_negative: [s, down]  # action[0] 負向（倒退）；negative action[0] / reverse。
+        steer_positive: [a, left]  # action[1] 正向（左轉）；positive action[1] / left turn。
+        steer_negative: [d, right]  # action[1] 負向（右轉）；negative action[1] / right turn。
+      mouse: {}  # 滑鼠輸入綁定；mouse input bindings。
 
     body_masses:
-      chassis_mass_kg: 14000.0
-      suspension_mass_kg: 200.0
-      wheel_mass_kg: 300.0
+      chassis_mass_kg: 14000.0  # 底盤質量 [kg]；chassis mass [kg]。
+      suspension_mass_kg: 200.0  # 每個懸吊臂質量 [kg]；mass of each suspension arm [kg]。
+      wheel_mass_kg: 300.0  # 每個輪子質量 [kg]；mass of each wheel [kg]。
 
-    # Swing arm vs chassis (diagram left). target_angle_deg is the hard pose.
-    # stiffness_scale ≈ how tightly gravity may pull past that pose (residual ≈ target/scale).
+    # 單級擺臂懸吊：POSITION 彈簧阻尼伺服持續上擡車體並提供減震。
+    # Single swing-arm suspension: POSITION spring-damper servo lifts chassis and absorbs bumps.
     suspension:
-      num_corners: 6
-      lever_arm_m: 0.65
-      target_angle_deg: 3.0
-      include_wheel_load: false
-      stiffness_scale: 5.0
-      damping_ratio: 0.55
-      effective_inertia_kgm2: 540.0
-      armature: 0.05
-      servo_max_torque_nm: 50000.0
-
-    # Wheel vs swing arm (diagram right). Combined with arm target, wheel stays ~level.
-    wheel_hinge:
-      lever_arm_m: 0.6
-      target_angle_deg: 1.0
-      stiffness_multiplier: 5.0
-      damping_ratio: 0.65
-      effective_inertia_kgm2: 80.0
-      armature: 0.02
-      servo_max_torque_nm: 5000.0
+      num_corners: 6  # 分攤底盤重量的懸吊角點數；number of suspension corners sharing chassis load。
+      lever_arm_m: 0.65  # 懸吊重力力臂 [m]；suspension gravity lever arm [m]。
+      target_angle_deg: 3.0  # 懸吊目標角度絕對值 [deg]；absolute suspension target angle [deg]。
+      include_wheel_load: false  # 是否把輪子質量計入懸吊載荷；include wheel mass in suspension load。
+      stiffness_scale: 5.0  # 相對重力平衡剛度倍率；stiffness multiplier relative to gravity equilibrium。
+      damping_ratio: 0.55  # 懸吊阻尼比；suspension damping ratio。
+      effective_inertia_kgm2: 540.0  # 懸吊等效轉動慣量 [kg·m²]；effective suspension inertia [kg·m²]。
+      armature: 0.05  # 懸吊關節附加轉動慣量 [kg·m²]；added suspension joint armature [kg·m²]。
+      servo_max_torque_nm: 50000.0  # 懸吊 POSITION 伺服最大扭矩 [N·m]；maximum suspension position-servo torque [N·m]。
 
     wheel_materials:
-      friction: 0.4
-      torsional_friction: 0.001
-      rolling_friction: 0.0005
-      friction_stiffness: 500.0
+      friction: 0.4  # 輪胎-地面庫侖摩擦係數；tire-ground Coulomb friction coefficient。
+      torsional_friction: 0.001  # 接觸扭轉摩擦；contact torsional friction。
+      rolling_friction: 0.0005  # 滾動阻力係數；rolling-resistance coefficient。
+      friction_stiffness: 500.0  # 摩擦約束剛度；friction constraint stiffness。
 
-    possess_offset: [0.0, 0.0, 1.5]
+    # 側翻時防止車體視覺模型穿地與接觸彈射的碰撞代理參數。
+    # Collision-proxy settings to prevent rollover clipping and contact popping.
+    contact:
+      ke: 80.0  # 接觸法向剛度（低於預設 1000，減少彈射）；normal contact stiffness (lower = less bounce)。
+      kd: 20.0  # 接觸法向阻尼；normal contact damping。
+      restitution: 0.0  # 恢復係數（0 = 完全不彈）；coefficient of restitution (0 = no bounce)。
+      margin: 0.03  # 接觸邊距 [m]，提前建立接觸避免深穿透；contact margin [m] to reduce deep penetration。
+      chassis_box_shrink: 0.98  # 底盤 AABB 碰撞盒縮放（略小於視覺 mesh）；chassis AABB shrink vs visual mesh。
+
+    rollover:
+      passive_suspension_upright_dot: 0.5  # 車體 up 軸與世界 Z 夾角過大時，懸吊改為被動（不再硬拉姿勢）；release suspension pose servos when body up-dot falls below this threshold。
+
+    possess_offset: [0.0, 0.0, 1.5]  # 角色附身/相機相對車體偏移 [m]；possess-camera offset from chassis [m]。

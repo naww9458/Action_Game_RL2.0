@@ -212,11 +212,11 @@ entity_configs:
     - 0.0
     abilities: []
     object:
-      pattern: hollow_sphere2_soft
+      pattern: hollow_sphere_soft
       type: soft_usd_general
       object_friction: 0.5
       object_elasticity: 0.5
-      file_name: hollow_sphere2_TetMesh.usdc
+      file_name: hollow_sphere_TetMesh.usdc
       file_path_or_source: ./Action_Game_RL_Assets/assets/
       mesh_path: /root/sphere/TetMesh
       scale: 1.0

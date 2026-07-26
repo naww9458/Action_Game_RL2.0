@@ -15,23 +15,29 @@ from script.role.abilities.articulation_control_config.config_models import (
     JointParam,
     TaskParam,
 )
+from script.role.abilities.articulation_control_config.runtime_helpers import (
+    RuntimeNominalsGpuSpec,
+    build_runtime_nominals_gpu_spec_from_masks,
+)
 
 from .vehicle_body_model import (
     BodyMassSpec,
+    RolloverSpec,
     SuspensionGainSpec,
-    WheelHingeGainSpec,
+    VehicleContactSpec,
     WheelMaterialSpec,
     WheelSpinGainSpec,
     apply_body_masses,
-    apply_chassis_visual_only,
     apply_vehicle_collision_proxies,
+    apply_vehicle_contact_properties,
     apply_wheel_shape_materials,
     compute_suspension_spec,
-    compute_wheel_hinge_spec,
+    is_suspension_joint_label,
     parse_body_mass_spec,
     parse_possess_offset,
+    parse_rollover_spec,
     parse_suspension_gain_spec,
-    parse_wheel_hinge_gain_spec,
+    parse_vehicle_contact_spec,
     parse_wheel_material_spec,
     parse_wheel_spin_gain_spec,
 )
@@ -39,20 +45,18 @@ from .vehicle_drive import (
     DriveSpec,
     VehicleCommandInterface,
     build_vehicle_command_interface,
-    compute_max_spin_omega,
     parse_drive_spec,
 )
 from .vehicle_joint_model import (
     JointRole,
     classify_joint_dof,
+    count_joint_label_dofs,
     normalize_joint_label,
     resolve_dof_param_for_view,
     resolve_dof_physics,
     set_active_suspension_spec,
-    set_active_wheel_hinge_spec,
     set_active_wheel_spin_spec,
     static_suspension_angle_rad,
-    static_wheel_hinge_angle_rad,
 )
 
 VEHICLE_CONTROL_CONFIG_PATH = Path(__file__).resolve().parent / "control_configs.yaml"
@@ -72,9 +76,10 @@ class VehicleTaskConfig:
     non_rl_patterns: Tuple[str, ...]
     body_mass_spec: BodyMassSpec
     suspension_gain_spec: SuspensionGainSpec
-    wheel_hinge_gain_spec: WheelHingeGainSpec
     wheel_spin_gain_spec: WheelSpinGainSpec
     wheel_material_spec: WheelMaterialSpec
+    contact_spec: VehicleContactSpec
+    rollover_spec: RolloverSpec
     possess_offset: Tuple[float, float, float]
     drive_spec: DriveSpec
     human_control: Dict[str, Any]
@@ -106,9 +111,10 @@ class VehicleTaskConfig:
 
         body_mass_spec = parse_body_mass_spec(task_cfg.get("body_masses"))
         suspension_gain_spec = parse_suspension_gain_spec(task_cfg.get("suspension"))
-        wheel_hinge_gain_spec = parse_wheel_hinge_gain_spec(task_cfg.get("wheel_hinge"))
         wheel_spin_gain_spec = parse_wheel_spin_gain_spec(task_cfg.get("wheel_spin"))
         wheel_material_spec = parse_wheel_material_spec(task_cfg.get("wheel_materials"))
+        contact_spec = parse_vehicle_contact_spec(task_cfg.get("contact"))
+        rollover_spec = parse_rollover_spec(task_cfg.get("rollover"))
         possess_offset = parse_possess_offset(task_cfg.get("possess_offset"))
         gravity = float(task_cfg.get("gravity", 9.81))
         drive_spec = parse_drive_spec(task_cfg.get("drive"))
@@ -123,9 +129,10 @@ class VehicleTaskConfig:
             non_rl_patterns=tuple(task_cfg.get("non_rl_patterns", [])),
             body_mass_spec=body_mass_spec,
             suspension_gain_spec=suspension_gain_spec,
-            wheel_hinge_gain_spec=wheel_hinge_gain_spec,
             wheel_spin_gain_spec=wheel_spin_gain_spec,
             wheel_material_spec=wheel_material_spec,
+            contact_spec=contact_spec,
+            rollover_spec=rollover_spec,
             possess_offset=possess_offset,
             drive_spec=drive_spec,
             human_control=human_control,
@@ -134,24 +141,19 @@ class VehicleTaskConfig:
         suspension_spec = compute_suspension_spec(
             body_mass_spec, suspension_gain_spec, gravity=gravity
         )
-        wheel_hinge_spec = compute_wheel_hinge_spec(
-            body_mass_spec, wheel_hinge_gain_spec, gravity=gravity
-        )
         set_active_suspension_spec(suspension_spec)
-        set_active_wheel_hinge_spec(wheel_hinge_spec)
         from .vehicle_joint_model import DofPhysicsSpec
 
-        max_spin_omega = compute_max_spin_omega(drive_spec)
         spin_spec = wheel_spin_gain_spec
         set_active_wheel_spin_spec(
             DofPhysicsSpec(
                 stiffness=0.0,
-                damping=float(spin_spec.velocity_gain),
+                damping=0.0,
                 armature=float(spin_spec.armature),
                 target_mode=JointTargetMode.VELOCITY,
                 nominal=0.0,
                 rl_controllable=True,
-                action_scale=max_spin_omega,
+                action_scale=drive_spec.max_wheel_torque_nm,
             )
         )
         _TASK_CONFIG_CACHE[cache_key] = instance
@@ -199,6 +201,7 @@ class VehicleTaskConfig:
         rl_indices: List[int] = []
 
         label_occurrence: Dict[str, int] = {}
+        label_dof_counts = count_joint_label_dofs(joint_labels)
         action_cursor = 0
         use_command_interface = hasattr(self, "get_command_interface")
 
@@ -206,7 +209,12 @@ class VehicleTaskConfig:
             occ = label_occurrence.get(label, 0)
             label_occurrence[label] = occ + 1
 
-            _, spec = resolve_dof_param_for_view(label, occ, self.joint_pos_overrides)
+            _, spec = resolve_dof_param_for_view(
+                label,
+                occ,
+                self.joint_pos_overrides,
+                label_dof_count=label_dof_counts.get(label, 1),
+            )
             non_rl = self._is_non_rl(label)
 
             if spec is not None:
@@ -238,6 +246,16 @@ class VehicleTaskConfig:
 
         return scales, nominals, limits_max, limits_min, rl_mask, rl_indices, self.soft_limit_factor
 
+    def build_runtime_nominals_gpu_spec(
+        self,
+        joint_labels: List[str],
+    ) -> RuntimeNominalsGpuSpec | None:
+        return build_runtime_nominals_gpu_spec_from_masks(
+            joint_labels=joint_labels,
+            passive_label_predicate=is_suspension_joint_label,
+            upright_dot_threshold=self.rollover_spec.passive_suspension_upright_dot,
+        )
+
     def apply_builder_physics_init(
         self,
         builder_env,
@@ -249,9 +267,11 @@ class VehicleTaskConfig:
         builder_env.joint_q[start_q_idx + 3 : start_q_idx + 7] = list(self.root_rot)
 
         bodies_updated = apply_body_masses(builder_env, self.body_mass_spec)
-        apply_chassis_visual_only(builder_env)
-        visual_copies, wheel_proxies, suspension_proxies = apply_vehicle_collision_proxies(
-            builder_env
+        visual_copies, chassis_proxies, wheel_proxies, suspension_proxies = (
+            apply_vehicle_collision_proxies(builder_env, self.contact_spec)
+        )
+        contacts_updated = apply_vehicle_contact_properties(
+            builder_env, self.contact_spec
         )
         wheels_updated = apply_wheel_shape_materials(
             builder_env, self.wheel_material_spec
@@ -261,13 +281,7 @@ class VehicleTaskConfig:
             self.suspension_gain_spec,
             gravity=self.gravity,
         )
-        wheel_hinge_spec = compute_wheel_hinge_spec(
-            self.body_mass_spec,
-            self.wheel_hinge_gain_spec,
-            gravity=self.gravity,
-        )
         set_active_suspension_spec(suspension_spec)
-        set_active_wheel_hinge_spec(wheel_hinge_spec)
 
         applied = 0
         spring_actuators = 0
@@ -301,19 +315,10 @@ class VehicleTaskConfig:
                     max_torque = self.suspension_gain_spec.servo_max_torque_nm
                     stiffness_override = self.suspension_gain_spec.servo_stiffness_nm_rad
                     damping_override = self.suspension_gain_spec.servo_damping_nm_s_rad
-                elif role == JointRole.WHEEL_HINGE:
-                    spring_spec = wheel_hinge_spec
-                    target_rad = static_wheel_hinge_angle_rad(
-                        label, self.wheel_hinge_gain_spec.target_angle_rad
-                    )
-                    max_torque = self.wheel_hinge_gain_spec.servo_max_torque_nm
-                    stiffness_override = self.wheel_hinge_gain_spec.servo_stiffness_nm_rad
-                    damping_override = self.wheel_hinge_gain_spec.servo_damping_nm_s_rad
                 else:
                     spring_spec = None
 
                 if spring_spec is not None:
-                    # The vehicle-specific pose and spring properties stay in this template.
                     ke = float(
                         spring_spec.stiffness
                         if stiffness_override is None
@@ -332,12 +337,15 @@ class VehicleTaskConfig:
                     builder_env.joint_effort_limit[qd] = float(max_torque)
                     spring_actuators += 1
                 elif role == JointRole.WHEEL_SPIN:
-                    spin = self.wheel_spin_gain_spec
                     builder_env.joint_target_ke[qd] = 0.0
-                    builder_env.joint_target_kd[qd] = float(spin.velocity_gain)
+                    builder_env.joint_target_kd[qd] = 0.0
                     builder_env.joint_target_mode[qd] = int(JointTargetMode.VELOCITY)
-                    builder_env.joint_effort_limit[qd] = float(spin.max_torque_nm)
-                    builder_env.joint_armature[qd] = float(spin.armature)
+                    builder_env.joint_effort_limit[qd] = float(
+                        self.drive_spec.max_wheel_torque_nm
+                    )
+                    builder_env.joint_armature[qd] = float(
+                        self.wheel_spin_gain_spec.armature
+                    )
                 else:
                     builder_env.joint_target_ke[qd] = spec.stiffness
                     builder_env.joint_target_kd[qd] = spec.damping
@@ -360,39 +368,27 @@ class VehicleTaskConfig:
         print(
             f"[VehicleTaskConfig] Applied physics init: task={self.task_name}, "
             f"bodies_mass={bodies_updated}, wheel_shapes={wheels_updated}, "
-            f"visual_copies={visual_copies}, wheel_proxies={wheel_proxies}, "
-            f"susp_proxies={suspension_proxies}, "
+            f"visual_copies={visual_copies}, chassis_proxies={chassis_proxies}, "
+            f"wheel_proxies={wheel_proxies}, "
+            f"susp_proxies={suspension_proxies}, contact_shapes={contacts_updated}, "
+            f"contact_ke={self.contact_spec.ke:.1f}, "
+            f"contact_kd={self.contact_spec.kd:.1f}, "
+            f"contact_restitution={self.contact_spec.restitution:.2f}, "
+            f"contact_margin={self.contact_spec.margin:.3f}, "
             f"suspension_target_deg={target_deg:.2f}, "
             f"suspension_ke={suspension_spec.stiffness:.1f}, "
             f"suspension_kd={suspension_spec.damping:.1f}, "
             f"suspension_max_torque={self.suspension_gain_spec.servo_max_torque_nm:.1f}, "
             f"corner_gravity_moment~={corner_moment:.1f} Nm, "
             f"expected_residual_past_target_deg~={expected_residual_deg:.2f}, "
-            f"wheel_hinge_target_deg={self.wheel_hinge_gain_spec.target_angle_rad * 57.2957795:.2f}, "
-            f"wheel_hinge_ke={wheel_hinge_spec.stiffness:.1f}, "
-            f"wheel_hinge_kd={wheel_hinge_spec.damping:.1f}, "
-            f"wheel_hinge_max_torque={self.wheel_hinge_gain_spec.servo_max_torque_nm:.1f}, "
-            f"wheel_spin_kv={self.wheel_spin_gain_spec.velocity_gain:.1f} (joint_target_kd), "
-            f"wheel_spin_ke=0.0, "
-            f"wheel_spin_max_torque={self.wheel_spin_gain_spec.max_torque_nm:.1f}, "
-            f"drive_max_speed_m_s={self.drive_spec.max_linear_speed_m_s:.1f}, "
+            f"wheel_spin_direct_torque_max={self.drive_spec.max_wheel_torque_nm:.1f}, "
+            f"wheel_spin_velocity_actuator=disabled, "
             f"spring_actuators={spring_actuators}, "
             f"joints={joint_end - joint_start}, actuated_dofs={applied}"
         )
-
-
-def get_vehicle_possess_offset(
-    task_name: str = VEHICLE_DEFAULT_TASK,
-) -> Tuple[float, float, float]:
-    return get_vehicle_task_config(task_name=task_name).possess_offset
 
 
 def get_vehicle_task_config(
     task_name: str = VEHICLE_DEFAULT_TASK,
 ) -> VehicleTaskConfig:
     return VehicleTaskConfig.from_yaml(task_name=task_name)
-
-
-def load_vehicle_config() -> Dict[str, Any]:
-    with VEHICLE_CONTROL_CONFIG_PATH.open("r", encoding="utf-8") as fh:
-        return yaml.safe_load(fh) or {}

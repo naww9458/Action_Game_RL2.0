@@ -1,0 +1,165 @@
+{
+    "fps": 24.0,
+    "duration": 0.0,
+    "up_axis": Axis.Z,
+    "path_body_map": {
+        "/root/vehicle_body/vehicle_body": 0,
+        "/root/vehicle_body/Susp_L1/Susp_L1": 1,
+        "/root/vehicle_body/Susp_L1/Wheels_L1/Wheels_L1": 2,
+        "/root/vehicle_body/Susp_L2/Susp_L2": 3,
+        "/root/vehicle_body/Susp_L2/Wheels_L2/Wheels_L2": 4,
+        "/root/vehicle_body/Susp_L3/Susp_L3": 5,
+        "/root/vehicle_body/Susp_L3/Wheels_L3/Wheels_L3": 6,
+        "/root/vehicle_body/Susp_R1/Susp_R1": 7,
+        "/root/vehicle_body/Susp_R1/Wheels_R1/Wheels_R1": 8,
+        "/root/vehicle_body/Susp_R2/Susp_R2": 9,
+        "/root/vehicle_body/Susp_R2/Wheels_R2/Wheels_R2": 10,
+        "/root/vehicle_body/Susp_R3/Susp_R3": 11,
+        "/root/vehicle_body/Susp_R3/Wheels_R3/Wheels_R3": 12
+    },
+    "path_joint_map": {
+        "/root/vehicle_body/Susp_L1/Susp_L1/VB_Susp_L1_RevoluteJoint": 1,
+        "/root/vehicle_body/Susp_L1/Wheels_L1/Wheels_L1/D6Joint": 2,
+        "/root/vehicle_body/Susp_L2/Susp_L2/VB_Susp_L2_RevoluteJoint": 3,
+        "/root/vehicle_body/Susp_L2/Wheels_L2/Wheels_L2/D6Joint": 4,
+        "/root/vehicle_body/Susp_L3/Susp_L3/VB_Susp_L3_RevoluteJoint": 5,
+        "/root/vehicle_body/Susp_L3/Wheels_L3/Wheels_L3/D6Joint": 6,
+        "/root/vehicle_body/Susp_R1/Susp_R1/VB_Susp_R1_RevoluteJoint": 7,
+        "/root/vehicle_body/Susp_R1/Wheels_R1/Wheels_R1/D6Joint": 8,
+        "/root/vehicle_body/Susp_R2/Susp_R2/VB_Susp_R2_RevoluteJoint": 9,
+        "/root/vehicle_body/Susp_R2/Wheels_R2/Wheels_R2/D6Joint": 10,
+        "/root/vehicle_body/Susp_R3/Susp_R3/VB_Susp_R3_RevoluteJoint": 11,
+        "/root/vehicle_body/Susp_R3/Wheels_R3/Wheels_R3/D6Joint": 12
+    },
+    "path_shape_map": {
+        "/root/vehicle_body/vehicle_body": 0,
+        "/root/vehicle_body/Susp_L1/Susp_L1": 1,
+        "/root/vehicle_body/Susp_L1/Wheels_L1/Wheels_L1": 2,
+        "/root/vehicle_body/Susp_R1/Susp_R1": 3,
+        "/root/vehicle_body/Susp_R1/Wheels_R1/Wheels_R1": 4,
+        "/root/vehicle_body/Susp_L2/Susp_L2": 5,
+        "/root/vehicle_body/Susp_L2/Wheels_L2/Wheels_L2": 6,
+        "/root/vehicle_body/Susp_L3/Susp_L3": 7,
+        "/root/vehicle_body/Susp_L3/Wheels_L3/Wheels_L3": 8,
+        "/root/vehicle_body/Susp_R3/Susp_R3": 9,
+        "/root/vehicle_body/Susp_R3/Wheels_R3/Wheels_R3": 10,
+        "/root/vehicle_body/Susp_R2/Susp_R2": 11,
+        "/root/vehicle_body/Susp_R2/Wheels_R2/Wheels_R2": 12
+    },
+    "path_shape_scale": {
+        "/root/vehicle_body/vehicle_body": vec3f([
+            1.0,
+            1.0,
+            1.0
+        ]),
+        "/root/vehicle_body/Susp_L1/Susp_L1": vec3f([
+            1.0,
+            1.0,
+            1.0
+        ]),
+        "/root/vehicle_body/Susp_L1/Wheels_L1/Wheels_L1": vec3f([
+            1.0,
+            1.0,
+            1.0
+        ]),
+        "/root/vehicle_body/Susp_R1/Susp_R1": vec3f([
+            1.0,
+            1.0,
+            1.0
+        ]),
+        "/root/vehicle_body/Susp_R1/Wheels_R1/Wheels_R1": vec3f([
+            1.0,
+            1.0,
+            1.0
+        ]),
+        "/root/vehicle_body/Susp_L2/Susp_L2": vec3f([
+            1.0,
+            1.0,
+            1.0
+        ]),
+        "/root/vehicle_body/Susp_L2/Wheels_L2/Wheels_L2": vec3f([
+            1.0,
+            1.0,
+            1.0
+        ]),
+        "/root/vehicle_body/Susp_L3/Susp_L3": vec3f([
+            1.0,
+            1.0,
+            1.0
+        ]),
+        "/root/vehicle_body/Susp_L3/Wheels_L3/Wheels_L3": vec3f([
+            1.0,
+            1.0,
+            1.0
+        ]),
+        "/root/vehicle_body/Susp_R3/Susp_R3": vec3f([
+            1.0,
+            1.0,
+            1.0
+        ]),
+        "/root/vehicle_body/Susp_R3/Wheels_R3/Wheels_R3": vec3f([
+            1.0,
+            1.0,
+            1.0
+        ]),
+        "/root/vehicle_body/Susp_R2/Susp_R2": vec3f([
+            1.0,
+            1.0,
+            1.0
+        ]),
+        "/root/vehicle_body/Susp_R2/Wheels_R2/Wheels_R2": vec3f([
+            1.0,
+            1.0,
+            1.0
+        ])
+    },
+    "mass_unit": 1.0,
+    "linear_unit": 1.0,
+    "scene_attributes": {
+        "physics:gravityDirection": Gf.Vec3f(0.0,
+        0.0,
+        0.0),
+        "physics:gravityMagnitude": -inf
+    },
+    "physics_dt": 0.001,
+    "collapse_results": None,
+    "schema_attrs": {
+        "newton": {
+            "/root/PhysicsScene": {},
+            "/root/vehicle_body": {
+                "newton:selfCollisionEnabled": False
+            },
+            "/root": {},
+            "/root/vehicle_body/Susp_L1/Susp_L1": {},
+            "/root/vehicle_body/Susp_L1/Wheels_L1/Wheels_L1": {},
+            "/root/vehicle_body/Susp_L2/Susp_L2": {},
+            "/root/vehicle_body/Susp_L2/Wheels_L2/Wheels_L2": {},
+            "/root/vehicle_body/Susp_L3/Susp_L3": {},
+            "/root/vehicle_body/Susp_L3/Wheels_L3/Wheels_L3": {
+                "newton:contactMargin": 0.0
+            },
+            "/root/vehicle_body/Susp_R1/Susp_R1": {},
+            "/root/vehicle_body/Susp_R1/Wheels_R1/Wheels_R1": {},
+            "/root/vehicle_body/Susp_R2/Susp_R2": {},
+            "/root/vehicle_body/Susp_R2/Wheels_R2/Wheels_R2": {},
+            "/root/vehicle_body/Susp_R3/Susp_R3": {},
+            "/root/vehicle_body/Susp_R3/Wheels_R3/Wheels_R3": {},
+            "/root/vehicle_body/vehicle_body": {},
+            "/root/vehicle_body/Susp_L1/Susp_L1/VB_Susp_L1_RevoluteJoint": {},
+            "/root/vehicle_body/Susp_L1/Wheels_L1/Wheels_L1/D6Joint": {},
+            "/root/vehicle_body/Susp_L2/Susp_L2/VB_Susp_L2_RevoluteJoint": {},
+            "/root/vehicle_body/Susp_L2/Wheels_L2/Wheels_L2/D6Joint": {},
+            "/root/vehicle_body/Susp_L3/Susp_L3/VB_Susp_L3_RevoluteJoint": {},
+            "/root/vehicle_body/Susp_L3/Wheels_L3/Wheels_L3/D6Joint": {},
+            "/root/vehicle_body/Susp_R1/Susp_R1/VB_Susp_R1_RevoluteJoint": {},
+            "/root/vehicle_body/Susp_R1/Wheels_R1/Wheels_R1/D6Joint": {},
+            "/root/vehicle_body/Susp_R2/Susp_R2/VB_Susp_R2_RevoluteJoint": {},
+            "/root/vehicle_body/Susp_R2/Wheels_R2/Wheels_R2/D6Joint": {},
+            "/root/vehicle_body/Susp_R3/Susp_R3/VB_Susp_R3_RevoluteJoint": {},
+            "/root/vehicle_body/Susp_R3/Wheels_R3/Wheels_R3/D6Joint": {}
+        }
+    },
+    "path_body_relative_transform": {},
+    "max_solver_iterations": -1,
+    "actuator_count": 0
+}

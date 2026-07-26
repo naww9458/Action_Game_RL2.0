@@ -12,6 +12,10 @@ from newton import JointTargetMode
 from script.role.abilities.ability import Ability
 from script.role.abilities.articulation_control_config.joint_config_registry import (
     resolve_command_interface_for_pattern,
+    resolve_runtime_nominals_gpu_spec,
+)
+from script.role.abilities.articulation_control_config.runtime_helpers import (
+    adjust_runtime_joint_nominals_kernel,
 )
 from script.role.abilities.articulation_control_config.profile_registry import (
     AxisKeyBindings,
@@ -74,6 +78,8 @@ def _create_mjlab_action_applier(
 
 @wp.kernel
 def write_mjlab_targets_to_control_kernel(
+    joint_f: wp.array(dtype=float),
+    joint_qd: wp.array(dtype=float),
     joint_target_pos: wp.array(dtype=float),
     joint_target_vel: wp.array(dtype=float),
     index_rl_players_gpu: wp.array(dtype=wp.int32),
@@ -91,6 +97,9 @@ def write_mjlab_targets_to_control_kernel(
     joint_rl_action_indices: wp.array(dtype=wp.int32),
     joint_target_modes: wp.array(dtype=wp.int32),
     use_per_dof_targets: int,
+    use_direct_joint_torque: int,
+    direct_torque_limit: float,
+    direct_velocity_gain: float,
     position_mode: int,
     velocity_mode: int,
 ):
@@ -129,7 +138,18 @@ def write_mjlab_targets_to_control_kernel(
         else:
             target_val = float(joint_nominal_qs[dof])
 
-        if mode == velocity_mode:
+        if use_direct_joint_torque != 0 and joint_rl_mask[dof] != 0:
+            # The command is a target wheel angular velocity.  Drive the wheel
+            # through direct joint torque, including active braking at zero.
+            torque = direct_velocity_gain * (
+                target_val - joint_qd[global_dof_idx]
+            )
+            if torque > direct_torque_limit:
+                torque = direct_torque_limit
+            elif torque < -direct_torque_limit:
+                torque = -direct_torque_limit
+            joint_f[global_dof_idx] = torque
+        elif mode == velocity_mode:
             joint_target_vel[global_dof_idx] = target_val
         else:
             joint_target_pos[global_dof_idx] = target_val
@@ -153,6 +173,9 @@ class Articulation_body_control(Ability):
         self._pending_human_control: dict | None = None
         self._human_control_applied = False
         self._control_task: str | None = None
+        self._runtime_nominals_passive_mask_gpu: Optional[wp.array] = None
+        self._runtime_nominals_default_gpu: Optional[wp.array] = None
+        self._runtime_nominals_upright_threshold: float = 0.0
 
         self._low_level_actions_torch: Optional[torch.Tensor] = None
         self._low_level_actions_wp: Optional[wp.array2d] = None
@@ -196,6 +219,88 @@ class Articulation_body_control(Ability):
         super().configure_from_player_configs_post_indices(level)
         if self._configured:
             self._build_action_buffers()
+            self._setup_runtime_nominals_gpu()
+
+    def _setup_runtime_nominals_gpu(self) -> None:
+        self._runtime_nominals_passive_mask_gpu = None
+        self._runtime_nominals_default_gpu = None
+        self._runtime_nominals_upright_threshold = 0.0
+
+        joint_labels = self.articulation_body.control_joint_labels.get(self.pattern)
+        if not joint_labels:
+            return
+
+        gpu_spec = resolve_runtime_nominals_gpu_spec(
+            self.pattern,
+            joint_labels=joint_labels,
+            task_name=self._control_task,
+        )
+        if gpu_spec is None:
+            return
+
+        nominals_gpu = self.articulation_body.control_joint_nominal_qs_gpus.get(
+            self.pattern
+        )
+        if nominals_gpu is None:
+            return
+
+        device = self.physics_manager.device
+        self._runtime_nominals_passive_mask_gpu = wp.array(
+            gpu_spec.passive_dof_mask,
+            dtype=wp.int32,
+            device=device,
+        )
+        self._runtime_nominals_default_gpu = wp.array(
+            nominals_gpu.numpy(),
+            dtype=nominals_gpu.dtype,
+            device=device,
+        )
+        self._runtime_nominals_upright_threshold = float(
+            gpu_spec.upright_dot_threshold
+        )
+
+    def _launch_runtime_nominals_adjustment(
+        self,
+        view,
+        controlled_player_indices: wp.array,
+        num_controlled_players: int,
+    ) -> None:
+        if self._runtime_nominals_passive_mask_gpu is None:
+            return
+
+        joint_q = view.get_dof_positions(self.physics_manager.model)
+        wp.launch(
+            kernel=adjust_runtime_joint_nominals_kernel,
+            dim=num_controlled_players,
+            inputs=[
+                self.physics_manager.state_0.body_q,
+                joint_q,
+                controlled_player_indices,
+                self.articulation_body.view_object_indices_gpus[self.pattern],
+                self.articulation_body.view_body_local_indices_gpus[self.pattern],
+                self.articulation_body.num_objects_env,
+                self.articulation_body.num_rigid_bodies_env,
+                view.count_per_world,
+                view.joint_dof_count,
+                self.articulation_body.control_joint_nominal_qs_gpus[self.pattern],
+                self._runtime_nominals_default_gpu,
+                self._runtime_nominals_passive_mask_gpu,
+                self._runtime_nominals_upright_threshold,
+            ],
+            device=self.physics_manager.device,
+        )
+
+    def _direct_joint_torque_params(self) -> tuple[int, float, float]:
+        iface = self._command_interface
+        if not self._use_command_expander or iface is None:
+            return 0, 0.0, 0.0
+        if not getattr(iface, "uses_direct_joint_torque", False):
+            return 0, 0.0, 0.0
+        return (
+            1,
+            float(getattr(iface, "direct_torque_limit", 0.0)),
+            float(getattr(iface, "direct_velocity_gain", 0.0)),
+        )
 
     def apply_runtime_keymapping(self) -> None:
         if not self._use_command_expander or not self._pending_human_control:
@@ -367,10 +472,23 @@ class Articulation_body_control(Ability):
         else:
             num_controlled_players = controlled_player_indices.shape[0]
 
+        if self._runtime_nominals_passive_mask_gpu is not None:
+            self._launch_runtime_nominals_adjustment(
+                view,
+                controlled_player_indices,
+                num_controlled_players,
+            )
+
+        use_direct_joint_torque, direct_torque_limit, direct_velocity_gain = (
+            self._direct_joint_torque_params()
+        )
+
         wp.launch(
             kernel=write_mjlab_targets_to_control_kernel,
             dim=num_controlled_players,
             inputs=[
+                self.physics_manager.control.joint_f,
+                self.physics_manager.state_0.joint_qd,
                 self.physics_manager.control.joint_target_pos,
                 self.physics_manager.control.joint_target_vel,
                 controlled_player_indices,
@@ -388,6 +506,9 @@ class Articulation_body_control(Ability):
                 self.articulation_body.control_joint_rl_action_indices_gpus[self.pattern],
                 self.articulation_body.control_joint_target_mode_gpus[self.pattern],
                 1 if self._use_command_expander else 0,
+                use_direct_joint_torque,
+                direct_torque_limit,
+                direct_velocity_gain,
                 _POSITION_MODE,
                 _VELOCITY_MODE,
             ],
