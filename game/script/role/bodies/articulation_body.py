@@ -407,6 +407,19 @@ class ArticulationBody(BaseBody):
             self.control_torque_gpus[pattern] = wp.zeros(shape=shape, dtype=wp.vec3, device=self.device, requires_grad=GameConfig.requires_grad)
             self.control_mask_gpus[pattern] = wp.zeros(shape=shape, dtype=wp.int32, device=self.device, requires_grad=GameConfig.requires_grad)
 
+            # Detect FREE root joints for every object, including single floating
+            # rigid bodies whose only joint was excluded from the view.
+            articulation_ids_world0 = articulation_ids_cpu[0]
+            has_free_joints = []
+            for obj_idx in range(view.count_per_world):
+                articulation_id = int(articulation_ids_world0[obj_idx])
+                start_joint = int(articulation_start_np[articulation_id])
+                has_free = int(joint_type_np[start_joint] == int(newton.JointType.FREE))
+                has_free_joints.append(has_free)
+            self.view_joint_has_free_gpus[pattern] = wp.array(
+                has_free_joints, dtype=wp.int32, device=self.device
+            )
+
             # [B. 關節馬達部分]
             joint_dof_count = view.joint_dof_count
             if joint_dof_count > 0:
@@ -419,8 +432,6 @@ class ArticulationBody(BaseBody):
                 self.control_joint_pos_gpus[pattern] = wp.zeros(shape=joint_shape, dtype=float, device=self.device, requires_grad=GameConfig.requires_grad)
                 self.control_joint_mask_gpus[pattern] = wp.zeros(shape=joint_shape, dtype=wp.int32, device=self.device, requires_grad=GameConfig.requires_grad)
 
-                articulation_ids_world0 = articulation_ids_cpu[0]
-                has_free_joints = []
                 local_dof_indices = []
                 for obj_idx in range(view.count_per_world):
                     articulation_id = int(articulation_ids_world0[obj_idx])
@@ -429,7 +440,7 @@ class ArticulationBody(BaseBody):
                     start_dof = int(joint_qd_start_np[start_joint])
                     end_dof = int(joint_qd_start_np[end_joint])
 
-                    has_free = int(joint_type_np[start_joint] == int(newton.JointType.FREE))
+                    has_free = has_free_joints[obj_idx]
                     controlled_start_dof = start_dof + (6 if has_free else 0)
                     if controlled_start_dof + joint_dof_count > end_dof:
                         raise IndexError(
@@ -439,8 +450,6 @@ class ArticulationBody(BaseBody):
                         )
                     for d in range(joint_dof_count):
                         local_dof_indices.append(start_dof + d)
-
-                    has_free_joints.append(has_free)
 
                 if view.world_count > 1:
                     dof_strides = []
@@ -484,11 +493,6 @@ class ArticulationBody(BaseBody):
                                 f"world={world}, object={obj_idx}: got {actual_start}, "
                                 f"expected {expected_start}"
                             )
-
-                # 將檢測出的虛擬基座掩碼儲存並上傳至 GPU [INDEX]
-                self.view_joint_has_free_gpus[pattern] = wp.array(
-                    has_free_joints, dtype=wp.int32, device=self.device
-                )
 
                 self.view_joint_dof_indices_gpus[pattern] = wp.array(
                     local_dof_indices, dtype=int, device=self.device
@@ -644,7 +648,7 @@ class ArticulationBody(BaseBody):
         solver_body_q_prev,
     ):
         """對浮動基座關節體套用 Inspector 釘選的位姿/速度（與 reset 相同路徑，純 GPU mask）。"""
-        if view.joint_count <= 0 or pattern not in self.view_joint_has_free_gpus:
+        if pattern not in self.view_joint_has_free_gpus:
             return
 
         bodies_per_world = view.count_per_world

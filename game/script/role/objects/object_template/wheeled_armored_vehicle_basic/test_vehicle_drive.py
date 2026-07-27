@@ -92,6 +92,77 @@ class VehicleConfigTests(unittest.TestCase):
         self.assertTrue(iface.uses_direct_joint_torque)
         self.assertEqual(iface.binding_names, ("throttle", "steer"))
 
+    def test_contact_spec_disables_collision_proxies_by_default(self) -> None:
+        cfg = get_vehicle_task_config()
+        self.assertFalse(cfg.contact_spec.use_collision_proxies)
+
+
+class VehicleCollisionProxyTests(unittest.TestCase):
+    def test_proxies_can_be_disabled(self) -> None:
+        from pathlib import Path
+
+        import newton
+        import warp as wp
+        from newton import GeoType
+
+        from script.role.objects.object_template.wheeled_armored_vehicle_basic.vehicle_body_model import (
+            VehicleContactSpec,
+            apply_vehicle_collision_proxies,
+        )
+
+        asset = (
+            Path(__file__).resolve().parents[6]
+            / "Action_Game_RL_Assets/assets/wheeled_armored_vehicle_basic.usdc"
+        )
+        if not asset.exists():
+            self.skipTest(f"asset not found: {asset}")
+
+        builder = newton.ModelBuilder(up_axis=newton.Axis.Z)
+        builder.add_usd(
+            str(asset),
+            xform=wp.transform(wp.vec3(0.0, 0.0, 0.0)),
+            hide_collision_shapes=True,
+            load_visual_shapes=True,
+            skip_mesh_approximation=True,
+            only_load_enabled_joints=True,
+            ignore_paths=["/root/GroundPlane"],
+            force_position_velocity_actuation=True,
+            parse_mujoco_options=True,
+            joint_ordering="dfs",
+            bodies_follow_joint_ordering=True,
+            enable_self_collisions=False,
+        )
+        base_count = builder.shape_count
+
+        disabled = apply_vehicle_collision_proxies(
+            builder, VehicleContactSpec(use_collision_proxies=False)
+        )
+        self.assertEqual(disabled, (0, 0, 0, 0))
+        self.assertEqual(builder.shape_count, base_count)
+        self.assertEqual(int(builder.shape_type[2]), int(GeoType.MESH))
+
+        enabled_builder = newton.ModelBuilder(up_axis=newton.Axis.Z)
+        enabled_builder.add_usd(
+            str(asset),
+            xform=wp.transform(wp.vec3(0.0, 0.0, 0.0)),
+            hide_collision_shapes=True,
+            load_visual_shapes=True,
+            skip_mesh_approximation=True,
+            only_load_enabled_joints=True,
+            ignore_paths=["/root/GroundPlane"],
+            force_position_velocity_actuation=True,
+            parse_mujoco_options=True,
+            joint_ordering="dfs",
+            bodies_follow_joint_ordering=True,
+            enable_self_collisions=False,
+        )
+        enabled = apply_vehicle_collision_proxies(
+            enabled_builder, VehicleContactSpec(use_collision_proxies=True)
+        )
+        self.assertEqual(enabled[1], 1)
+        self.assertEqual(enabled[2], 6)
+        self.assertEqual(int(enabled_builder.shape_type[2]), int(GeoType.SPHERE))
+
 
 if __name__ == "__main__":
     unittest.main()

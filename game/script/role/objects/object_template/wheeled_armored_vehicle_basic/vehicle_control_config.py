@@ -375,6 +375,7 @@ class VehicleTaskConfig:
             f"contact_kd={self.contact_spec.kd:.1f}, "
             f"contact_restitution={self.contact_spec.restitution:.2f}, "
             f"contact_margin={self.contact_spec.margin:.3f}, "
+            f"use_collision_proxies={self.contact_spec.use_collision_proxies}, "
             f"suspension_target_deg={target_deg:.2f}, "
             f"suspension_ke={suspension_spec.stiffness:.1f}, "
             f"suspension_kd={suspension_spec.damping:.1f}, "

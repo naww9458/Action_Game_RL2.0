@@ -64,14 +64,17 @@ wheeled_armored_vehicle_basic:
       rolling_friction: 0.0005  # 滾動阻力係數；rolling-resistance coefficient。
       friction_stiffness: 500.0  # 摩擦約束剛度；friction constraint stiffness。
 
-    # 側翻時防止車體視覺模型穿地與接觸彈射的碰撞代理參數。
-    # Collision-proxy settings to prevent rollover clipping and contact popping.
+    # 接觸參數。use_collision_proxies=true 時會把 mesh 簡化為 box/sphere 代理（側翻較穩定）；
+    # false 時保留 USD 原始 mesh 碰撞體（與模型一致）。
+    # Contact settings. use_collision_proxies=true replaces meshes with box/sphere proxies;
+    # false keeps authored USD mesh colliders.
     contact:
+      use_collision_proxies: false  # 是否使用簡化碰撞代理；use simplified collision proxies。
       ke: 80.0  # 接觸法向剛度（低於預設 1000，減少彈射）；normal contact stiffness (lower = less bounce)。
       kd: 20.0  # 接觸法向阻尼；normal contact damping。
       restitution: 0.0  # 恢復係數（0 = 完全不彈）；coefficient of restitution (0 = no bounce)。
       margin: 0.03  # 接觸邊距 [m]，提前建立接觸避免深穿透；contact margin [m] to reduce deep penetration。
-      chassis_box_shrink: 0.98  # 底盤 AABB 碰撞盒縮放（略小於視覺 mesh）；chassis AABB shrink vs visual mesh。
+      chassis_box_shrink: 0.98  # 底盤 AABB 碰撞盒縮放（use_collision_proxies=true 時生效）；chassis AABB shrink when proxies enabled。
 
     rollover:
       passive_suspension_upright_dot: 0.5  # 車體 up 軸與世界 Z 夾角過大時，懸吊改為被動（不再硬拉姿勢）；release suspension pose servos when body up-dot falls below this threshold。

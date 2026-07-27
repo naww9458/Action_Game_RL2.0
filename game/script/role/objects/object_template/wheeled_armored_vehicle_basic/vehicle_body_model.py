@@ -158,6 +158,8 @@ class VehicleContactSpec:
     restitution: float = 0.0
     margin: float = 0.03
     chassis_box_shrink: float = 0.98
+    # When False, keep authored USD mesh collision shapes instead of box/sphere proxies.
+    use_collision_proxies: bool = False
 
 
 @dataclass(frozen=True)
@@ -284,6 +286,9 @@ def apply_vehicle_collision_proxies(
         if int(builder_env.shape_type[shape_idx]) != int(GeoType.MESH):
             continue
 
+        if not contact_spec.use_collision_proxies:
+            continue
+
         if _add_visual_mesh_copy(builder_env, shape_idx):
             visual_copies += 1
 
@@ -370,7 +375,7 @@ def parse_wheel_material_spec(raw: Mapping[str, float] | None) -> WheelMaterialS
     )
 
 
-def parse_vehicle_contact_spec(raw: Mapping[str, float] | None) -> VehicleContactSpec:
+def parse_vehicle_contact_spec(raw: Mapping[str, object] | None) -> VehicleContactSpec:
     raw = raw or {}
     return VehicleContactSpec(
         ke=float(raw.get("ke", 80.0)),
@@ -378,6 +383,7 @@ def parse_vehicle_contact_spec(raw: Mapping[str, float] | None) -> VehicleContac
         restitution=float(raw.get("restitution", 0.0)),
         margin=float(raw.get("margin", 0.03)),
         chassis_box_shrink=float(raw.get("chassis_box_shrink", 0.98)),
+        use_collision_proxies=bool(raw.get("use_collision_proxies", False)),
     )
 
 

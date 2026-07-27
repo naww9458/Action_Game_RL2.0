@@ -139,14 +139,7 @@ class InspectorCatalog:
                     )
                 ]
             else:
-                spec.bodies = [
-                    BodyParamSpec(
-                        path="root",
-                        display_name="root",
-                        global_body_index=local_role_idx,
-                        body_in_obj_idx=0,
-                    )
-                ]
+                spec.bodies = [_make_root_body_spec(ab, label, spec.view_obj_idx, local_role_idx)]
 
             catalog.specs[catalog_key] = spec
             catalog.specs_by_role[local_role_idx] = spec
@@ -190,6 +183,31 @@ def _view_obj_idx(body_mgr, pattern: str, local_role_idx: int) -> int:
         return 0
 
 
+def _resolve_root_body_index(ab, label: str, view_obj_idx: int, fallback: int) -> int:
+    """Map a view object slot to the Newton body index within env 0."""
+    local_indices = getattr(ab, "view_body_local_indices_gpus", {}).get(label)
+    if local_indices is None:
+        return fallback
+    arr = local_indices.numpy()
+    if view_obj_idx < 0 or view_obj_idx >= len(arr):
+        return fallback
+    return int(arr[view_obj_idx])
+
+
+def _make_root_body_spec(
+    ab,
+    label: str,
+    view_obj_idx: int,
+    local_role_idx: int,
+) -> BodyParamSpec:
+    return BodyParamSpec(
+        path="root",
+        display_name="root",
+        global_body_index=_resolve_root_body_index(ab, label, view_obj_idx, local_role_idx),
+        body_in_obj_idx=0,
+    )
+
+
 def _resolve_bodies(
     meta: dict,
     model,
@@ -201,20 +219,9 @@ def _resolve_bodies(
 ) -> List[BodyParamSpec]:
     path_body_map: Dict[str, int] = meta.get("path_body_map") or {}
     if not path_body_map:
-        return [
-            BodyParamSpec(
-                path="root",
-                display_name="root",
-                global_body_index=local_role_idx,
-                body_in_obj_idx=0,
-            )
-        ]
+        return [_make_root_body_spec(ab, label, view_obj_idx, local_role_idx)]
 
-    local_body_indices = ab.patterns_local_indices.get(label, [local_role_idx])
-    if 0 <= view_obj_idx < len(local_body_indices):
-        base_body = local_body_indices[view_obj_idx]
-    else:
-        base_body = local_role_idx
+    base_body = _resolve_root_body_index(ab, label, view_obj_idx, local_role_idx)
 
     bodies: List[BodyParamSpec] = []
     sorted_paths = sorted(path_body_map.items(), key=lambda kv: kv[1])

@@ -59,7 +59,8 @@ class ControlBridge:
         state = BodyState()
         if spec.body_kind == "deformable":
             return self._read_deformable(spec, world_idx, state)
-        return self._read_rigid_body(body.global_body_index, world_idx, state)
+        global_idx = self._resolve_body_global_index(spec, body, world_idx)
+        return self._read_rigid_body(global_idx, world_idx, state)
 
     def read_joint(self, spec: ObjectInspectorSpec, world_idx: int, joint: JointParamSpec) -> JointState:
         js = JointState()
@@ -90,7 +91,7 @@ class ControlBridge:
             self._apply_deformable_pinned(spec, world_idx, values, pinned)
             return
 
-        global_idx = self._global_body_index(body.global_body_index, world_idx)
+        global_idx = self._resolve_body_global_index(spec, body, world_idx)
         if global_idx < 0:
             return
 
@@ -117,7 +118,7 @@ class ControlBridge:
                 self._write_deformable_force(spec, world_idx, values.force)
             return
 
-        global_idx = self._global_body_index(body.global_body_index, world_idx)
+        global_idx = self._resolve_body_global_index(spec, body, world_idx)
         if global_idx < 0:
             return
 
@@ -201,6 +202,21 @@ class ControlBridge:
         bodies_per_env = self.pm.model.body_count // num_env
         local = body_index_in_env0 % bodies_per_env
         return world_idx * bodies_per_env + local
+
+    def _resolve_body_global_index(
+        self,
+        spec: ObjectInspectorSpec,
+        body: BodyParamSpec,
+        world_idx: int,
+    ) -> int:
+        """Resolve Newton global body index; role index != body index for articulations."""
+        pattern = spec.pattern
+        if spec.body_kind == "articulation" and pattern in self.ab.view_body_local_indices_gpus:
+            local_indices = self.ab.view_body_local_indices_gpus[pattern].numpy()
+            local_tid = spec.view_obj_idx + body.body_in_obj_idx
+            if 0 <= local_tid < len(local_indices):
+                return self._global_body_index(int(local_indices[local_tid]), world_idx)
+        return self._global_body_index(body.global_body_index, world_idx)
 
     def _read_rigid_body(self, local_body_index: int, world_idx: int, state: BodyState) -> BodyState:
         global_idx = self._global_body_index(local_body_index, world_idx)

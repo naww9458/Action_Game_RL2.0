@@ -52,6 +52,67 @@ def _join_asset_path(base: str, name: str) -> str:
     return f"{base}/{name}"
 
 
+def _load_authored_mesh_normals(asset_path: str, object_data: dict, builder_env) -> None:
+    """Load authored faceVarying normals from the USD file and set them on
+    matching Newton shape sources.
+
+    Newton's USD importer defaults to ``load_normals=False``, so authored
+    normals are dropped during ``add_usd``. This re-opens the stage, loads
+    meshes with ``load_normals=True`` (which uses vertex-splitting to convert
+    faceVarying normals to per-vertex), and copies the normals onto the
+    existing shape sources so the viewer renders hard edges correctly.
+    """
+    path_shape_map = object_data.get("path_shape_map") if object_data else None
+    if not path_shape_map:
+        return
+
+    try:
+        from pxr import Usd
+        import newton.usd as newton_usd
+    except ImportError:
+        return
+
+    try:
+        stage = Usd.Stage.Open(asset_path)
+    except Exception:
+        return
+    if stage is None:
+        return
+
+    loaded_count = 0
+    for prim_path, shape_idx in path_shape_map.items():
+        if shape_idx < 0 or shape_idx >= builder_env.shape_count:
+            continue
+        mesh = builder_env.shape_source[shape_idx]
+        if mesh is None:
+            continue
+        if getattr(mesh, "_normals", None) is not None:
+            continue
+
+        prim = stage.GetPrimAtPath(prim_path)
+        if not prim or not prim.IsValid():
+            continue
+
+        try:
+            loaded = newton_usd.get_mesh(prim, load_normals=True)
+        except Exception:
+            continue
+
+        if getattr(loaded, "_normals", None) is None:
+            continue
+
+        device = mesh.vertices.device
+        mesh.vertices = wp.array(loaded.vertices, dtype=wp.vec3, device=device)
+        mesh.indices = wp.array(loaded.indices, dtype=wp.int32, device=device)
+        mesh._normals = wp.array(loaded._normals, dtype=wp.vec3, device=device)
+        if getattr(loaded, "_uvs", None) is not None:
+            mesh._uvs = wp.array(loaded._uvs, dtype=wp.vec2, device=device)
+        loaded_count += 1
+
+    if loaded_count > 0:
+        print(f"[UsdObject] Loaded authored normals for {loaded_count} mesh shape(s) from {asset_path}")
+
+
 class UsdObject(BaseObject):
     object_key = "usd"
     model_cls = UsdModel
@@ -105,6 +166,7 @@ class UsdObject(BaseObject):
         builder_env.articulation_label[-1] = f"{label}_articulation"
 
         if use_policy_init:
+            _load_authored_mesh_normals(path, object_data, builder_env)
             apply_physics_init_for_pattern(
                 label,
                 builder_env,
@@ -113,14 +175,17 @@ class UsdObject(BaseObject):
                 builder_env.joint_count,
                 task_name=data.get("control_task"),
             )
-            try:
-                # Keep the authored visual mesh (e.g. wheel-well recesses) and only
-                # approximate hidden collision copies for shapes that still collide.
-                builder_env.approximate_meshes("bounding_box", keep_visual_shapes=True)
-            except Exception as exc:
-                print(
-                    f"[UsdObject] approximate_meshes skipped for '{label}': {exc}"
-                )
+            if not data.get("skip_mesh_approximation", False):
+                try:
+                    # Keep the authored visual mesh (e.g. wheel-well recesses) and only
+                    # approximate hidden collision copies for shapes that still collide.
+                    builder_env.approximate_meshes(
+                        "bounding_box", keep_visual_shapes=True
+                    )
+                except Exception as exc:
+                    print(
+                        f"[UsdObject] approximate_meshes skipped for '{label}': {exc}"
+                    )
 
         return object_data
 
