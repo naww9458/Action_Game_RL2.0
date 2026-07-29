@@ -154,9 +154,6 @@ class PolicyBundleRegistry:
 
     @classmethod
     def ensure_loaded(cls) -> None:
-        from script.role.objects.object_template.loader import ensure_object_templates_registered
-
-        ensure_object_templates_registered()
         if cls._versions_yaml_loaded:
             return
 

@@ -56,11 +56,11 @@ class Articulation_body_control_rl_assisted(Articulation_body_control):
     def configure_from_player_configs(
         self, player_configs: List[Dict[str, Any]], level: "Levels"
     ) -> None:
-        from script.role.objects.object_template.loader import ensure_object_templates_registered
-
-        ensure_object_templates_registered()
-
-        matched_config = find_player_config_for_ability(player_configs, self.__class__.__name__)
+        matched_config = find_player_config_for_ability(
+            player_configs,
+            self.__class__.__name__,
+            robot_pattern=self._scoped_robot_pattern(),
+        )
         matched_object = dict(matched_config.get("object") or {})
         super().configure_from_player_configs(player_configs, level)
         self.policy_checkpoint = resolve_policy_checkpoint(matched_object)

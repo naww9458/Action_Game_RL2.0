@@ -1,15 +1,23 @@
-id: wheeled_armored_vehicle_basic
-display_name: Wheeled Armored Vehicle (Basic)
+id: turret_110mm
+display_name: 110mm Turret
+mount_anchor_name: turret_base_anchor
+host_anchor_name: hull_mount_anchor
+host_body_prim_suffix: vehicle_body
+tool_base_body_prim_suffix: turret_body
+
+# TODO 很可能需要改進名稱，目前的命名像是在表明必須要有俯仰角（有俯仰角對炮塔來説合理，可是車頂關節并非只能支援炮塔）
+# 雖然這個設置代表的是炮塔但結構應該優化比如加一個新屬性 "功能"，然後將 pitch_joint_name 放到 "功能" 裏面
+pitch_joint_name: RevoluteJoint
 control_config_path: control_configs.yaml
 object_type: usd
 object:
-  pattern: wheeled_armored_vehicle_basic
+  pattern: turret_110mm
   type: usd
   object_friction: 0.5
-  object_elasticity: 0.0
-  file_name: wheeled_armored_vehicle_basic.usdc
-  file_path_or_source: Action_Game_RL_Assets/assets/
-  floating: null
+  object_elasticity: 0.5
+  file_name: turret_110mm.usdc
+  file_path_or_source: ./Action_Game_RL_Assets/assets/
+  floating: true
   base_joint: null
   parent_body: -1
   only_load_enabled_rigid_bodies: false
@@ -19,7 +27,7 @@ object:
   ignore_paths:
     - /root/GroundPlane
   collapse_fixed_joints: false
-  enable_self_collisions: false
+  enable_self_collisions: true
   apply_up_axis_from_stage: false
   root_path: /
   joint_ordering: dfs
@@ -28,7 +36,7 @@ object:
   load_authored_normals: true
   load_sites: true
   load_visual_shapes: true
-  hide_collision_shapes: true
+  hide_collision_shapes: false
   force_show_colliders: false
   parse_mujoco_options: true
   mesh_maxhullvert: null
@@ -36,6 +44,5 @@ object:
   force_position_velocity_actuation: true
   override_root_xform: false
   use_mujoco_policy_init: true
-  control_task: differential_drive
+  control_task: turret_aim
   control_policy_version: null
-possess_offset: null  # 使用 control_configs 锚点偏移 / use anchor offset from control_configs

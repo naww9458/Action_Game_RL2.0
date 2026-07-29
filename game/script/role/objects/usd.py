@@ -35,6 +35,7 @@ class UsdModel(BaseObjectModel):
     joint_ordering: Literal['bfs', 'dfs'] | None = "dfs"
     bodies_follow_joint_ordering: bool = True
     skip_mesh_approximation: bool = False
+    load_authored_normals: bool = False
     load_sites: bool = True
     load_visual_shapes: bool = True
     hide_collision_shapes: bool = False
@@ -163,10 +164,16 @@ class UsdObject(BaseObject):
             override_root_xform=data["override_root_xform"],
         )
         object_data = builder_env.add_usd(path, **add_usd_kwargs)
+        if isinstance(object_data, dict):
+            object_data = dict(object_data)
+            object_data["joint_start"] = joint_start
+            object_data["joint_end"] = builder_env.joint_count
         builder_env.articulation_label[-1] = f"{label}_articulation"
 
         if use_policy_init:
-            _load_authored_mesh_normals(path, object_data, builder_env)
+            load_authored_normals = data.get("load_authored_normals", False)
+            if load_authored_normals:
+                _load_authored_mesh_normals(path, object_data, builder_env)
             apply_physics_init_for_pattern(
                 label,
                 builder_env,

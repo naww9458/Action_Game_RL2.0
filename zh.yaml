@@ -93,7 +93,7 @@ tip_select_first: 請先選擇一個子關卡（例如：子關卡 0）才能進
 train: 訓練
 train_mode: 訓練模式
 train_started: 訓練已在子進程啟動
-train_stopped: 訓練已終止並清理
+tool_attach_prompt: 按下 U 键连接工具
 view_3d: 3D 交互視圖區域
 window_envs: '視窗顯示環境數量 (window_envs):'
 window_envs_prompt: 請輸入在視窗內顯示多少個環境（1-{max_envs}）：

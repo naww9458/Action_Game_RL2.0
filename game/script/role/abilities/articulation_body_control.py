@@ -17,13 +17,19 @@ from script.role.abilities.articulation_control_config.joint_config_registry imp
 from script.role.abilities.articulation_control_config.runtime_helpers import (
     adjust_runtime_joint_nominals_kernel,
 )
+from script.role.abilities.articulation_control_config.robot_pattern import (
+    normalize_robot_pattern,
+)
 from script.role.abilities.articulation_control_config.profile_registry import (
     AxisKeyBindings,
     find_player_config_for_ability,
+    find_tool_config_for_ability,
     resolve_human_control_bindings,
+    resolve_role_articulation_pattern,
 )
 
 if TYPE_CHECKING:
+    from newton.selection import ArticulationView
     from script.levels.levels import Levels
     from script.mjlab_components.act.warp_kernels import MjlabWarpActionApplier
     from script.role.bodies.articulation_body import ArticulationBody
@@ -156,7 +162,28 @@ def write_mjlab_targets_to_control_kernel(
 
 
 class Articulation_body_control(Ability):
-    """Writes low-level joint position/velocity targets through the mjlab action pipeline."""
+    """Writes low-level joint position/velocity targets through the mjlab action pipeline.
+
+    Shared per articulation kind: one instance per ``(role_type, robot_pattern)``,
+    not one global instance for every robot/tool in the process.
+    """
+
+    @classmethod
+    def share_scope(
+        cls,
+        *,
+        object_config: Dict[str, Any],
+        role_type: str = "player",
+    ) -> Optional[str]:
+        pattern = object_config.get("pattern")
+        if not pattern:
+            raise ValueError(
+                f"{cls.__name__}.share_scope requires object.pattern "
+                f"(role_type={role_type!r})."
+            )
+        robot = normalize_robot_pattern(str(pattern))
+        role = str(role_type or "player").strip() or "player"
+        return f"{role}:{robot}"
 
     def __init__(self, ability_name: str | None = None):
         super().__init__(ability_name or self.__class__.__name__)
@@ -164,6 +191,12 @@ class Articulation_body_control(Ability):
         self.pattern = ""
         self.control_policy_version: Optional[str] = None
         self.policy_device: Optional[str] = None
+
+        # Set by update_index_bot for player-owned instances; tools never get that call.
+        self.num_rl_players = 0
+        self.num_bot_players = 0
+        self.index_rl_players_gpu = None
+        self.index_bot_players_gpu = None
 
         self._action_applier: Optional[MjlabWarpActionApplier] = None
         self._configured = False
@@ -182,16 +215,26 @@ class Articulation_body_control(Ability):
         self._mjlab_targets_wp: Optional[wp.array2d] = None
         self._encoder_bias_wp: Optional[wp.array2d] = None
         self._torch_device: Optional[torch.device] = None
+        self._ability_share_key: Optional[str] = None
+
+    def _scoped_robot_pattern(self) -> Optional[str]:
+        share_key = getattr(self, "_ability_share_key", None)
+        if not share_key or ":" not in str(share_key):
+            return None
+        return str(share_key).split(":", 1)[1]
 
     def configure_from_player_configs(
         self, player_configs: List[Dict[str, Any]], level: "Levels"
     ) -> None:
         matched_config = find_player_config_for_ability(
-            player_configs, self.__class__.__name__
+            player_configs,
+            self.__class__.__name__,
+            robot_pattern=self._scoped_robot_pattern(),
         )
         matched_object = dict(matched_config.get("object") or {})
         self._control_task = matched_object.get("control_task")
 
+        # Parent re-resolves the matching player config via share_key / robot_pattern.
         super().configure_from_player_configs(player_configs, level)
 
         self._command_interface = resolve_command_interface_for_pattern(
@@ -261,14 +304,14 @@ class Articulation_body_control(Ability):
 
     def _launch_runtime_nominals_adjustment(
         self,
-        view,
+        view: 'ArticulationView',
         controlled_player_indices: wp.array,
         num_controlled_players: int,
     ) -> None:
         if self._runtime_nominals_passive_mask_gpu is None:
             return
 
-        joint_q = view.get_dof_positions(self.physics_manager.model)
+        joint_q = view.get_dof_positions(self.physics_manager.state_0)
         wp.launch(
             kernel=adjust_runtime_joint_nominals_kernel,
             dim=num_controlled_players,
@@ -329,14 +372,15 @@ class Articulation_body_control(Ability):
         )
 
     def _build_action_buffers(self) -> None:
-        if self.num_rl_players <= 0 or self._torch_device is None:
+        num_rl = int(getattr(self, "num_rl_players", 0) or 0)
+        if num_rl <= 0 or self._torch_device is None:
             return
 
         if self._use_command_expander:
             command_dim = int(self._command_interface.command_dim)
             joint_dof_count = self._joint_dof_count()
-            command_shape = (self.num_rl_players, command_dim)
-            target_shape = (self.num_rl_players, joint_dof_count)
+            command_shape = (num_rl, command_dim)
+            target_shape = (num_rl, joint_dof_count)
             self._low_level_actions_torch = torch.zeros(
                 command_shape, dtype=torch.float32, device=self._torch_device
             )
@@ -352,7 +396,7 @@ class Articulation_body_control(Ability):
             return
 
         action_dim = _resolve_rl_action_dim(self.articulation_body, self.pattern)
-        shape = (self.num_rl_players, action_dim)
+        shape = (num_rl, action_dim)
         self._low_level_actions_torch = torch.zeros(
             shape, dtype=torch.float32, device=self._torch_device
         )
@@ -542,6 +586,40 @@ class Articulation_body_control(Ability):
 
     def bot_action(self, **kwargs):
         pass
+
+    def configure_from_tool_configs(
+        self, tool_configs: List[Dict[str, Any]], level: "Levels"
+    ) -> None:
+        matched_config = find_tool_config_for_ability(
+            tool_configs,
+            self.__class__.__name__,
+            robot_pattern=self._scoped_robot_pattern(),
+        )
+        matched_object = dict(matched_config.get("object") or {})
+        self.pattern = resolve_role_articulation_pattern("tool", matched_object)
+        self._control_task = matched_object.get("control_task")
+        self.control_policy_version = matched_object.get("control_policy_version")
+        self.policy_device = matched_object.get("policy_device") or str(
+            wp.device_to_torch(self.physics_manager.device)
+        )
+        self._torch_device = torch.device(self.policy_device)
+        self._configured = True
+        print(
+            f"[{self.__class__.__name__}] tool control configured: "
+            f"pattern={self.pattern}, share_key={getattr(self, '_ability_share_key', None)}"
+        )
+
+    def configure_from_tool_configs_post_indices(self, level: "Levels") -> None:
+        try:
+            ability_idx = level.tools.abilities_instance_list.index(self)
+            owners = level.tools.abilities_owner_list[ability_idx]
+        except (ValueError, AttributeError):
+            owners = []
+        self.cache_action_pattern_views(owners)
+        # Tools are not RL action rows; skip RL buffer alloc (num_rl_players stays 0).
+        # Aim / mount go through Tool_attachment; joint views are still cached above.
+        if self._configured:
+            self._setup_runtime_nominals_gpu()
 
     def update_index_bot(
         self,

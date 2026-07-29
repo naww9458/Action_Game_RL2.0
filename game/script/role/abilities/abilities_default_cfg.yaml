@@ -94,3 +94,42 @@ Articulation_body_control_rl_assisted:
     range: [-1.0, 1.0]
     description: "Policy command vector resolved at runtime from policy bundle; low-level actions use mjlab_components.act."
 
+Tool_attachment:
+  force: 0.0
+  speed: 0.0
+  cooldown: 0.0
+  proximity_threshold: 0.75
+  proximity_height_threshold: 3.5
+  key:
+    keyboard:
+      attach: [u]
+    mouse: {}
+  # 附加工具瞄準控制 / Attached tool camera aim (torque-based PD)
+  aim_control:
+    # 水平偏航扭矩增益（越大越快对准相机）/ Yaw torque gain (higher = faster horizontal alignment)
+    yaw_torque_gain: 200.0
+    # 水平偏航阻尼 / Yaw damping (reduces oscillation)
+    yaw_damping: 20.0
+    # 水平最大扭矩 / Max yaw torque
+    max_yaw_torque: 500.0
+    # 俯仰扭矩增益 / Pitch torque gain
+    pitch_torque_gain: 150.0
+    # 俯仰阻尼 / Pitch damping
+    pitch_damping: 15.0
+    # 俯仰最大扭矩 / Max pitch torque
+    max_pitch_torque: 300.0
+    # 角度死区（度），小于此值不施加扭矩 / Angle dead zone in degrees
+    angle_dead_zone_deg: 0.5
+    # MuJoCo weld 挂载时的偏航驱动增益（约束 relpose）/ Weld mount yaw drive gain (MuJoCo relpose)
+    weld_yaw_drive_gain: 8.0
+    # 炮管本地前向轴 / Barrel forward axis in tool body local space
+    aim_forward_local: [1.0, 0.0, 0.0]
+    # 世界上方向 / World up axis
+    world_up: [0.0, 0.0, 1.0]
+  action_space:
+    type: "discrete"
+    dtype: "int64"
+    shape: 1
+    n: 2
+    description: "Attach nearby tool to host vehicle when prompt is visible."
+

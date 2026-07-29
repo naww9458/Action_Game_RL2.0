@@ -120,13 +120,66 @@ def command_binding_names(command_dim: int) -> Tuple[str, ...]:
 
 
 def find_player_config_for_ability(
-    player_configs: Sequence[Dict[str, Any]], ability_name: str
+    player_configs: Sequence[Dict[str, Any]],
+    ability_name: str,
+    *,
+    robot_pattern: str | None = None,
 ) -> Dict[str, Any]:
+    """Return the first player config that lists *ability_name*.
+
+    When *robot_pattern* is set, only configs whose ``object.pattern`` normalizes
+    to that robot kind are considered (for per-articulation ability instances).
+    """
+    wanted = normalize_robot_pattern(robot_pattern) if robot_pattern else None
     for cfg in player_configs or []:
         abilities = cfg.get("abilities") or []
-        if ability_name in abilities:
-            return dict(cfg)
-    raise RuntimeError(f"No player config references ability '{ability_name}'.")
+        if ability_name not in abilities:
+            continue
+        if wanted is not None:
+            object_cfg = dict(cfg.get("object") or {})
+            cfg_pattern = object_cfg.get("pattern")
+            if not cfg_pattern:
+                continue
+            if normalize_robot_pattern(str(cfg_pattern)) != wanted:
+                continue
+        return dict(cfg)
+    detail = f" with robot_pattern='{wanted}'" if wanted else ""
+    raise RuntimeError(
+        f"No player config references ability '{ability_name}'{detail}."
+    )
+
+
+def find_tool_config_for_ability(
+    tool_configs: Sequence[Dict[str, Any]],
+    ability_name: str,
+    *,
+    robot_pattern: str | None = None,
+) -> Dict[str, Any]:
+    """Return the first tool config that lists *ability_name* (or uses defaults).
+
+    Tools often omit ``abilities`` and rely on ``DEFAULT_TOOL_ABILITIES``; those
+    still match when the ability is an articulation-control class used by tools.
+    When *robot_pattern* is set, filter by ``object.pattern``.
+    """
+    from script.role.tool import DEFAULT_TOOL_ABILITIES
+
+    wanted = normalize_robot_pattern(robot_pattern) if robot_pattern else None
+    for cfg in tool_configs or []:
+        abilities = list(cfg.get("abilities") or DEFAULT_TOOL_ABILITIES)
+        if ability_name not in abilities:
+            continue
+        if wanted is not None:
+            object_cfg = dict(cfg.get("object") or {})
+            cfg_pattern = object_cfg.get("pattern")
+            if not cfg_pattern:
+                continue
+            if normalize_robot_pattern(str(cfg_pattern)) != wanted:
+                continue
+        return dict(cfg)
+    detail = f" with robot_pattern='{wanted}'" if wanted else ""
+    raise RuntimeError(
+        f"No tool config references ability '{ability_name}'{detail}."
+    )
 
 
 def resolve_object_robot_pattern(object_config: Dict[str, Any]) -> str:

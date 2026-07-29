@@ -65,24 +65,57 @@
             設計目的是爲了控制極度簡化的角色物件（僅爲一個球體），更多是用於訓練模型高維決策而不是身體控制。
             控制方式是直接給予一個基於玩家角色坐標系的前後左右的力，讓物件動起來
 
-        6. turning_topdown_viewing_angle
+        5. turning_topdown_viewing_angle
             設計目的是爲了控制極度簡化的角色物件（僅爲一個球體），更多是用於訓練模型高維決策而不是身體控制。
             Human 的控制方式是直接根據鼠標移動來修改物件面對的方向。
             Bot 的控制方式是直接把面對方向鎖定在目標上
             RL Agent 的控制方式是讓模型輸出由算法轉換成扭矩來進行叠加，保證可微分的同時讓物件轉起來
 
-        5. shoot
+        6. shoot
             設計目的是爲了控制極度簡化的角色物件（僅爲一個球體），更多是用於訓練模型高維決策而不是身體控制。
             使用技能後查找一個處於休眠狀態的 “子彈”，將其傳送到玩家物件的位置后根據玩家物件面對的方向直接高速飛過去。
+
+        7. tool_attachment
+            設計目的是讓 **玩家（載具）** 在運行時掛載/拆卸可分離工具（如炮塔），并在掛載後用 **相機視角** 驅動炮塔瞄準。
+            掛在 **玩家** 的能力列表上（不是 Tool 角色本身）；關卡需在 `tool_configs` 中配置工具實例，且關卡需有 `mount_joint_registry` 才會生效。
+            Human 操作：
+                - 跟隨載具角色且靠近未掛載炮塔時，畫面中央顯示掛載提示
+                - 按 **U** 切換掛載/拆卸（再次按 U 可從載具上拆下）
+                - 掛載後，鼠標/相機 yaw/pitch 通過 PD 扭矩驅動炮塔水平偏航與俯仰（MuJoCo 關卡使用 weld 約束驅動偏航）
+            Bot / RL：`rl_action` 與 `bot_action` 尚未實現；attach 離散動作空間已在配置中預留。
 
     角色範例：
         1. Unitree G1：宇树科技推出的其中一款機器人，本專案部署了 mjlab 平地行走任務訓練出來的模型，可通過 articulation_body_control_rl_assisted 來控制其行走
 
-        2. 輪式裝甲車：本人自製六輪低面數模型，采用差速轉向，通過 articulation_body_control 控制。（製作中）
+        2. 輪式裝甲車（`wheeled_armored_vehicle_basic`）：本人自製六輪低面數模型，采用差速轉向，通過 `articulation_body_control` 控制。可作為 **工具宿主（host）**，車體上預留 `hull_mount_anchor` 掛載點。
 
-        3. 坦克主炮 + 炮塔：本人自製低面數模型，模塊化設計概念，和輪式裝甲車組合，通過 articulation_body_control 控制。（製作中）
+        3. 110 毫米火炮炮塔（`turret_110mm`）：見下方 **Tool 角色** 小節；與輪式裝甲車模塊化組合，未掛載時為場景中獨立浮置關節體，掛載後跟隨車體並可由 `tool_attachment` 瞄準。
 
-        4. 史萊姆：沒有專屬模型文件，采用全粒子加流體模擬，以一個主粒子爲核心通過内聚力吸引下屬粒子，并通過數個範圍内自主移動的分粒子實現觸手/形變能力
+        4. 史萊姆：沒有專屬模型文件，采用全粒子加流體模擬，以一個主粒子爲核心通過内聚力吸引下屬粒子，并通過數個範圍内自主移動的分粒子實現觸手/形變能力 (未實現)
+
+### 工具（Tool）：
+    新增角色類型，用於 **可從載具上拆裝的模塊化裝備**（炮塔、武器等）。在關卡 YAML 的 `tool_configs` 中按 key 配置，與 `player_configs` / `platform_configs` 并列。
+
+    與玩家的關係：
+        - **Player**：宿主（host），負責駕駛與掛載操作；需配置 `Tool_attachment` 能力
+        - **Tool**：被掛載物，關卡加載時通常以 **FREE 關節浮置** 於場景中，靠近宿主後由 `Tool_attachment` 啟用 mount joint / weld 約束完成掛載
+
+    掛載相關配置（可在關卡 `tool_configs` 或 `object_template/<pattern>/template.yaml` 中定義）：
+        - `mount_anchor_name` / `host_anchor_name`：工具與車體 USD 錨點 prim 名
+        - `host_body_prim_suffix` / `tool_base_body_prim_suffix`：錨點所屬剛體後綴
+        - `host_player_index`：綁定哪個玩家索引為宿主（可省略以自動嘗試）
+        - `internal_joint_names` / `pitch_joint_name`：工具內部關節；`pitch_joint_name` 指定相機瞄準俯仰 DOF
+        - `aim_control`：瞄準 PD 增益、死區、扭矩上限等
+
+    物件範例：110 毫米火炮炮塔（`turret_110mm`）
+        - 資產：`turret_110mm.usdc`，模板路徑 `game/script/role/objects/object_template/turret_110mm/`
+        - 錨點：工具側 `turret_base_anchor`，車體側 `hull_mount_anchor`（在輪式裝甲車模板中定義）
+        - 俯仰關節：USD 葉子名 `RevoluteJoint`（須在配置中與 `pitch_joint_name` 一致）
+
+    運行時模塊（代碼概要）：
+        - `setup_tool_mount_joints`：關卡初始化時解析錨點、預建禁用狀態的 mount joint，寫入 `MountJointRegistry`
+        - `Tool_attachment.human_control_interface`：近距離檢測、U 鍵掛載/拆卸、掛載後 `apply_attached_aim`
+        - 無 `tool_configs` 的關卡不創建 registry，無額外開銷
 
 ### 平臺：
     主要用於地板/墻壁等不應該被移動的靜態環境物品

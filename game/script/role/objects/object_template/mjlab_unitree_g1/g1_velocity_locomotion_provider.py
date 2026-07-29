@@ -557,9 +557,3 @@ def create_g1_velocity_locomotion_provider(
     )
     provider.setup()
     return provider
-
-
-def register_g1_obs_providers() -> None:
-    from script.role.objects.object_template.loader import ensure_object_templates_registered
-
-    ensure_object_templates_registered()

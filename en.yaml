@@ -92,7 +92,7 @@ tip_select_first: Please select a sub-level first
 train: Train
 train_mode: Train Mode
 train_started: Training started in subprocess
-train_stopped: Training stopped and cleaned up
+tool_attach_prompt: Press U to attach tool
 view_3d: 3D Interactive View
 window_envs: 'Window Display Envs (window_envs):'
 window_envs_prompt: How many environments to display in the window? (1-{max_envs})

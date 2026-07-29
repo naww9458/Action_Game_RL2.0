@@ -33,6 +33,8 @@ _KEY_DISPLAY = {
     "esc": "Esc",
     "shift": "Shift",
     "ctrl": "Ctrl",
+    "lalt": "Left Alt",
+    "ralt": "Right Alt",
 }
 
 
@@ -59,6 +61,10 @@ def create_keyboard_mapping() -> Dict[str, int]:
                 mapping["shift"] = value
             if attr == "LCTRL":
                 mapping["ctrl"] = value
+            if attr == "LALT":
+                mapping["lalt"] = value
+            if attr == "RALT":
+                mapping["ralt"] = value
     return mapping
 
 

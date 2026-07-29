@@ -24,6 +24,7 @@ object:
   joint_ordering: dfs
   bodies_follow_joint_ordering: true
   skip_mesh_approximation: false
+  load_authored_normals: false
   load_sites: true
   load_visual_shapes: true
   hide_collision_shapes: true

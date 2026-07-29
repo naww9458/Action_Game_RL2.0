@@ -92,10 +92,13 @@ class PhysicsManager:
                 "path_body_map": dict(add_result.get("path_body_map") or {}),
                 "path_joint_map": dict(add_result.get("path_joint_map") or {}),
                 "path_shape_map": dict(add_result.get("path_shape_map") or {}),
+                "joint_start": add_result.get("joint_start"),
+                "joint_end": add_result.get("joint_end"),
             }
             self.object_metadata[label] = meta
             if role_object_id >= 0:
                 self.object_metadata_by_role[role_object_id] = meta
+            add_result["_path_body_map"] = meta["path_body_map"]
             index = add_result
         else:
             index = add_result

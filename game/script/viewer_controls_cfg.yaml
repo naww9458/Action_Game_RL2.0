@@ -56,6 +56,11 @@ bindings:
     description: "Toggle mouse-look exclusive mode"
 
   - category: camera
+    id: toggle_free_view
+    keys: [lalt]
+    description: "Toggle free view while following (position only, independent rotation)"
+
+  - category: camera
     id: zoom_fov
     keys: [ctrl+scroll]
     description: "Adjust camera FOV (Ctrl + scroll)"

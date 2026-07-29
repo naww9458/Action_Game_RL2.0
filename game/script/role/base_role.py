@@ -173,14 +173,16 @@ class BaseRole(ABC):
 
         job_pattern = object.get("pattern", "default")
         possess_offset_raw = kwargs.get("possess_offset", object.get("possess_offset"))
-        if possess_offset_raw is None:
-            from script.role.abilities.articulation_control_config.joint_config_registry import (
-                resolve_possess_offset_for_pattern,
-            )
+        from script.role.abilities.articulation_control_config.joint_config_registry import (
+            resolve_possess_offset_for_pattern,
+        )
 
+        resolved = None
+        if possess_offset_raw is None:
             resolved = resolve_possess_offset_for_pattern(
                 job_pattern,
                 object.get("control_task"),
+                object_config=object,
             )
             possess_offset = list(resolved) if resolved is not None else [0.0, 0.0, 0.0]
         else:
@@ -201,6 +203,17 @@ class BaseRole(ABC):
             pos=default_position,
             role_object_id=role_object_id,
         )
+        if isinstance(data, dict):
+            path_body_map = data.get("path_body_map") or data.get("_path_body_map")
+            if path_body_map:
+                anchor_offset = resolve_possess_offset_for_pattern(
+                    job_pattern,
+                    object.get("control_task"),
+                    object_config=object,
+                    path_body_map=path_body_map,
+                )
+                if anchor_offset is not None:
+                    possess_offset = list(anchor_offset)
         # TODO
         # self._physics_manager.add_shape 返回的索引不一定是索引。
         # 如果加載的是 usd 物件，那麽返回的可能就是 add_usd 返回的關於模型的信息的字典數據，
@@ -285,16 +298,31 @@ class BaseRole(ABC):
         if self.is_add_to_mesh:
             self._physics_manager.add_mesh(object_config=object, position=position)
 
-        # 6. 能力系統處理
+        # 6. 能力系統處理（關節體控制按 role+robot pattern 分實例）
+        role_type = str(type or "player")
         for ability_name in abilities:
-            if ability_name not in self.abilities_name_index_dict:
-                ability = get_shared_ability(ability_name)
+            ability_cls = Ability._registry.get(ability_name)
+            share_key = None
+            if ability_cls is not None:
+                share_key = ability_cls.share_scope(
+                    object_config=object,
+                    role_type=role_type,
+                )
+            registry_key = (
+                f"{ability_name}@{share_key}" if share_key else ability_name
+            )
+            if registry_key not in self.abilities_name_index_dict:
+                ability = get_shared_ability(ability_name, share_key=share_key)
 
-                self.abilities_name_index_dict[ability_name] = len(self.abilities_instance_list)
+                self.abilities_name_index_dict[registry_key] = len(
+                    self.abilities_instance_list
+                )
                 self.abilities_instance_list.append(ability)
                 self.abilities_owner_list.append([index])
             else:
-                self.abilities_owner_list[self.abilities_name_index_dict[ability_name]].append(index)
+                self.abilities_owner_list[
+                    self.abilities_name_index_dict[registry_key]
+                ].append(index)
 
         return index
 

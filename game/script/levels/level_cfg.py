@@ -15,6 +15,7 @@ from script.role.controller_utils import (
 from script.role.player import PlayerModel
 from script.role.platform import PlatformModel
 from script.role.entity import EntityModel
+from script.role.tool import ToolModel
 from script.role.ability_generated_object import AbilityGeneratedObjectModel
 
 from script.simulate.solvers.base_solver import SolverRegistry
@@ -39,6 +40,10 @@ def _migrate_role_id_to_name(data: Dict[str, Any]) -> None:
                 _migrate_item_role_id_to_name(item)
 
     for item in (data.get("entity_configs") or {}).values():
+        if isinstance(item, dict):
+            _migrate_item_role_id_to_name(item)
+
+    for item in (data.get("tool_configs") or {}).values():
         if isinstance(item, dict):
             _migrate_item_role_id_to_name(item)
 
@@ -96,6 +101,7 @@ class LevelConfig(BaseModel):
     player_configs: List[PlayerModel] = []
     platform_configs: List[PlatformModel] = []
     entity_configs: Dict[str, EntityModel] = {}
+    tool_configs: Dict[str, ToolModel] = {}
     ability_generated_object_configs: Dict[str, AbilityGeneratedObjectModel] = {}
 
     @classmethod

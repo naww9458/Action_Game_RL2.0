@@ -3,7 +3,7 @@ environment_configs:
   - 3.0
   - 3.0
   - 3.0
-  interval_distance: 5.0
+  interval_distance: 25.0
   gravity:
   - 0
   - 0
@@ -17,7 +17,7 @@ environment_configs:
   solver_config:
     type: mujoco
     separate_worlds: null
-    njmax: 300
+    njmax: 1000
     nconmax: '500'
     iterations: 10
     ls_iterations: 50
@@ -55,7 +55,7 @@ player_configs:
   default_position:
   - 0.0
   - 0.0
-  - 1.0
+  - 0.2
   default_rotation:
   - 0.0
   - 0.0
@@ -275,17 +275,18 @@ entity_configs:
     - 1
     - 1
     - 1
-  new_entity_1:
-    type: entity
-    name: New_Entity
+tool_configs:
+  turret_0:
+    type: tool
+    name: turret
     color:
     - 200
     - 200
     - 200
     default_position:
+    - -0.5
     - 0.0
-    - 0.0
-    - 5.0
+    - 3.7
     default_rotation:
     - 0.0
     - 0.0
@@ -301,23 +302,66 @@ entity_configs:
     - 0.0
     - 0.0
     - 0.0
-    abilities: []
+    mount_anchor_name: turret_base_anchor
+    host_anchor_name: hull_mount_anchor
+    host_body_prim_suffix: vehicle_body
+    tool_base_body_prim_suffix: turret_body
+    mount_joint_type: revolute
+    mount_joint_axis:
+    - 0.0
+    - 0.0
+    - 1.0
+    mount_joint_limits:
+    - -3.141592653589793
+    - 3.141592653589793
+    internal_joint_names:
+    - RevoluteJoint
+    host_player_index: null
+    proximity_threshold: 0.75
+    proximity_height_threshold: 3.5
+    # 瞄準剛體（炮管）/ Body used for aim direction (barrel)
+    aim_body_prim_suffix: turret_body
+    # 工具級瞄準參數覆蓋（可選）/ Optional per-tool aim overrides
+    aim_control:
+      aim_forward_local: [1.0, 0.0, 0.0]
+    abilities:
+    - Shoot
+    - Articulation_body_control
     object:
-      type: rigid_box
-      pattern: default
+      type: usd
+      pattern: turret_110mm
       object_friction: 0.5
       object_elasticity: 0.5
-      size:
-      - 1.0
-      - 1.0
-      - 1.0
-      object_mass: 1000.0
-      lock_inertia: false
-      is_kinematic: false
-      as_site: false
-      color: null
-    separation:
-    - 1
-    - 1
-    - 1
-tool_configs: {}
+      file_name: turret_110mm.usdc
+      file_path_or_source: ./Action_Game_RL_Assets/assets/
+      use_mujoco_policy_init: true
+      control_task: turret_aim
+      control_policy_version: null
+      policy_checkpoint: null
+      policy_device: null
+      floating: true
+      base_joint: null
+      parent_body: -1
+      only_load_enabled_rigid_bodies: false
+      only_load_enabled_joints: true
+      joint_drive_gains_scaling: 1
+      verbose: false
+      ignore_paths:
+      - /root/GroundPlane
+      collapse_fixed_joints: false
+      enable_self_collisions: false
+      apply_up_axis_from_stage: false
+      root_path: /
+      joint_ordering: dfs
+      bodies_follow_joint_ordering: true
+      skip_mesh_approximation: true
+      load_authored_normals: true
+      load_sites: true
+      load_visual_shapes: true
+      hide_collision_shapes: false
+      force_show_colliders: false
+      parse_mujoco_options: true
+      mesh_maxhullvert: null
+      schema_resolvers: null
+      force_position_velocity_actuation: true
+      override_root_xform: false

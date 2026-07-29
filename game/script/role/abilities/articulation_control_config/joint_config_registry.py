@@ -16,14 +16,18 @@ RobotConfigLoader = Callable[[], object]
 _ROBOT_LOADERS: Dict[str, RobotConfigLoader] = {}
 
 
+def _ensure_object_templates() -> None:
+    from script.role.objects.object_template.loader import ensure_object_templates_registered
+
+    ensure_object_templates_registered()
+
+
 def register_robot_loader(pattern: str, loader: RobotConfigLoader) -> None:
     _ROBOT_LOADERS[normalize_robot_pattern(pattern)] = loader
 
 
 def _resolve_robot_pattern(pattern: str) -> str:
-    from script.role.objects.object_template.loader import ensure_object_templates_registered
-
-    ensure_object_templates_registered()
+    _ensure_object_templates()
     robot_pattern = normalize_robot_pattern(pattern)
     if robot_pattern not in _ROBOT_LOADERS:
         raise KeyError(
@@ -34,9 +38,7 @@ def _resolve_robot_pattern(pattern: str) -> str:
 
 
 def _try_load_robot_config(pattern: str, task_name: str | None):
-    from script.role.objects.object_template.loader import ensure_object_templates_registered
-
-    ensure_object_templates_registered()
+    _ensure_object_templates()
     robot_pattern = normalize_robot_pattern(pattern)
     if robot_pattern not in _ROBOT_LOADERS:
         return None
@@ -99,10 +101,49 @@ def resolve_rl_action_dim_for_pattern(
 def resolve_possess_offset_for_pattern(
     pattern: str,
     task_name: str | None = None,
+    object_config: dict | None = None,
+    path_body_map: dict | None = None,
 ) -> Optional[Tuple[float, float, float]]:
     config = _try_load_robot_config(pattern, task_name)
     if config is None:
         return None
+
+    anchor_name = getattr(config, "possess_anchor_name", None)
+    height_above = getattr(config, "possess_height_above_anchor", None)
+    body_suffix = getattr(config, "possess_body_prim_suffix", None)
+    if (
+        anchor_name
+        and height_above is not None
+        and body_suffix
+        and object_config
+        and path_body_map
+    ):
+        from script.role.objects.usd import _join_asset_path
+        from script.role.objects.tool_anchor import resolve_possess_offset_above_anchor
+
+        asset_path = _join_asset_path(
+            str(object_config.get("file_path_or_source", "")),
+            str(object_config.get("file_name", "")),
+        )
+        try:
+            return resolve_possess_offset_above_anchor(
+                asset_path,
+                str(anchor_name),
+                path_body_map,
+                str(body_suffix),
+                float(height_above),
+            )
+        except Exception as exc:
+            print(
+                f"[resolve_possess_offset] anchor '{anchor_name}' failed for '{pattern}': {exc}; "
+                "using static possess_offset"
+            )
+    elif anchor_name and height_above is not None and not body_suffix:
+        print(
+            f"[resolve_possess_offset] pattern '{pattern}' has possess_anchor_name but "
+            "missing possess_body_prim_suffix; using static possess_offset"
+        )
+
     offset = getattr(config, "possess_offset", None)
     if offset is None:
         return None
@@ -110,6 +151,20 @@ def resolve_possess_offset_for_pattern(
     if len(values) != 3:
         return None
     return values
+
+
+def resolve_follow_body_prim_suffix(
+    pattern: str,
+    task_name: str | None = None,
+) -> Optional[str]:
+    """Body prim suffix to follow for camera (falls back to articulation root)."""
+    config = _try_load_robot_config(pattern, task_name)
+    if config is None:
+        return None
+    suffix = getattr(config, "possess_body_prim_suffix", None)
+    if suffix:
+        return str(suffix)
+    return None
 
 
 def resolve_runtime_nominals_gpu_spec(
@@ -138,6 +193,7 @@ __all__ = [
     "register_robot_loader",
     "resolve_command_interface_for_pattern",
     "resolve_joint_arrays_for_pattern",
+    "resolve_follow_body_prim_suffix",
     "resolve_possess_offset_for_pattern",
     "resolve_rl_action_dim_for_pattern",
     "resolve_runtime_nominals_gpu_spec",

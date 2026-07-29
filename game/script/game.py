@@ -630,11 +630,14 @@ class Game:
                     human_input = human_input_queue.get_nowait()
                 except Empty:
                     human_input = {
+                        "follow_role_index": None,
                         "follow_body_index": None,
                         "keyboard_keys": None,
                         "mouse_buttons": None,
                         "look_yaw": None,
                         "look_pitch": None,
+                        "camera_yaw": None,
+                        "camera_pitch": None,
                         "simulation_control": {},
                     }
 

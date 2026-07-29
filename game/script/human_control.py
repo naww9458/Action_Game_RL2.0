@@ -57,6 +57,8 @@ class HumanControl:
                 mouse_buttons=mouse_buttons,
                 look_yaw=look_yaw,
                 look_pitch=look_pitch,
+                camera_yaw=kwargs.get("camera_yaw", look_yaw),
+                camera_pitch=kwargs.get("camera_pitch", look_pitch),
                 index_human_player_gpu=self.index_human_player_gpu,
                 current_game_step=self.game.current_step,
             )

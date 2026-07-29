@@ -84,6 +84,10 @@ class VehicleTaskConfig:
     drive_spec: DriveSpec
     human_control: Dict[str, Any]
     gravity: float = 9.81
+    possess_anchor_name: Optional[str] = None
+    possess_body_prim_suffix: Optional[str] = None
+    possess_height_above_anchor: Optional[float] = None
+    mount_host: Optional[Dict[str, Any]] = None
 
     @classmethod
     def from_yaml(
@@ -116,9 +120,16 @@ class VehicleTaskConfig:
         contact_spec = parse_vehicle_contact_spec(task_cfg.get("contact"))
         rollover_spec = parse_rollover_spec(task_cfg.get("rollover"))
         possess_offset = parse_possess_offset(task_cfg.get("possess_offset"))
+        possess_anchor_name = task_cfg.get("possess_anchor_name")
+        possess_height_above_anchor = task_cfg.get("possess_height_above_anchor")
+        if possess_height_above_anchor is not None:
+            possess_height_above_anchor = float(possess_height_above_anchor)
+        possess_body_raw = task_cfg.get("possess_body_prim_suffix")
+        possess_body_prim_suffix = str(possess_body_raw) if possess_body_raw else None
         gravity = float(task_cfg.get("gravity", 9.81))
         drive_spec = parse_drive_spec(task_cfg.get("drive"))
         human_control = dict(task_cfg.get("human_control") or {})
+        mount_host = dict(task_cfg.get("mount_host") or {}) or None
 
         instance = cls(
             task_name=task_name,
@@ -137,6 +148,10 @@ class VehicleTaskConfig:
             drive_spec=drive_spec,
             human_control=human_control,
             gravity=gravity,
+            possess_anchor_name=possess_anchor_name,
+            possess_body_prim_suffix=possess_body_prim_suffix,
+            possess_height_above_anchor=possess_height_above_anchor,
+            mount_host=mount_host,
         )
         suspension_spec = compute_suspension_spec(
             body_mass_spec, suspension_gain_spec, gravity=gravity

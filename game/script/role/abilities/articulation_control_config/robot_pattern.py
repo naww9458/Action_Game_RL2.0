@@ -14,10 +14,11 @@ def strip_controller_prefix(pattern: str) -> str:
 
 
 def normalize_robot_pattern(pattern: str) -> str:
-    """Strip controller and optional ``player_`` prefix from articulation-body pattern ids."""
+    """Strip controller and optional role prefixes from articulation-body pattern ids."""
     text = strip_controller_prefix(str(pattern).strip())
-    if text.startswith("player_"):
-        return text[len("player_") :]
+    for role_prefix in ("player_", "tool_", "entity_", "platform_"):
+        if text.startswith(role_prefix):
+            return text[len(role_prefix) :]
     return text
 
 

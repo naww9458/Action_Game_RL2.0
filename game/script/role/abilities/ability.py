@@ -48,6 +48,20 @@ class Ability(ABC):
     articulation_body: 'ArticulationBody' = None
     deformable_body: 'DeformableBody' = None
 
+    @classmethod
+    def share_scope(
+        cls,
+        *,
+        object_config: Dict[str, Any],
+        role_type: str = "player",
+    ) -> Optional[str]:
+        """Return None for a process-wide singleton; otherwise a scope id.
+
+        Articulation abilities override this so each (role, robot-pattern) pair
+        gets its own shared instance instead of one global instance for all robots.
+        """
+        return None
+
 
     # 這裡存放所有具體的 Ability 子類 (類別本身，不是實例)
     _registry = {}
@@ -80,6 +94,8 @@ class Ability(ABC):
         self._rl_view_ctx: Optional[PatternViewContext] = None
         self._bot_view_ctx: Optional[PatternViewContext] = None
         self._primary_view_ctx: Optional[PatternViewContext] = None
+        # Global singletons may be wired from both players and tools; keep both.
+        self._env_mappings_by_role: Dict[str, tuple] = {}
 
         # 確保只被初始化一次
         if Ability._default_configs is None:
@@ -253,9 +269,13 @@ class Ability(ABC):
             pattern = str(params.get("runtime_pattern") or self.pattern)
             by_controller[controller] = self.resolve_pattern_view(pattern)
 
-        self._human_view_ctx = by_controller.get("Human")
-        self._rl_view_ctx = by_controller.get("RL")
-        self._bot_view_ctx = by_controller.get("Bot")
+        # Merge per-controller views so shared singleton abilities keep prior owners.
+        if "Human" in by_controller:
+            self._human_view_ctx = by_controller["Human"]
+        if "RL" in by_controller:
+            self._rl_view_ctx = by_controller["RL"]
+        if "Bot" in by_controller:
+            self._bot_view_ctx = by_controller["Bot"]
 
         if getattr(self, "pattern", None):
             self._primary_view_ctx = self.resolve_pattern_view(self.pattern)
@@ -277,11 +297,20 @@ class Ability(ABC):
     def configure_from_player_configs(
         self, player_configs: List[Dict[str, Any]], level: "Levels"
     ) -> None:
-        from script.role.objects.object_template.loader import ensure_object_templates_registered
+        from script.role.abilities.articulation_control_config.robot_pattern import (
+            normalize_robot_pattern,
+        )
 
-        ensure_object_templates_registered()
+        robot_pattern = None
+        share_key = getattr(self, "_ability_share_key", None)
+        if share_key and ":" in str(share_key):
+            robot_pattern = normalize_robot_pattern(str(share_key).split(":", 1)[1])
 
-        matched_config = find_player_config_for_ability(player_configs, self.__class__.__name__)
+        matched_config = find_player_config_for_ability(
+            player_configs,
+            self.__class__.__name__,
+            robot_pattern=robot_pattern,
+        )
         matched_object = dict(matched_config.get("object") or {})
         self.configure_from_object(matched_object, matched_config)
         self.policy_device = matched_object.get("policy_device") or str(
@@ -298,24 +327,76 @@ class Ability(ABC):
             self.control_keys = KeyMapping.get(ability_detail.key.model_dump())
 
     def setup_cooldown(self, num_objects_total, owners_ability_list):
-        # 直接在 GPU 上創建並填充 -1.0 (極快)
         self.num_objects_total = num_objects_total
-        self.cooldown_ability_owners = wp.full(shape=num_objects_total, value=-1, dtype=wp.int32)
-
-        # 將擁有者的索引轉成 wp.array (如果它還不是的話)
         owners_wp = wp.array(owners_ability_list, dtype=wp.int32)
+        existing = getattr(self, "cooldown_ability_owners", None)
+        if existing is not None and existing.shape[0] == num_objects_total:
+            # Shared singleton abilities register multiple role owners; merge slots.
+            wp.launch(
+                kernel=set_indices_to_value_kernel,
+                dim=len(owners_ability_list),
+                inputs=[existing, owners_wp, 0],
+                device=self.physics_manager.device,
+            )
+            return
 
-        # 執行一個極簡的 Kernel 把對應位置改為 0
+        self.cooldown_ability_owners = wp.full(
+            shape=num_objects_total, value=-1, dtype=wp.int32
+        )
         wp.launch(
             kernel=set_indices_to_value_kernel,
             dim=len(owners_ability_list),
             inputs=[self.cooldown_ability_owners, owners_wp, 0],
-            device=self.physics_manager.device
+            device=self.physics_manager.device,
         )
 
-    def setup_player_to_env_mapping(self, index_role_offset_env_gpu, num_role_each_env):
-        self.index_player_offset_env_gpu = index_role_offset_env_gpu
-        self.num_player_each_env = num_role_each_env
+    def setup_player_to_env_mapping(
+        self,
+        index_role_offset_env_gpu,
+        num_role_each_env,
+        *,
+        role_type: str = "player",
+    ):
+        """Store per-role env index tables.
+
+        Global singleton abilities (e.g. Shoot) may appear on both players and
+        tools; each role keeps its own mapping. Legacy attributes
+        ``index_player_offset_env_gpu`` / ``num_player_each_env`` prefer the
+        player mapping when present so existing player-side callers stay correct.
+        """
+        role = str(role_type or "player").strip() or "player"
+        self._env_mappings_by_role[role] = (
+            index_role_offset_env_gpu,
+            num_role_each_env,
+        )
+        self._sync_legacy_env_mapping_attrs()
+
+    def get_env_mapping(self, role_type: str = "player"):
+        """Return ``(index_role_offset_env_gpu, num_role_each_env)`` for ``role_type``."""
+        role = str(role_type or "player").strip() or "player"
+        mapping = self._env_mappings_by_role.get(role)
+        if mapping is None:
+            raise KeyError(
+                f"{self.__class__.__name__} has no env mapping for role_type={role!r}. "
+                f"Registered: {sorted(self._env_mappings_by_role)}"
+            )
+        return mapping
+
+    def get_index_role_offset_env_gpu(self, role_type: str = "player"):
+        return self.get_env_mapping(role_type)[0]
+
+    def get_num_role_each_env(self, role_type: str = "player"):
+        return self.get_env_mapping(role_type)[1]
+
+    def _sync_legacy_env_mapping_attrs(self) -> None:
+        if "player" in self._env_mappings_by_role:
+            offset, num = self._env_mappings_by_role["player"]
+        elif self._env_mappings_by_role:
+            offset, num = next(iter(self._env_mappings_by_role.values()))
+        else:
+            return
+        self.index_player_offset_env_gpu = offset
+        self.num_player_each_env = num
 
     def get_action_spec(self) -> dict:
         """

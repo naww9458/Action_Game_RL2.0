@@ -1,0 +1,18 @@
+turret_110mm:
+  turret_aim:
+    soft_limit_factor: 0.95
+    init_state:
+      root_pos: [0.0, 0.0, 0.0]
+      root_rot: [0.0, 0.0, 0.0, 1.0]
+    joint_pos:
+      RevoluteJoint: 0.0
+    joint_actuation:
+      stiffness: 500.0
+      damping: 50.0
+      armature: 0.01
+    non_rl_patterns: []
+    human_control:
+      keyboard: {}
+      mouse: {}
+    # Mount geometry: template.yaml + level tool_configs.
+    # Aim / proximity defaults: abilities_default_cfg Tool_attachment + level tool_configs overrides.

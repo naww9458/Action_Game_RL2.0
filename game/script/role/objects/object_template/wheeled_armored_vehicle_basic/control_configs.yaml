@@ -79,4 +79,12 @@ wheeled_armored_vehicle_basic:
     rollover:
       passive_suspension_upright_dot: 0.5  # 車體 up 軸與世界 Z 夾角過大時，懸吊改為被動（不再硬拉姿勢）；release suspension pose servos when body up-dot falls below this threshold。
 
-    possess_offset: [0.0, 0.0, 1.5]  # 角色附身/相機相對車體偏移 [m]；possess-camera offset from chassis [m]。
+    possess_offset: [0.0, 0.0, 1.5]  # 回退偏移（未配置锚点时使用）/ fallback offset when anchor is not configured
+    possess_anchor_name: hull_mount_anchor  # 附身相机锚点 / possess-camera anchor prim name
+    possess_body_prim_suffix: vehicle_body  # 锚点所属刚体 / body prim suffix hosting the anchor
+    possess_height_above_anchor: 2.0  # 锚点正上方高度 [m] / height above anchor along body +Z [m]
+    # 作为 tool host 时的挂载锚点（缺省时 tool_mount_setup 从此读取）
+    # Host-side mount anchors when a tool attaches to this vehicle
+    mount_host:
+      host_anchor_name: hull_mount_anchor
+      host_body_prim_suffix: vehicle_body

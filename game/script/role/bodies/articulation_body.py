@@ -1,3 +1,5 @@
+import time
+
 import newton
 import warp as wp
 import numpy as np
@@ -288,8 +290,25 @@ class ArticulationBody(BaseBody):
         self.control_joint_labels: Dict[str, List[str]] = {}
         self.control_rl_action_dim: Dict[str, int] = {}
 
+        # Per-pattern static flag from build_view (safe under CUDA Graph capture).
+        self._pattern_has_free_root: Dict[str, bool] = {}
+
         # 快取一開始剛完成加載時的物理預設關節角度 (Shape: world, count, dof)
         self.default_joint_positions_gpus: Dict[str, wp.array] = {}
+
+    @staticmethod
+    def _joint_index_for_qd(
+        joint_qd_start_np: np.ndarray,
+        joint_count: int,
+        offset_dof_idx: int,
+    ) -> int:
+        if joint_count <= 0:
+            return 0
+        ends = joint_qd_start_np[1 : joint_count + 1]
+        joint_idx = int(np.searchsorted(ends, offset_dof_idx, side="right"))
+        if joint_idx >= joint_count:
+            joint_idx = joint_count - 1
+        return max(joint_idx, 0)
 
     def add_object(self, 
                    label: str, 
@@ -300,10 +319,9 @@ class ArticulationBody(BaseBody):
         super().add_object(label=label, index=index, default_position=default_position, default_rotation=default_rotation)
 
     def build_view(self, device, model: Model, num_objects_env):
+        build_t0 = time.perf_counter()
         super().build_view(device=device, model=model, num_objects_env=num_objects_env)
         self.model = model  # 快取 model 供後續控制使用
-        self.num_rigid_bodies_env = 0
-        self.num_joint_dofs_env = 0
 
         articulation_start_np = model.articulation_start.numpy()
         joint_qd_start_np = model.joint_qd_start.numpy()
@@ -385,7 +403,10 @@ class ArticulationBody(BaseBody):
                     f"{pattern_body_stride} != {self.num_rigid_bodies_env}"
                 )
 
-            for world in range(view.world_count):
+            worlds_to_check = [0]
+            if view.world_count > 1:
+                worlds_to_check.append(view.world_count - 1)
+            for world in worlds_to_check:
                 for obj_idx, articulation_id_value in enumerate(articulation_ids_cpu[world]):
                     articulation_id = int(articulation_id_value)
                     start_joint = int(articulation_start_np[articulation_id])
@@ -405,7 +426,9 @@ class ArticulationBody(BaseBody):
             self.control_omega_gpus[pattern] = wp.zeros(shape=shape, dtype=wp.vec3, device=self.device, requires_grad=GameConfig.requires_grad)
             self.control_force_gpus[pattern] = wp.zeros(shape=shape, dtype=wp.vec3, device=self.device, requires_grad=GameConfig.requires_grad)
             self.control_torque_gpus[pattern] = wp.zeros(shape=shape, dtype=wp.vec3, device=self.device, requires_grad=GameConfig.requires_grad)
-            self.control_mask_gpus[pattern] = wp.zeros(shape=shape, dtype=wp.int32, device=self.device, requires_grad=GameConfig.requires_grad)
+            self.control_mask_gpus[pattern] = wp.zeros(
+                shape=shape, dtype=wp.int32, device=self.device, requires_grad=False
+            )
 
             # Detect FREE root joints for every object, including single floating
             # rigid bodies whose only joint was excluded from the view.
@@ -419,6 +442,7 @@ class ArticulationBody(BaseBody):
             self.view_joint_has_free_gpus[pattern] = wp.array(
                 has_free_joints, dtype=wp.int32, device=self.device
             )
+            self._pattern_has_free_root[pattern] = any(has_free_joints)
 
             # [B. 關節馬達部分]
             joint_dof_count = view.joint_dof_count
@@ -430,7 +454,9 @@ class ArticulationBody(BaseBody):
                 self.control_joint_torque_gpus[pattern] = wp.zeros(shape=joint_shape, dtype=float, device=self.device, requires_grad=GameConfig.requires_grad)
                 self.control_joint_vel_gpus[pattern] = wp.zeros(shape=joint_shape, dtype=float, device=self.device, requires_grad=GameConfig.requires_grad)
                 self.control_joint_pos_gpus[pattern] = wp.zeros(shape=joint_shape, dtype=float, device=self.device, requires_grad=GameConfig.requires_grad)
-                self.control_joint_mask_gpus[pattern] = wp.zeros(shape=joint_shape, dtype=wp.int32, device=self.device, requires_grad=GameConfig.requires_grad)
+                self.control_joint_mask_gpus[pattern] = wp.zeros(
+                    shape=joint_shape, dtype=wp.int32, device=self.device, requires_grad=False
+                )
 
                 local_dof_indices = []
                 for obj_idx in range(view.count_per_world):
@@ -478,7 +504,7 @@ class ArticulationBody(BaseBody):
                         f"{pattern_dof_stride} != {self.num_joint_dofs_env}"
                     )
 
-                for world in range(view.world_count):
+                for world in worlds_to_check:
                     for obj_idx, articulation_id_value in enumerate(articulation_ids_cpu[world]):
                         articulation_id = int(articulation_id_value)
                         start_joint = int(articulation_start_np[articulation_id])
@@ -509,13 +535,11 @@ class ArticulationBody(BaseBody):
                     if has_free_joints[0] == 1:
                         offset_dof_idx += 6
 
-                    joint_idx = 0
-                    for j in range(model.joint_count):
-                        start = joint_qd_start_np[j]
-                        end = joint_qd_start_np[j+1] if j+1 < len(joint_qd_start_np) else model.joint_dof_count
-                        if start <= offset_dof_idx < end:
-                            joint_idx = j
-                            break
+                    joint_idx = self._joint_index_for_qd(
+                        joint_qd_start_np,
+                        model.joint_count,
+                        offset_dof_idx,
+                    )
 
                     label = model.joint_label[joint_idx].lower() if joint_idx < len(model.joint_label) else ""
                     joint_labels.append(label)
@@ -639,6 +663,13 @@ class ArticulationBody(BaseBody):
                 device=self.device,
             )
 
+        build_ms = (time.perf_counter() - build_t0) * 1000.0
+        print(
+            f"[ArticulationBody] build_view done in {build_ms:.1f} ms: "
+            f"patterns={len(self.patterns)}, views={len(self.views)}, "
+            f"bodies_env={self.num_rigid_bodies_env}, joint_dofs_env={self.num_joint_dofs_env}"
+        )
+
     def _apply_inspector_root_teleport(
         self,
         view: ArticulationView,
@@ -647,7 +678,15 @@ class ArticulationBody(BaseBody):
         body_q_prev,
         solver_body_q_prev,
     ):
-        """對浮動基座關節體套用 Inspector 釘選的位姿/速度（與 reset 相同路徑，純 GPU mask）。"""
+        """對浮動基座關節體套用 Inspector 釘選的位姿/速度（與 reset 相同路徑，純 GPU mask）。
+
+        Do not gate this path with per-frame Python flags: CUDA Graph captures
+        simulate() once and replays the same kernels. Inspector pins write
+        control_mask_gpus on the host before capture_launch; teleport_mask and
+        eval_fk(mask=...) no-op on GPU when no bits are set.
+        """
+        if not self._pattern_has_free_root.get(pattern, False):
+            return
         if pattern not in self.view_joint_has_free_gpus:
             return
 

@@ -8,7 +8,10 @@ from script.role.controller_utils import normalize_controller
 from script.role.player import Player
 from script.role.platform import Platform
 from script.role.entity import Entity
+from script.role.tool import Tool
 from script.role.ability_generated_object import AbilityGeneratedObject
+from script.simulate.tool_mount_setup import setup_tool_mount_joints
+from script.role.objects.object_template.loader import ensure_object_templates_registered
 from script.levels.rewards.reward_calculator import RewardCalculator
 from script.role.abilities.articulation_control_config.profile_registry import resolve_player_runtime_pattern
 
@@ -18,6 +21,7 @@ if TYPE_CHECKING:
     import torch
     from script.game import Game
     from script.simulate.physics_manager import PhysicsManager
+    from script.simulate.mount_joint_registry import MountJointRegistry
 
 
 class Levels:
@@ -31,6 +35,8 @@ class Levels:
         self.action_shape_offset: int = 0
 
         self.level_configs = level_configs or {}
+
+        ensure_object_templates_registered()
 
         # Optional per-env command buffer (e.g. velocity commands). Subclasses allocate in setup().
         self.commands: Optional[wp.array2d] = None
@@ -47,12 +53,21 @@ class Levels:
         self.platforms: Platform = Platform(configs=self.level_configs.get("platform_configs", []))
         print("Setup Entity!")
         self.entities: Entity = Entity(configs=self.level_configs.get("entity_configs", []))
+        print("Setup Tool!")
+        tool_configs = self.level_configs.get("tool_configs") or {}
+        self.tools: Tool | None = Tool(configs=tool_configs) if tool_configs else None
         print("Setup AbilityGeneratedObject!")
         self.abilities_objects: AbilityGeneratedObject = AbilityGeneratedObject(configs=self.level_configs.get("ability_generated_object_configs", []))
-        
+
+        setup_tool_mount_joints(self)
+
+        role_objects = [self.players, self.platforms, self.entities, self.abilities_objects]
+        if self.tools is not None:
+            role_objects.insert(3, self.tools)
+        BaseRole.physics_index_match_to_role(role_objects=role_objects, num_env=self.num_env)
         BaseRole._num_objects_total = BaseRole._num_objects_env * self.num_env
         self.num_objects_total = BaseRole._num_objects_total
-        BaseRole.physics_index_match_to_role(role_objects=[self.players, self.platforms, self.entities, self.abilities_objects], num_env=self.num_env)
+        self.mount_joint_registry: MountJointRegistry = getattr(self, "mount_joint_registry", None)
         GameConfig.NUM_PLAYERS = self.players.num_total_object_role
         GameConfig.NUM_OBJECTS_TOTAL = self.num_objects_total
         self.abilities_objects.update_owner(num_object_total=BaseRole._num_objects_total, 
@@ -86,13 +101,43 @@ class Levels:
         # 🌟 建立並行物理 View, 這個 num_objects_env 指的是高層次的 Object 而不是 model 中的 body，比如一個 Unitree G1 在 model 中有多個 body 但是在環境中只能算一個 Object
         self.articulation_body.build_view(device=GameConfig.DEVICE, model=self.physics_manager.model, num_objects_env=BaseRole._num_objects_env)
         self.deformable_body.build_view(device=GameConfig.DEVICE, model=self.physics_manager.model, num_objects_env=BaseRole._num_objects_env)
+        if self.mount_joint_registry is not None and self.mount_joint_registry.records:
+            solver_type = str(
+                (self.level_configs.get("environment_configs") or {}).get("solver_config", {}).get(
+                    "type", ""
+                )
+            )
+            self.mount_joint_registry.bind_model(
+                self.physics_manager.model,
+                self.physics_manager.device,
+                self.articulation_body.num_joint_dofs_env,
+                self.articulation_body.num_rigid_bodies_env,
+                solver_type=solver_type,
+                num_env=self.num_env,
+                solver=self.physics_manager.solver_handler.solver if self.physics_manager.solver_handler else None,
+            )
         self.initialize_player_roles()
 
         for i, ability in enumerate(self.players.abilities_instance_list):
             ability.setup_cooldown(num_objects_total=BaseRole._num_objects_total, owners_ability_list=self.players.abilities_owner_list[i])
-            ability.setup_player_to_env_mapping(index_role_offset_env_gpu=self.players.index_role_offset_env_gpu, 
-                                                num_role_each_env=self.players.num_role_each_env, 
-                                               )
+            ability.setup_player_to_env_mapping(
+                index_role_offset_env_gpu=self.players.index_role_offset_env_gpu,
+                num_role_each_env=self.players.num_role_each_env,
+                role_type="player",
+            )
+
+        if self.tools is not None:
+            for i, ability in enumerate(self.tools.abilities_instance_list):
+                ability.setup_cooldown(
+                    num_objects_total=BaseRole._num_objects_total,
+                    owners_ability_list=self.tools.abilities_owner_list[i],
+                )
+                ability.setup_player_to_env_mapping(
+                    index_role_offset_env_gpu=self.tools.index_role_offset_env_gpu,
+                    num_role_each_env=self.tools.num_role_each_env,
+                    role_type="tool",
+                )
+            self._configure_tool_abilities()
 
         # 更新全域配置與 Action Space
         self._configure_articulation_abilities()
@@ -155,6 +200,14 @@ class Levels:
             print("Warning: GameConfig attributes are immutable or missing.")
 
         print(f"Action Space Config: {action_space_config}")
+
+    def _configure_tool_abilities(self):
+        tool_configs = list((self.level_configs.get("tool_configs") or {}).values())
+        for ability in self.tools.abilities_instance_list:
+            if hasattr(ability, "configure_from_tool_configs"):
+                ability.configure_from_tool_configs(tool_configs, self)
+            if hasattr(ability, "configure_from_tool_configs_post_indices"):
+                ability.configure_from_tool_configs_post_indices(self)
 
     def _configure_articulation_abilities(self):
         player_configs = self.level_configs.get("player_configs", [])

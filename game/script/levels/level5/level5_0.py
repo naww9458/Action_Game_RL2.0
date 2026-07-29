@@ -14,7 +14,6 @@ try:
     from script.role.objects.object_template.mjlab_unitree_g1.g1_velocity_locomotion_provider import (
         G1VelocityLocomotionProvider,
     )
-    from script.role.objects.object_template.loader import ensure_object_templates_registered
 except ImportError:
     from script.levels.rewards.reward_calculator import RewardCalculator
     from script.levels.rewards.game_end_reward import G1LocomotionTerminator
@@ -25,7 +24,6 @@ except ImportError:
     from script.role.objects.object_template.mjlab_unitree_g1.g1_velocity_locomotion_provider import (
         G1VelocityLocomotionProvider,
     )
-    from script.role.objects.object_template.loader import ensure_object_templates_registered
 
 from typing import TYPE_CHECKING
 if TYPE_CHECKING:
@@ -57,7 +55,6 @@ class Level5_0(Levels):
         super().setup()
 
         pattern = self.resolve_player_pattern()
-        ensure_object_templates_registered()
         self.g1_provider = G1VelocityLocomotionProvider(
             num_env=self.num_env,
             device=GameConfig.DEVICE,

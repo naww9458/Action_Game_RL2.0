@@ -57,13 +57,24 @@ class CustomViewerGL(ViewerGL):
         self._label_follow_body_index = pyglet.text.Label('', font_name='Consolas', font_size=self.font_size_system_info, # bold=True,
                                             x=20, y=20, color=(0, 0, 0), batch=self._ui_batch)
 
+        self._label_attach_prompt = pyglet.text.Label(
+            '',
+            font_name='Consolas',
+            font_size=self.font_size_system_info + 2,
+            x=20,
+            y=20,
+            color=(255, 220, 80, 255),
+            batch=self._ui_batch,
+        )
+
         # 玩家數據標籤池
         self._player_labels = []
         self._last_health = []
         self._last_rewards = []
         self._last_step = -1
-        self.follow_body_index = follow_body_index
+        self.follow_role_index = follow_body_index
         self.follow_body_index_input_cache = ""
+        self.free_view_mode = False
         self.possess_offsets: list[tuple[float, float, float]] = []
         self.sim_time = 0.0
 
@@ -179,14 +190,37 @@ class CustomViewerGL(ViewerGL):
         self._label_player_color.y = self._label_fps.y - (self.font_size_system_info + 10)
         offset_player_label = self._label_player_color.y - (self.font_size_system_info + 10)
 
-        if self.follow_body_index is not None:
-            label_text_follow_body_index = f"Current following object: {self.follow_body_index}"
+        if self.follow_role_index is not None:
+            mode = "Free View" if self.free_view_mode else "Full Follow"
+            label_text_follow_body_index = (
+                f"Following role: {self.follow_role_index} [{mode}] (Left Alt to toggle)"
+            )
         else:
-            label_text_follow_body_index = f"Entering index to follow: {self.follow_body_index_input_cache}"
+            label_text_follow_body_index = f"Enter role index to follow: {self.follow_body_index_input_cache}"
 
         self._label_follow_body_index.text = label_text_follow_body_index
         self._label_follow_body_index.x = window_w - self._label_follow_body_index.content_width - 20
         self._label_follow_body_index.y = window_h - (self.font_size_system_info * 2)
+
+        attach_prompt = ""
+        if self.game is not None and self.follow_role_index is not None:
+            follow_targets = self._resolve_follow_targets()
+            host_role_object_id = follow_targets[0] if follow_targets is not None else None
+            if host_role_object_id is not None:
+                for ability in getattr(self.game.players, "abilities_instance_list", []):
+                    if hasattr(ability, "show_attach_prompt_for_host"):
+                        if ability.show_attach_prompt_for_host(host_role_object_id):
+                            attach_prompt = ability.get_prompt_text()
+                        break
+            else:
+                for ability in getattr(self.game.players, "abilities_instance_list", []):
+                    if getattr(ability, "show_attach_prompt", False):
+                        attach_prompt = ability.get_prompt_text()
+                        break
+        self._label_attach_prompt.text = attach_prompt
+        if attach_prompt:
+            self._label_attach_prompt.x = (window_w - self._label_attach_prompt.content_width) // 2
+            self._label_attach_prompt.y = window_h // 2
 
         self._label_step.text = f"STEP: {self.game.current_step} / {self.game.max_episode_step}"
         self._label_fps.text = f"FPS: {self._current_fps}"
@@ -227,49 +261,91 @@ class CustomViewerGL(ViewerGL):
         self.renderer.window.projection = proj
         self.renderer.window.view = view
 
+    def _compute_follow_camera_position(
+        self,
+        state_0: State,
+        camera_body_index: int,
+        role_object_id: int,
+    ) -> wp.vec3 | None:
+        """World-space follow camera position (body root + rotated possess offset)."""
+        target_transform = state_0.body_q.numpy()[camera_body_index]
+        pos = target_transform[:3]
+        quat = target_transform[3:]
+        offset = (0.0, 0.0, 0.0)
+        if (
+            self.possess_offsets
+            and 0 <= role_object_id < len(self.possess_offsets)
+        ):
+            offset = self.possess_offsets[role_object_id]
+
+        if any(abs(v) > 1e-6 for v in offset):
+            q = wp.quat(float(quat[0]), float(quat[1]), float(quat[2]), float(quat[3]))
+            offset_world = wp.quat_rotate(
+                q, wp.vec3(float(offset[0]), float(offset[1]), float(offset[2]))
+            )
+            pos = (
+                float(pos[0]) + float(offset_world[0]),
+                float(pos[1]) + float(offset_world[1]),
+                float(pos[2]) + float(offset_world[2]),
+            )
+
+        return wp.vec3(float(pos[0]), float(pos[1]), float(pos[2]))
+
+    def _resolve_follow_targets(self) -> tuple[int, int] | None:
+        """Resolve current follow role index to (role_object_id, camera_body_index)."""
+        if self.follow_role_index is None or self.game is None:
+            return None
+        return self.game.players.resolve_follow_targets(
+            self.follow_role_index,
+            self.game.physics_manager,
+        )
+
     def render(self, player_health: list, frame_dt, state_0: State, index_player_gpu):
 
         if self.is_mouse_exclusive:
             self.renderer.window.set_mouse_position(self.renderer.window.width // 2, self.renderer.window.height // 2)
 
         self.health_ref = player_health
+        follow_targets = self._resolve_follow_targets()
+        if follow_targets is not None:
+            role_object_id, camera_body_index = follow_targets
+            cam_pos = self._compute_follow_camera_position(
+                state_0, camera_body_index, role_object_id
+            )
+            if not self.free_view_mode:
+                quat = state_0.body_q.numpy()[camera_body_index][3:]
+                pitch, yaw = quat_to_pitch_yaw(quat)
+                self.look_pitch = float(pitch)
+                self.look_yaw = float(yaw)
+
+            self.set_camera(
+                pos=cam_pos,
+                pitch=float(self.look_pitch),
+                yaw=float(self.look_yaw),
+            )
+        else:
+            if self.follow_role_index is not None:
+                self.follow_role_index = None
+                self.follow_body_index_input_cache = ""
+                self.free_view_mode = False
+            self.set_camera(pos=self.camera.pos, pitch=float(self.look_pitch), yaw=float(self.look_yaw))
+
         try:
+            role_object_id = follow_targets[0] if follow_targets is not None else None
             input_data = {
-                "follow_body_index": self.follow_body_index,
+                "follow_role_index": self.follow_role_index,
+                "follow_body_index": role_object_id,
                 "keyboard_keys": self.keyboard_keys,
                 "mouse_buttons": self.mouse_buttons,
                 "look_yaw": self.look_yaw,
                 "look_pitch": self.look_pitch,
+                "camera_yaw": float(self.camera.yaw),
+                "camera_pitch": float(self.camera.pitch),
                 "simulation_control": self.simulation_control.to_queue_payload(),
             }
             self.human_input_queue.put_nowait(input_data)
-        except Full: pass
-        if self.follow_body_index is not None:
-            # TODO to much .numpy() may cause performance problem
-            all_transforms = state_0.body_q.numpy()
-            target_transform = all_transforms[self.follow_body_index]
-            pos = target_transform[:3]
-            quat = target_transform[3:]
-            offset = (0.0, 0.0, 0.0)
-            if (
-                self.possess_offsets
-                and 0 <= self.follow_body_index < len(self.possess_offsets)
-            ):
-                offset = self.possess_offsets[self.follow_body_index]
-            if any(abs(v) > 1e-6 for v in offset):
-                q = wp.quat(float(quat[0]), float(quat[1]), float(quat[2]), float(quat[3]))
-                offset_world = wp.quat_rotate(
-                    q, wp.vec3(float(offset[0]), float(offset[1]), float(offset[2]))
-                )
-                pos = (
-                    float(pos[0]) + float(offset_world[0]),
-                    float(pos[1]) + float(offset_world[1]),
-                    float(pos[2]) + float(offset_world[2]),
-                )
-            pitch, yaw = quat_to_pitch_yaw(quat)
-            self.set_camera(pos=wp.vec3(float(pos[0]), float(pos[1]), float(pos[2])), pitch=float(pitch), yaw=float(yaw))
-        else:
-            self.set_camera(pos=self.camera.pos, pitch=float(self.look_pitch), yaw=float(self.look_yaw))
+        except Full:
+            pass
 
         # self.render_debug_geometry(all_transforms=state_0.body_q, index_player_gpu=index_player_gpu) # TODO 暫時禁用，因爲現在屬於玩家角色控制的物件不再只有球體, 如果物件是球體，如果是多個剛體組合的物件比如 Unitree g1，身上會出現很多條綫
         self.begin_frame(self.sim_time)
@@ -324,24 +400,28 @@ class CustomViewerGL(ViewerGL):
             self.is_mouse_exclusive = not self.is_mouse_exclusive
             self.renderer.window.set_exclusive_mouse(self.is_mouse_exclusive)
 
-        elif self._symbol_in_binding(symbol, "unfollow_body"):
-            self.follow_body_index = None
-            self.follow_body_index_input_cache = ""
+        elif self._symbol_in_binding(symbol, "toggle_free_view"):
+            self._toggle_free_view_mode()
 
-        elif self._symbol_in_binding(symbol, "follow_confirm") and self.follow_body_index is None:
+        elif self._symbol_in_binding(symbol, "unfollow_body"):
+            self.follow_role_index = None
+            self.follow_body_index_input_cache = ""
+            self.free_view_mode = False
+
+        elif self._symbol_in_binding(symbol, "follow_confirm") and self.follow_role_index is None:
             if not self.follow_body_index_input_cache:
                 return
-            index = int(self.follow_body_index_input_cache)
-            if -1 < index <= self.num_objects_total:
-                self.follow_body_index = index
+            role_index = int(self.follow_body_index_input_cache)
+            if 0 <= role_index < self.num_players:
+                self.follow_role_index = role_index
                 self.follow_body_index_input_cache = ""
             else:
-                print("Invalid index entered: ", self.follow_body_index_input_cache)
+                print("Invalid role index entered: ", self.follow_body_index_input_cache)
 
-        elif self._symbol_in_binding(symbol, "follow_backspace") and self.follow_body_index is None:
+        elif self._symbol_in_binding(symbol, "follow_backspace") and self.follow_role_index is None:
             self.follow_body_index_input_cache = self.follow_body_index_input_cache[:-1]
 
-        elif self._symbol_in_binding(symbol, "follow_digit") and self.follow_body_index is None:
+        elif self._symbol_in_binding(symbol, "follow_digit") and self.follow_role_index is None:
             self.follow_body_index_input_cache += str(symbol - key._0)
 
         elif self._symbol_in_binding(symbol, "toggle_newton_ui"):
@@ -363,6 +443,11 @@ class CustomViewerGL(ViewerGL):
         #     # Exit with Escape key
         #     self.renderer.close()
        
+    def _toggle_free_view_mode(self) -> None:
+        if self.follow_role_index is None:
+            return
+        self.free_view_mode = not self.free_view_mode
+
     def on_key_release(self, symbol, modifiers): self.keyboard_keys[symbol] = 0
 
     def on_mouse_scroll(self, x: float, y: float, scroll_x: float, scroll_y: float): 
@@ -403,6 +488,10 @@ class CustomViewerGL(ViewerGL):
         if self._ui_is_capturing_keyboard():
             return
 
+        if self.follow_role_index is not None:
+            self._cam_vel[:] = 0.0
+            return
+
         # camera-relative basis
         forward = np.array(self.camera.get_front(), dtype=np.float32)
         right = np.array(self.camera.get_right(), dtype=np.float32)
@@ -420,7 +509,7 @@ class CustomViewerGL(ViewerGL):
             right /= ln
 
         desired = np.zeros(3, dtype=np.float32)
-        if self.follow_body_index is None:
+        if self.follow_role_index is None:
             if self._is_any_key_down("move_forward"):
                 desired += forward
             if self._is_any_key_down("move_back"):
