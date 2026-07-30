@@ -1,6 +1,32 @@
 defaults:
   auto_reset_on_env_end: false
   manual_reset_enabled: true
+  free_view_mode: true
+  show_role_name_labels: true
+  role_name_label_height: 2.0
+
+debug_geometry:
+  line_length: 1.0
+  line_width: 0.03
+  surface_offset: 0.5
+  circle_radius: 0.01
+  circle_lift: 0.002
+  num_segments: 16
+  default_forward_local: [1.0, 0.0, 0.0]
+  shoot_forward_shape_key_prefixes:
+    - rigid_
+  length_spin:
+    min: 0.01
+    max: 50.0
+    step: 0.1
+    decimals: 3
+  width_spin:
+    min: 0.001
+    max: 1.0
+    step: 0.01
+    decimals: 4
+  extension_line_color: [0.0, 1.0, 0.0]
+  circle_line_color: [1.0, 0.0, 0.0]
 
 category_labels:
   camera: Camera

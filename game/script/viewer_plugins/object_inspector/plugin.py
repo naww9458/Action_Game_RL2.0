@@ -1,21 +1,32 @@
 from __future__ import annotations
 
 import sys
+from dataclasses import dataclass
 from typing import List, Optional, TYPE_CHECKING
 
 from PyQt6.QtWidgets import QApplication
 
 from script.role.abilities.ability import Ability
-from script.viewer_controls import format_keys
+from script.role.base_role import BaseRole
+from script.viewer_controls import format_keys, DebugGeometryConfig
 
 from .control_bridge import ControlBridge
 from .inspector_window import InspectorWindow
-from .metadata import InspectorCatalog
+from .metadata import InspectorCatalog, ObjectInspectorSpec
 from .raycast_select import RaycastSelector
 
 if TYPE_CHECKING:
     from script.custom_viewergl import CustomViewerGL
     from script.game import Game
+
+
+@dataclass(frozen=True)
+class DebugGeometryInstance:
+    global_body_idx: int
+    shape_idx: int = -1
+    forward_local: tuple[float, float, float] = (1.0, 0.0, 0.0)
+    # 0 = body_q (+ shape offset), 1 = shoot.py forward formula
+    forward_convention: int = 0
 
 
 class ObjectInspectorPlugin:
@@ -27,12 +38,14 @@ class ObjectInspectorPlugin:
         self._catalog: Optional[InspectorCatalog] = None
         self._bridge: Optional[ControlBridge] = None
         self._selector: Optional[RaycastSelector] = None
+        self._debug_geometry_cfg: Optional[DebugGeometryConfig] = None
         self._visible = False
         self._pending_impulse: Optional[dict] = None
 
     def attach(self, game: "Game", viewer: "CustomViewerGL"):
         self._game = game
         self._viewer = viewer
+        self._debug_geometry_cfg = viewer.viewer_controls_cfg.debug_geometry
         self._catalog = InspectorCatalog.build_from_game(game)
         self._bridge = ControlBridge(game)
         self._selector = RaycastSelector(game.physics_manager.model, game.physics_manager.device)
@@ -57,8 +70,7 @@ class ObjectInspectorPlugin:
         if self._bridge.has_commands():
             self._window.set_command_labels(list(game.level.command_labels))
         self._window.setup_debug_geometry_controls(
-            initial_length=viewer.get_debug_geometry_line_length(),
-            initial_width=viewer.get_debug_geometry_line_width(),
+            config=viewer.viewer_controls_cfg.debug_geometry,
             on_changed=self._on_debug_geometry_style_changed,
         )
 
@@ -313,11 +325,67 @@ class ObjectInspectorPlugin:
 
         return entries
 
-    def get_debug_geometry_body_indices(self) -> List[int]:
+    def _resolve_primary_shape_idx(self, global_body_idx: int) -> int:
+        if not self._game:
+            return -1
+        model = self._game.physics_manager.model
+        shape_body = model.shape_body.numpy()
+        for shape_idx, body_idx in enumerate(shape_body):
+            if int(body_idx) == global_body_idx:
+                return int(shape_idx)
+        return -1
+
+    def _resolve_debug_geometry_forward_local(
+        self,
+        spec: ObjectInspectorSpec,
+        world_idx: int,
+    ) -> tuple[float, float, float]:
+        default = (1.0, 0.0, 0.0)
+        if self._debug_geometry_cfg is not None:
+            default = self._debug_geometry_cfg.default_forward_local
+        if not self._game:
+            return default
+        num_objects_env = self._game.num_objects_env
+        global_role_id = world_idx * num_objects_env + spec.local_role_idx
+
+        registry = getattr(self._game.level, "mount_joint_registry", None)
+        if registry is not None:
+            for record in registry.records.values():
+                if record.tool_role_object_id == global_role_id:
+                    forward = record.aim_config.aim_forward_local
+                    return (float(forward[0]), float(forward[1]), float(forward[2]))
+
+        if global_role_id < len(BaseRole._object_game_params):
+            params = BaseRole._object_game_params[global_role_id]
+            aim_control = params.get("aim_control")
+            if isinstance(aim_control, dict):
+                forward = aim_control.get("aim_forward_local")
+                if isinstance(forward, (list, tuple)) and len(forward) >= 3:
+                    return (float(forward[0]), float(forward[1]), float(forward[2]))
+        return default
+
+    def _resolve_debug_geometry_convention(self, spec: ObjectInspectorSpec, world_idx: int) -> int:
+        if not self._game:
+            return 0
+        prefixes = (
+            self._debug_geometry_cfg.shoot_forward_shape_key_prefixes
+            if self._debug_geometry_cfg is not None
+            else ["rigid_"]
+        )
+        num_objects_env = self._game.num_objects_env
+        global_role_id = world_idx * num_objects_env + spec.local_role_idx
+        if global_role_id < len(BaseRole._object_game_params):
+            shape_key = str(BaseRole._object_game_params[global_role_id].get("shape_key", ""))
+            for prefix in prefixes:
+                if shape_key.startswith(prefix):
+                    return 1
+        return 0
+
+    def get_debug_geometry_instances(self) -> List[DebugGeometryInstance]:
         if not self._bridge or not self._window or not self._catalog or not self._game:
             return []
         body_count = self._game.physics_manager.model.body_count
-        indices: List[int] = []
+        instances: List[DebugGeometryInstance] = []
         for key, enabled in self._window.iter_debug_geometry_flags():
             if not enabled:
                 continue
@@ -332,9 +400,17 @@ class ObjectInspectorPlugin:
             if body is None:
                 continue
             global_idx = self._bridge._resolve_body_global_index(spec, body, world_idx)
-            if 0 <= global_idx < body_count:
-                indices.append(global_idx)
-        return indices
+            if not (0 <= global_idx < body_count):
+                continue
+            instances.append(
+                DebugGeometryInstance(
+                    global_body_idx=global_idx,
+                    shape_idx=self._resolve_primary_shape_idx(global_idx),
+                    forward_local=self._resolve_debug_geometry_forward_local(spec, world_idx),
+                    forward_convention=self._resolve_debug_geometry_convention(spec, world_idx),
+                )
+            )
+        return instances
 
     def refresh_from_sim(self, resync_rl: bool = False):
         if not self._bridge or not self._window or not self.is_visible:

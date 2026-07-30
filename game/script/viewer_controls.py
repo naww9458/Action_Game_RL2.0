@@ -106,10 +106,39 @@ class ControlBinding:
 
 
 @dataclass
+class DebugGeometrySpinConfig:
+    min: float = 0.01
+    max: float = 50.0
+    step: float = 0.1
+    decimals: int = 3
+
+
+@dataclass
+class DebugGeometryConfig:
+    line_length: float = 1.0
+    line_width: float = 0.03
+    surface_offset: float = 0.5
+    circle_radius: float = 0.01
+    circle_lift: float = 0.002
+    num_segments: int = 16
+    default_forward_local: tuple[float, float, float] = (1.0, 0.0, 0.0)
+    shoot_forward_shape_key_prefixes: List[str] = field(default_factory=lambda: ["rigid_"])
+    length_spin: DebugGeometrySpinConfig = field(default_factory=DebugGeometrySpinConfig)
+    width_spin: DebugGeometrySpinConfig = field(
+        default_factory=lambda: DebugGeometrySpinConfig(
+            min=0.001, max=1.0, step=0.01, decimals=4
+        )
+    )
+    extension_line_color: tuple[float, float, float] = (0.0, 1.0, 0.0)
+    circle_line_color: tuple[float, float, float] = (1.0, 0.0, 0.0)
+
+
+@dataclass
 class ViewerControlsConfig:
     defaults: Dict[str, Any]
     category_labels: Dict[str, str]
     bindings: List[ControlBinding]
+    debug_geometry: DebugGeometryConfig = field(default_factory=DebugGeometryConfig)
 
     def binding_by_id(self, binding_id: str) -> Optional[ControlBinding]:
         for binding in self.bindings:
@@ -161,6 +190,56 @@ class SimulationControl:
         }
 
 
+def _parse_forward_local(raw: Any) -> tuple[float, float, float]:
+    if isinstance(raw, (list, tuple)) and len(raw) >= 3:
+        return (float(raw[0]), float(raw[1]), float(raw[2]))
+    return (1.0, 0.0, 0.0)
+
+
+def _parse_rgb(raw: Any, default: tuple[float, float, float]) -> tuple[float, float, float]:
+    if isinstance(raw, (list, tuple)) and len(raw) >= 3:
+        return (float(raw[0]), float(raw[1]), float(raw[2]))
+    return default
+
+
+def _parse_spin_config(raw: Any, default: DebugGeometrySpinConfig) -> DebugGeometrySpinConfig:
+    if not isinstance(raw, dict):
+        return default
+    return DebugGeometrySpinConfig(
+        min=float(raw.get("min", default.min)),
+        max=float(raw.get("max", default.max)),
+        step=float(raw.get("step", default.step)),
+        decimals=int(raw.get("decimals", default.decimals)),
+    )
+
+
+def _parse_debug_geometry_config(raw: Any) -> DebugGeometryConfig:
+    default = DebugGeometryConfig()
+    if not isinstance(raw, dict):
+        return default
+    prefixes = raw.get("shoot_forward_shape_key_prefixes", default.shoot_forward_shape_key_prefixes)
+    if not isinstance(prefixes, list):
+        prefixes = list(default.shoot_forward_shape_key_prefixes)
+    return DebugGeometryConfig(
+        line_length=float(raw.get("line_length", default.line_length)),
+        line_width=float(raw.get("line_width", default.line_width)),
+        surface_offset=float(raw.get("surface_offset", default.surface_offset)),
+        circle_radius=float(raw.get("circle_radius", default.circle_radius)),
+        circle_lift=float(raw.get("circle_lift", default.circle_lift)),
+        num_segments=int(raw.get("num_segments", default.num_segments)),
+        default_forward_local=_parse_forward_local(
+            raw.get("default_forward_local", default.default_forward_local)
+        ),
+        shoot_forward_shape_key_prefixes=[str(p) for p in prefixes],
+        length_spin=_parse_spin_config(raw.get("length_spin"), default.length_spin),
+        width_spin=_parse_spin_config(raw.get("width_spin"), default.width_spin),
+        extension_line_color=_parse_rgb(
+            raw.get("extension_line_color"), default.extension_line_color
+        ),
+        circle_line_color=_parse_rgb(raw.get("circle_line_color"), default.circle_line_color),
+    )
+
+
 def load_viewer_controls(path: Optional[Path] = None) -> ViewerControlsConfig:
     cfg_path = path or _CFG_PATH
     with cfg_path.open("r", encoding="utf-8") as fh:
@@ -184,4 +263,5 @@ def load_viewer_controls(path: Optional[Path] = None) -> ViewerControlsConfig:
         defaults=dict(raw.get("defaults", {})),
         category_labels={str(k): str(v) for k, v in raw.get("category_labels", {}).items()},
         bindings=bindings,
+        debug_geometry=_parse_debug_geometry_config(raw.get("debug_geometry")),
     )

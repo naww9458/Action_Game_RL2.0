@@ -270,7 +270,7 @@ platform_configs:
   default_position:
   - 15.0
   - 0.0
-  - 1.0
+  - 10.0
   default_rotation:
   - 0.0
   - 0.0
@@ -295,7 +295,7 @@ platform_configs:
     size:
     - 1.0
     - 1.0
-    - 1.0
+    - 10.0
     object_mass: 0.0
     lock_inertia: false
     is_kinematic: true

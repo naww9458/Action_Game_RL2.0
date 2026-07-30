@@ -74,16 +74,21 @@ class CustomViewerGL(ViewerGL):
         self._last_step = -1
         self.follow_role_index = follow_body_index
         self.follow_body_index_input_cache = ""
-        self.free_view_mode = True
+        self.viewer_controls_cfg = load_viewer_controls()
+        viewer_defaults = self.viewer_controls_cfg.defaults
+        self.free_view_mode = bool(viewer_defaults.get("free_view_mode", True))
         self._mouse_look_wanted = False
         self._viewer_window_focused = True
-        self.show_role_name_labels = True
-        self._role_name_label_height = 2.0
+        self.show_role_name_labels = bool(viewer_defaults.get("show_role_name_labels", True))
+        self._role_name_label_height = float(viewer_defaults.get("role_name_label_height", 2.0))
         self._role_name_tag_entries: list[tuple[str, int, int]] = []
         self._role_name_tag_labels: list = []
         self._last_body_q_np: Optional[np.ndarray] = None
-        self._debug_geom_line_length = 1.0
-        self._debug_geom_line_width = 0.03
+        debug_geom_cfg = self.viewer_controls_cfg.debug_geometry
+        self._debug_geom_line_length = float(debug_geom_cfg.line_length)
+        self._debug_geom_line_width = float(debug_geom_cfg.line_width)
+        self._debug_geom_extension_color = debug_geom_cfg.extension_line_color
+        self._debug_geom_circle_color = debug_geom_cfg.circle_line_color
         self.possess_offsets: list[tuple[float, float, float]] = []
         self.sim_time = 0.0
 
@@ -97,7 +102,6 @@ class CustomViewerGL(ViewerGL):
         self.mouse_buttons = np.zeros(shape=4, dtype=np.int32)
         self.keyboard_keys = np.zeros(shape=65536, dtype=np.int32)
         self.human_input_queue = human_input_queue
-        self.viewer_controls_cfg = load_viewer_controls()
         self.simulation_control = SimulationControl.from_defaults(self.viewer_controls_cfg)
         self._binding_symbols: dict[str, set[int]] = {}
         self._camera_move_symbols: dict[str, set[int]] = {}
@@ -152,11 +156,21 @@ class CustomViewerGL(ViewerGL):
             self._last_health.append(-1)
             self._last_rewards.append(-1.0)
 
-        num_segs = 16
+        num_segs = int(self.viewer_controls_cfg.debug_geometry.num_segments)
+        debug_geom_cfg = self.viewer_controls_cfg.debug_geometry
         self._debug_num_segs = num_segs
-        self.SURFACE_OFFSET = wp.array(data=[0.5], dtype=wp.float32, device=GameConfig.DEVICE)
-        self.LINE_LENGTH = wp.array(data=[self._debug_geom_line_length], dtype=wp.float32, device=GameConfig.DEVICE)
-        self.CIRCLE_RADIUS = wp.array(data=[0.01], dtype=wp.float32, device=GameConfig.DEVICE)
+        self.SURFACE_OFFSET = wp.array(
+            data=[debug_geom_cfg.surface_offset], dtype=wp.float32, device=GameConfig.DEVICE
+        )
+        self.LINE_LENGTH = wp.array(
+            data=[self._debug_geom_line_length], dtype=wp.float32, device=GameConfig.DEVICE
+        )
+        self.CIRCLE_RADIUS = wp.array(
+            data=[debug_geom_cfg.circle_radius], dtype=wp.float32, device=GameConfig.DEVICE
+        )
+        self.CIRCLE_LIFT = wp.array(
+            data=[debug_geom_cfg.circle_lift], dtype=wp.float32, device=GameConfig.DEVICE
+        )
         self.num_segments = wp.array(data=[num_segs], dtype=wp.int32, device=GameConfig.DEVICE)
 
         self.object_inspector.attach(game, self)
@@ -246,22 +260,21 @@ class CustomViewerGL(ViewerGL):
             label.x = int(screen[0])
             label.y = int(screen[1])
 
-    def get_debug_geometry_line_length(self) -> float:
-        return float(self._debug_geom_line_length)
-
-    def get_debug_geometry_line_width(self) -> float:
-        return float(self._debug_geom_line_width)
-
     def set_debug_geometry_style(
         self,
         length: Optional[float] = None,
         width: Optional[float] = None,
     ):
+        spin_cfg = self.viewer_controls_cfg.debug_geometry
         if length is not None:
-            self._debug_geom_line_length = max(0.01, float(length))
+            self._debug_geom_line_length = max(
+                spin_cfg.length_spin.min, float(length)
+            )
             self.LINE_LENGTH.assign([self._debug_geom_line_length])
         if width is not None:
-            self._debug_geom_line_width = max(0.001, float(width))
+            self._debug_geom_line_width = max(
+                spin_cfg.width_spin.min, float(width)
+            )
 
     def _configure_display_envs(self, num_env: int):
         display_envs = min(self.num_envs_display, num_env)
@@ -469,15 +482,22 @@ class CustomViewerGL(ViewerGL):
         self.sim_time += frame_dt
     
     def render_debug_geometry(self, all_transforms):
-        enabled_body_indices = self.object_inspector.get_debug_geometry_body_indices()
-        if not enabled_body_indices:
+        instances = self.object_inspector.get_debug_geometry_instances()
+        if not instances:
             self.log_lines(name="debug_extension_line", starts=None, ends=None, colors=None)
             self.log_lines(name="debug_surface_circle", starts=None, ends=None, colors=None)
             return
 
-        num_bodies = len(enabled_body_indices)
+        num_bodies = len(instances)
         num_segs = self._debug_num_segs
-        body_indices_gpu = wp.array(enabled_body_indices, dtype=wp.int32, device=GameConfig.DEVICE)
+        body_indices = [inst.global_body_idx for inst in instances]
+        shape_indices = [inst.shape_idx for inst in instances]
+        forward_locals = [inst.forward_local for inst in instances]
+        forward_conventions = [inst.forward_convention for inst in instances]
+        body_indices_gpu = wp.array(body_indices, dtype=wp.int32, device=GameConfig.DEVICE)
+        shape_indices_gpu = wp.array(shape_indices, dtype=wp.int32, device=GameConfig.DEVICE)
+        forward_locals_gpu = wp.array(forward_locals, dtype=wp.vec3, device=GameConfig.DEVICE)
+        convention_gpu = wp.array(forward_conventions, dtype=wp.int32, device=GameConfig.DEVICE)
         l_start = wp.zeros(num_bodies, dtype=wp.vec3, device=GameConfig.DEVICE)
         l_end = wp.zeros(num_bodies, dtype=wp.vec3, device=GameConfig.DEVICE)
         c_starts = wp.zeros(num_bodies * num_segs, dtype=wp.vec3, device=GameConfig.DEVICE)
@@ -488,7 +508,11 @@ class CustomViewerGL(ViewerGL):
             dim=num_bodies,
             inputs=[
                 all_transforms,
+                self.model.shape_transform,
                 body_indices_gpu,
+                shape_indices_gpu,
+                forward_locals_gpu,
+                convention_gpu,
                 l_start,
                 l_end,
                 c_starts,
@@ -496,6 +520,7 @@ class CustomViewerGL(ViewerGL):
                 self.SURFACE_OFFSET,
                 self.LINE_LENGTH,
                 self.CIRCLE_RADIUS,
+                self.CIRCLE_LIFT,
                 self.num_segments,
             ],
             device=GameConfig.DEVICE,
@@ -505,14 +530,14 @@ class CustomViewerGL(ViewerGL):
             name="debug_extension_line",
             starts=l_start,
             ends=l_end,
-            colors=(0.0, 1.0, 0.0),
+            colors=self._debug_geom_extension_color,
             width=self._debug_geom_line_width,
         )
         self.log_lines(
             name="debug_surface_circle",
             starts=c_starts,
             ends=c_ends,
-            colors=(1.0, 0.0, 0.0),
+            colors=self._debug_geom_circle_color,
             width=self._debug_geom_line_width,
         )
     
@@ -712,7 +737,11 @@ def quat_to_pitch_yaw(q):
 @wp.kernel
 def calculate_param_debug_geometry_gpu(
     all_transforms: wp.array(dtype=wp.transform),
+    shape_transforms: wp.array(dtype=wp.transform),
     body_indices: wp.array(dtype=wp.int32),
+    shape_indices: wp.array(dtype=wp.int32),
+    forward_locals: wp.array(dtype=wp.vec3),
+    forward_conventions: wp.array(dtype=wp.int32),
     l_start: wp.array(dtype=wp.vec3),
     l_end: wp.array(dtype=wp.vec3),
     c_starts: wp.array(dtype=wp.vec3),
@@ -720,15 +749,35 @@ def calculate_param_debug_geometry_gpu(
     SURFACE_OFFSET: wp.array(dtype=wp.float32),
     LINE_LENGTH: wp.array(dtype=wp.float32),
     CIRCLE_RADIUS: wp.array(dtype=wp.float32),
+    CIRCLE_LIFT: wp.array(dtype=wp.float32),
     num_segments_arr: wp.array(dtype=wp.int32),
 ):
     tid = wp.tid()
     idx = body_indices[tid]
     trans = all_transforms[idx]
-    pos = wp.transform_get_translation(trans)
+    shape_idx = shape_indices[tid]
+    if shape_idx >= 0 and shape_idx < shape_transforms.shape[0]:
+        trans = wp.transform_multiply(trans, shape_transforms[shape_idx])
     rot = wp.transform_get_rotation(trans)
-    world_normal = wp.quat_rotate(rot, wp.vec3(1.0, 0.0, 0.0))
-    world_normal = wp.vec3(world_normal[0], world_normal[1], -world_normal[2])
+    local_axis = forward_locals[tid]
+    if forward_conventions[tid] != 0:
+        x = rot[0]
+        y = rot[1]
+        z = rot[2]
+        w = rot[3]
+        world_normal = wp.vec3(
+            1.0 - 2.0 * (y * y + z * z),
+            2.0 * (x * y + w * z),
+            -2.0 * (x * z - w * y),
+        )
+    else:
+        world_normal = wp.quat_rotate(rot, local_axis)
+    n_len = wp.length(world_normal)
+    if n_len > 1.0e-6:
+        world_normal = world_normal / n_len
+    else:
+        world_normal = wp.vec3(1.0, 0.0, 0.0)
+    pos = wp.transform_get_translation(trans)
     p_surface = pos + world_normal * SURFACE_OFFSET[0]
     l_start[tid] = p_surface
     l_end[tid] = p_surface + world_normal * LINE_LENGTH[0]
@@ -741,7 +790,7 @@ def calculate_param_debug_geometry_gpu(
     for i in range(n_segs):
         t1 = 2.0 * 3.14159265 * float(i) / float(n_segs)
         t2 = 2.0 * 3.14159265 * float(i + 1) / float(n_segs)
-        h = world_normal * 0.002
+        h = world_normal * CIRCLE_LIFT[0]
         c_starts[base_idx + i] = p_surface + (tangent * wp.cos(t1) + bitangent * wp.sin(t1)) * CIRCLE_RADIUS[0] + h
         c_ends[base_idx + i] = p_surface + (tangent * wp.cos(t2) + bitangent * wp.sin(t2)) * CIRCLE_RADIUS[0] + h
 

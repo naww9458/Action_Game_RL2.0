@@ -27,7 +27,7 @@ from .metadata import BodyParamSpec, JointParamSpec, ObjectInspectorSpec, Player
 if TYPE_CHECKING:
     from .control_bridge import ControlBridge
     from .metadata import InspectorCatalog
-    from script.viewer_controls import SimulationControl, ViewerControlsConfig
+    from script.viewer_controls import DebugGeometryConfig, SimulationControl, ViewerControlsConfig
 
 
 class ParamRow(QWidget):
@@ -164,14 +164,8 @@ class InspectorWindow(QMainWindow):
 
         debug_geom_style_row = QHBoxLayout()
         self.debug_geom_length_spin = QDoubleSpinBox()
-        self.debug_geom_length_spin.setRange(0.01, 50.0)
-        self.debug_geom_length_spin.setDecimals(3)
-        self.debug_geom_length_spin.setSingleStep(0.1)
         self.debug_geom_length_spin.setKeyboardTracking(False)
         self.debug_geom_width_spin = QDoubleSpinBox()
-        self.debug_geom_width_spin.setRange(0.001, 1.0)
-        self.debug_geom_width_spin.setDecimals(4)
-        self.debug_geom_width_spin.setSingleStep(0.01)
         self.debug_geom_width_spin.setKeyboardTracking(False)
         debug_geom_style_row.addWidget(QLabel("Length"))
         debug_geom_style_row.addWidget(self.debug_geom_length_spin)
@@ -340,14 +334,21 @@ class InspectorWindow(QMainWindow):
 
     def setup_debug_geometry_controls(
         self,
-        initial_length: float,
-        initial_width: float,
+        config: DebugGeometryConfig,
         on_changed: Callable[[float, float], None],
     ):
         self._debug_geom_style_changed_cb = on_changed
         self._debug_geom_style_syncing = True
-        self.debug_geom_length_spin.setValue(float(initial_length))
-        self.debug_geom_width_spin.setValue(float(initial_width))
+        length_spin = config.length_spin
+        self.debug_geom_length_spin.setRange(length_spin.min, length_spin.max)
+        self.debug_geom_length_spin.setDecimals(length_spin.decimals)
+        self.debug_geom_length_spin.setSingleStep(length_spin.step)
+        self.debug_geom_length_spin.setValue(float(config.line_length))
+        width_spin = config.width_spin
+        self.debug_geom_width_spin.setRange(width_spin.min, width_spin.max)
+        self.debug_geom_width_spin.setDecimals(width_spin.decimals)
+        self.debug_geom_width_spin.setSingleStep(width_spin.step)
+        self.debug_geom_width_spin.setValue(float(config.line_width))
         self._debug_geom_style_syncing = False
         self.debug_geom_length_spin.valueChanged.connect(self._on_debug_geom_style_changed)
         self.debug_geom_width_spin.valueChanged.connect(self._on_debug_geom_style_changed)
@@ -359,12 +360,6 @@ class InspectorWindow(QMainWindow):
             float(self.debug_geom_length_spin.value()),
             float(self.debug_geom_width_spin.value()),
         )
-
-    def get_debug_geometry_length(self) -> float:
-        return float(self.debug_geom_length_spin.value())
-
-    def get_debug_geometry_width(self) -> float:
-        return float(self.debug_geom_width_spin.value())
 
     def setup_controls_tab(
         self,
@@ -775,9 +770,6 @@ class InspectorWindow(QMainWindow):
         key = self._body_pin_storage_key()
         if key is not None:
             self._debug_geometry_flags[key] = checked
-
-    def is_debug_geometry_enabled(self) -> bool:
-        return self.debug_geometry_checkbox.isChecked()
 
     def iter_debug_geometry_flags(self):
         for key, enabled in self._debug_geometry_flags.items():
