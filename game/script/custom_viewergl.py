@@ -14,7 +14,7 @@ from pyglet.window import key
 from newton.viewer import ViewerGL
 from newton import State
 from queue import Queue, Full
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Optional
 if TYPE_CHECKING:
     from script.game import Game
 
@@ -74,13 +74,22 @@ class CustomViewerGL(ViewerGL):
         self._last_step = -1
         self.follow_role_index = follow_body_index
         self.follow_body_index_input_cache = ""
-        self.free_view_mode = False
+        self.free_view_mode = True
+        self._mouse_look_wanted = False
+        self._viewer_window_focused = True
+        self.show_role_name_labels = True
+        self._role_name_label_height = 2.0
+        self._role_name_tag_entries: list[tuple[str, int, int]] = []
+        self._role_name_tag_labels: list = []
+        self._last_body_q_np: Optional[np.ndarray] = None
+        self._debug_geom_line_length = 1.0
+        self._debug_geom_line_width = 0.03
         self.possess_offsets: list[tuple[float, float, float]] = []
         self.sim_time = 0.0
 
         # 相機相關屬性
         self.is_mouse_exclusive = False
-        self.renderer.window.set_exclusive_mouse(self.is_mouse_exclusive)
+        self._sync_mouse_exclusive()
         self.mouse_sensitivity = 0.05
         self.look_yaw = 0.0
         self.look_pitch = 0.0
@@ -133,7 +142,6 @@ class CustomViewerGL(ViewerGL):
 
     def setup(self, game: 'Game'):
         self.game = game
-        self.object_inspector.attach(game, self)
         self.num_players = game.num_players
         self.num_objects_total = game.num_objects_total
         # 初始化玩家 Label 池
@@ -145,14 +153,13 @@ class CustomViewerGL(ViewerGL):
             self._last_rewards.append(-1.0)
 
         num_segs = 16
-        self.l_start = wp.array(shape=self.num_players, dtype=wp.vec3, device=GameConfig.DEVICE)
-        self.l_end = wp.array(shape=self.num_players, dtype=wp.vec3, device=GameConfig.DEVICE)
-        self.c_starts = wp.array(shape=self.num_players * num_segs, dtype=wp.vec3, device=GameConfig.DEVICE)
-        self.c_ends = wp.array(shape=self.num_players * num_segs, dtype=wp.vec3, device=GameConfig.DEVICE)
+        self._debug_num_segs = num_segs
         self.SURFACE_OFFSET = wp.array(data=[0.5], dtype=wp.float32, device=GameConfig.DEVICE)
-        self.LINE_LENGTH = wp.array(data=[1.0], dtype=wp.float32, device=GameConfig.DEVICE)
+        self.LINE_LENGTH = wp.array(data=[self._debug_geom_line_length], dtype=wp.float32, device=GameConfig.DEVICE)
         self.CIRCLE_RADIUS = wp.array(data=[0.01], dtype=wp.float32, device=GameConfig.DEVICE)
         self.num_segments = wp.array(data=[num_segs], dtype=wp.int32, device=GameConfig.DEVICE)
+
+        self.object_inspector.attach(game, self)
 
         self.geo_type = newton.GeoType.SPHERE
         shape_scale_all = self.model.shape_scale.numpy()
@@ -163,6 +170,98 @@ class CustomViewerGL(ViewerGL):
 
         self._configure_display_envs(game.num_env)
         self.camera.fov = 100.0
+        self._build_role_name_label_pool()
+
+    def _build_role_name_label_pool(self):
+        self._role_name_tag_entries = self.object_inspector.build_role_name_tag_entries()
+        self._role_name_tag_labels = [
+            pyglet.text.Label(
+                "",
+                font_name="Consolas",
+                font_size=14,
+                x=0,
+                y=0,
+                color=(255, 255, 255, 230),
+                anchor_x="center",
+                anchor_y="bottom",
+                batch=self._ui_batch,
+            )
+            for _ in self._role_name_tag_entries
+        ]
+
+    def _world_up_offset(self, height: float) -> tuple[float, float, float]:
+        if self.camera.up_axis == 0:
+            return (height, 0.0, 0.0)
+        if self.camera.up_axis == 2:
+            return (0.0, 0.0, height)
+        return (0.0, height, 0.0)
+
+    def _world_to_screen(self, world_pos: tuple[float, float, float]) -> Optional[tuple[float, float]]:
+        window_w, window_h = self.renderer.window.get_size()
+        if window_w <= 0 or window_h <= 0:
+            return None
+        self.camera.update_screen_size(window_w, window_h)
+        view_mat = np.array(self.camera.get_view_matrix(), dtype=np.float64).reshape((4, 4), order="F")
+        proj_mat = np.array(self.camera.get_projection_matrix(), dtype=np.float64).reshape((4, 4), order="F")
+        point = np.array([world_pos[0], world_pos[1], world_pos[2], 1.0], dtype=np.float64)
+        clip = proj_mat @ (view_mat @ point)
+        if clip[3] <= 1e-6:
+            return None
+        ndc = clip / clip[3]
+        if ndc[2] < -1.0 or ndc[2] > 1.0:
+            return None
+        x = (ndc[0] + 1.0) * 0.5 * window_w
+        y = (ndc[1] + 1.0) * 0.5 * window_h
+        return float(x), float(y)
+
+    def _update_role_name_labels(self):
+        if not self.show_role_name_labels or self._last_body_q_np is None:
+            for label in self._role_name_tag_labels:
+                label.text = ""
+            return
+
+        display_envs = min(self.num_envs_display, self.game.num_env)
+        up_offset = self._world_up_offset(self._role_name_label_height)
+        body_q = self._last_body_q_np
+
+        for idx, (display_name, body_idx, world_idx) in enumerate(self._role_name_tag_entries):
+            label = self._role_name_tag_labels[idx]
+            if world_idx >= display_envs:
+                label.text = ""
+                continue
+            if body_idx < 0 or body_idx >= len(body_q):
+                label.text = ""
+                continue
+            pos = body_q[body_idx, 0:3]
+            world_pos = (
+                float(pos[0]) + up_offset[0],
+                float(pos[1]) + up_offset[1],
+                float(pos[2]) + up_offset[2],
+            )
+            screen = self._world_to_screen(world_pos)
+            if screen is None:
+                label.text = ""
+                continue
+            label.text = display_name
+            label.x = int(screen[0])
+            label.y = int(screen[1])
+
+    def get_debug_geometry_line_length(self) -> float:
+        return float(self._debug_geom_line_length)
+
+    def get_debug_geometry_line_width(self) -> float:
+        return float(self._debug_geom_line_width)
+
+    def set_debug_geometry_style(
+        self,
+        length: Optional[float] = None,
+        width: Optional[float] = None,
+    ):
+        if length is not None:
+            self._debug_geom_line_length = max(0.01, float(length))
+            self.LINE_LENGTH.assign([self._debug_geom_line_length])
+        if width is not None:
+            self._debug_geom_line_width = max(0.001, float(width))
 
     def _configure_display_envs(self, num_env: int):
         display_envs = min(self.num_envs_display, num_env)
@@ -244,6 +343,7 @@ class CustomViewerGL(ViewerGL):
         # TODO 100 is hardcode
         self._ui_bg.height = 100 + (self.num_players * (self.font_size_player_info + 5))
         self._ui_bg.y = window_h - self._ui_bg.height - 10
+        self._update_role_name_labels()
         # OpenGL 渲染狀態切換
         from pyglet.math import Mat4
         proj = self.renderer.window.projection
@@ -306,6 +406,7 @@ class CustomViewerGL(ViewerGL):
             self.renderer.window.set_mouse_position(self.renderer.window.width // 2, self.renderer.window.height // 2)
 
         self.health_ref = player_health
+        self._last_body_q_np = state_0.body_q.numpy()
         follow_targets = self._resolve_follow_targets()
         if follow_targets is not None:
             role_object_id, camera_body_index = follow_targets
@@ -347,7 +448,7 @@ class CustomViewerGL(ViewerGL):
         except Full:
             pass
 
-        # self.render_debug_geometry(all_transforms=state_0.body_q, index_player_gpu=index_player_gpu) # TODO 暫時禁用，因爲現在屬於玩家角色控制的物件不再只有球體, 如果物件是球體，如果是多個剛體組合的物件比如 Unitree g1，身上會出現很多條綫
+        self.render_debug_geometry(all_transforms=state_0.body_q)
         self.begin_frame(self.sim_time)
 
         xforms_gpu = wp.zeros(self.num_players, dtype=wp.transform, device=GameConfig.DEVICE)
@@ -367,10 +468,53 @@ class CustomViewerGL(ViewerGL):
         self.end_frame()
         self.sim_time += frame_dt
     
-    def render_debug_geometry(self, all_transforms, index_player_gpu):
-        wp.launch(kernel=calculate_param_debug_geometry_gpu, dim=self.num_players, inputs=[all_transforms, index_player_gpu, self.l_start, self.l_end, self.c_starts, self.c_ends, self.SURFACE_OFFSET, self.LINE_LENGTH, self.CIRCLE_RADIUS, self.num_segments], device=GameConfig.DEVICE)
-        self.log_lines(name="debug_extension_line", starts=self.l_start, ends=self.l_end, colors=(0.0, 1.0, 0.0), width=0.03)
-        self.log_lines(name="debug_surface_circle", starts=self.c_starts, ends=self.c_ends, colors=(1.0, 0.0, 0.0), width=0.01)
+    def render_debug_geometry(self, all_transforms):
+        enabled_body_indices = self.object_inspector.get_debug_geometry_body_indices()
+        if not enabled_body_indices:
+            self.log_lines(name="debug_extension_line", starts=None, ends=None, colors=None)
+            self.log_lines(name="debug_surface_circle", starts=None, ends=None, colors=None)
+            return
+
+        num_bodies = len(enabled_body_indices)
+        num_segs = self._debug_num_segs
+        body_indices_gpu = wp.array(enabled_body_indices, dtype=wp.int32, device=GameConfig.DEVICE)
+        l_start = wp.zeros(num_bodies, dtype=wp.vec3, device=GameConfig.DEVICE)
+        l_end = wp.zeros(num_bodies, dtype=wp.vec3, device=GameConfig.DEVICE)
+        c_starts = wp.zeros(num_bodies * num_segs, dtype=wp.vec3, device=GameConfig.DEVICE)
+        c_ends = wp.zeros(num_bodies * num_segs, dtype=wp.vec3, device=GameConfig.DEVICE)
+
+        wp.launch(
+            kernel=calculate_param_debug_geometry_gpu,
+            dim=num_bodies,
+            inputs=[
+                all_transforms,
+                body_indices_gpu,
+                l_start,
+                l_end,
+                c_starts,
+                c_ends,
+                self.SURFACE_OFFSET,
+                self.LINE_LENGTH,
+                self.CIRCLE_RADIUS,
+                self.num_segments,
+            ],
+            device=GameConfig.DEVICE,
+        )
+
+        self.log_lines(
+            name="debug_extension_line",
+            starts=l_start,
+            ends=l_end,
+            colors=(0.0, 1.0, 0.0),
+            width=self._debug_geom_line_width,
+        )
+        self.log_lines(
+            name="debug_surface_circle",
+            starts=c_starts,
+            ends=c_ends,
+            colors=(1.0, 0.0, 0.0),
+            width=self._debug_geom_line_width,
+        )
     
     def end_frame(self):
         self.renderer.update()
@@ -397,8 +541,8 @@ class CustomViewerGL(ViewerGL):
         self.keyboard_keys[symbol] = 1
 
         if self._symbol_in_binding(symbol, "mouse_look"):
-            self.is_mouse_exclusive = not self.is_mouse_exclusive
-            self.renderer.window.set_exclusive_mouse(self.is_mouse_exclusive)
+            self._mouse_look_wanted = not self._mouse_look_wanted
+            self._sync_mouse_exclusive()
 
         elif self._symbol_in_binding(symbol, "toggle_free_view"):
             self._toggle_free_view_mode()
@@ -415,6 +559,7 @@ class CustomViewerGL(ViewerGL):
             if 0 <= role_index < self.num_players:
                 self.follow_role_index = role_index
                 self.follow_body_index_input_cache = ""
+                self.free_view_mode = True
             else:
                 print("Invalid role index entered: ", self.follow_body_index_input_cache)
 
@@ -447,6 +592,23 @@ class CustomViewerGL(ViewerGL):
         if self.follow_role_index is None:
             return
         self.free_view_mode = not self.free_view_mode
+
+    def _sync_mouse_exclusive(self):
+        enabled = self._mouse_look_wanted and self._viewer_window_focused
+        if self.is_mouse_exclusive == enabled:
+            return
+        self.is_mouse_exclusive = enabled
+        self.renderer.window.set_exclusive_mouse(enabled)
+
+    def on_activate(self):
+        self._viewer_window_focused = True
+        self._sync_mouse_exclusive()
+
+    def on_deactivate(self):
+        self._viewer_window_focused = False
+        if self.is_mouse_exclusive:
+            self.renderer.window.set_exclusive_mouse(False)
+            self.is_mouse_exclusive = False
 
     def on_key_release(self, symbol, modifiers): self.keyboard_keys[symbol] = 0
 
@@ -548,9 +710,20 @@ def quat_to_pitch_yaw(q):
     return math.degrees(pitch), math.degrees(yaw)
 
 @wp.kernel
-def calculate_param_debug_geometry_gpu(all_transforms: wp.array(dtype=wp.transform), index_player_gpu: wp.array(dtype=wp.int32), l_start: wp.array(dtype=wp.vec3), l_end: wp.array(dtype=wp.vec3), c_starts: wp.array(dtype=wp.vec3), c_ends: wp.array(dtype=wp.vec3), SURFACE_OFFSET: wp.array(dtype=wp.float32), LINE_LENGTH: wp.array(dtype=wp.float32), CIRCLE_RADIUS: wp.array(dtype=wp.float32), num_segments_arr: wp.array(dtype=wp.int32)):
+def calculate_param_debug_geometry_gpu(
+    all_transforms: wp.array(dtype=wp.transform),
+    body_indices: wp.array(dtype=wp.int32),
+    l_start: wp.array(dtype=wp.vec3),
+    l_end: wp.array(dtype=wp.vec3),
+    c_starts: wp.array(dtype=wp.vec3),
+    c_ends: wp.array(dtype=wp.vec3),
+    SURFACE_OFFSET: wp.array(dtype=wp.float32),
+    LINE_LENGTH: wp.array(dtype=wp.float32),
+    CIRCLE_RADIUS: wp.array(dtype=wp.float32),
+    num_segments_arr: wp.array(dtype=wp.int32),
+):
     tid = wp.tid()
-    idx = index_player_gpu[tid]
+    idx = body_indices[tid]
     trans = all_transforms[idx]
     pos = wp.transform_get_translation(trans)
     rot = wp.transform_get_rotation(trans)

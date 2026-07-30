@@ -51,9 +51,24 @@ class ObjectInspectorPlugin:
             viewer_controls_cfg=viewer.viewer_controls_cfg,
             gameplay_bindings=self._collect_gameplay_bindings(game),
             initial_gravity=self._bridge.read_gravity() if self._bridge else None,
+            show_role_name_labels=viewer.show_role_name_labels,
+            on_show_role_name_labels_changed=self._on_show_role_name_labels_changed,
         )
         if self._bridge.has_commands():
             self._window.set_command_labels(list(game.level.command_labels))
+        self._window.setup_debug_geometry_controls(
+            initial_length=viewer.get_debug_geometry_line_length(),
+            initial_width=viewer.get_debug_geometry_line_width(),
+            on_changed=self._on_debug_geometry_style_changed,
+        )
+
+    def _on_show_role_name_labels_changed(self, checked: bool):
+        if self._viewer is not None:
+            self._viewer.show_role_name_labels = checked
+
+    def _on_debug_geometry_style_changed(self, length: float, width: float):
+        if self._viewer is not None:
+            self._viewer.set_debug_geometry_style(length=length, width=width)
 
     def apply_command_pins(self):
         if not self._bridge or not self._window or not self.is_visible or not self._game:
@@ -131,7 +146,10 @@ class ObjectInspectorPlugin:
             return
         self._app.processEvents()
         if self._window is not None and self._viewer is not None and self._game is not None:
-            self._window.sync_controls_status(game_over=self._game.game_over)
+            self._window.sync_controls_status(
+                game_over=self._game.game_over,
+                show_role_name_labels=self._viewer.show_role_name_labels,
+            )
         if self.is_visible:
             self.refresh_from_sim()
 
@@ -261,6 +279,62 @@ class ObjectInspectorPlugin:
     def _on_gravity_changed(self, gx: float, gy: float, gz: float):
         if self._bridge:
             self._bridge.set_gravity([gx, gy, gz])
+
+    def build_role_name_tag_entries(self) -> List[tuple[str, int, int]]:
+        """Return (display_name, global_body_idx, world_idx) for each role instance."""
+        if not self._bridge or not self._catalog or not self._game:
+            return []
+
+        game = self._game
+        name_list = game.name_list
+        num_objects_env = game.num_objects_env
+        body_count = game.physics_manager.model.body_count
+        entries: List[tuple[str, int, int]] = []
+
+        for catalog_key in self._catalog.list_catalog_keys():
+            spec = self._catalog.get_by_catalog_key(catalog_key)
+            if spec is None or not spec.bodies:
+                continue
+            base_body = next((b for b in spec.bodies if b.is_base_body), spec.bodies[0])
+
+            for world_idx in range(game.num_env):
+                global_role_id = world_idx * num_objects_env + spec.local_role_idx
+                if global_role_id < len(name_list) and name_list[global_role_id]:
+                    display_name = str(name_list[global_role_id])
+                else:
+                    display_name = spec.catalog_key
+
+                global_body_idx = self._bridge._resolve_body_global_index(
+                    spec, base_body, world_idx
+                )
+                if global_body_idx < 0 or global_body_idx >= body_count:
+                    continue
+                entries.append((display_name, global_body_idx, world_idx))
+
+        return entries
+
+    def get_debug_geometry_body_indices(self) -> List[int]:
+        if not self._bridge or not self._window or not self._catalog or not self._game:
+            return []
+        body_count = self._game.physics_manager.model.body_count
+        indices: List[int] = []
+        for key, enabled in self._window.iter_debug_geometry_flags():
+            if not enabled:
+                continue
+            parsed = InspectorWindow._parse_env_suffix_storage_key(key)
+            if parsed is None:
+                continue
+            catalog_key, world_idx, body_name = parsed
+            spec = self._catalog.get_by_catalog_key(catalog_key)
+            if spec is None:
+                continue
+            body = next((b for b in spec.bodies if b.display_name == body_name), None)
+            if body is None:
+                continue
+            global_idx = self._bridge._resolve_body_global_index(spec, body, world_idx)
+            if 0 <= global_idx < body_count:
+                indices.append(global_idx)
+        return indices
 
     def refresh_from_sim(self, resync_rl: bool = False):
         if not self._bridge or not self._window or not self.is_visible:

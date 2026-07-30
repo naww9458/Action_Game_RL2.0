@@ -203,6 +203,14 @@ class ControlBridge:
         local = body_index_in_env0 % bodies_per_env
         return world_idx * bodies_per_env + local
 
+    def _articulation_body_stride(self, pattern: str, local_indices) -> int:
+        if len(local_indices) > 1:
+            return int(local_indices[1]) - int(local_indices[0])
+        stride = getattr(self.ab, "num_rigid_bodies_env", 0)
+        if stride > 0:
+            return stride
+        return max(self.pm.model.body_count, 1)
+
     def _resolve_body_global_index(
         self,
         spec: ObjectInspectorSpec,
@@ -213,9 +221,21 @@ class ControlBridge:
         pattern = spec.pattern
         if spec.body_kind == "articulation" and pattern in self.ab.view_body_local_indices_gpus:
             local_indices = self.ab.view_body_local_indices_gpus[pattern].numpy()
-            local_tid = spec.view_obj_idx + body.body_in_obj_idx
-            if 0 <= local_tid < len(local_indices):
-                return self._global_body_index(int(local_indices[local_tid]), world_idx)
+            if 0 <= spec.view_obj_idx < len(local_indices):
+                instance_root = int(local_indices[spec.view_obj_idx])
+                ref_root = int(local_indices[0])
+                if body.is_base_body:
+                    return self._global_body_index(instance_root, world_idx)
+
+                stride = self._articulation_body_stride(pattern, local_indices)
+                global_ref = body.global_body_index
+                if ref_root <= global_ref < ref_root + stride:
+                    offset = global_ref - ref_root
+                elif instance_root <= global_ref < instance_root + stride:
+                    offset = global_ref - instance_root
+                else:
+                    offset = body.body_in_obj_idx
+                return self._global_body_index(instance_root + offset, world_idx)
         return self._global_body_index(body.global_body_index, world_idx)
 
     def _read_rigid_body(self, local_body_index: int, world_idx: int, state: BodyState) -> BodyState:

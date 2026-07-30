@@ -157,6 +157,28 @@ class InspectorWindow(QMainWindow):
         self.body_selector.currentIndexChanged.connect(self._on_body_selection_changed)
         body_layout.addWidget(self.body_selector)
 
+        self.debug_geometry_checkbox = QCheckBox("Show debug geometry")
+        self.debug_geometry_checkbox.setChecked(False)
+        self.debug_geometry_checkbox.toggled.connect(self._on_debug_geometry_toggled)
+        body_layout.addWidget(self.debug_geometry_checkbox)
+
+        debug_geom_style_row = QHBoxLayout()
+        self.debug_geom_length_spin = QDoubleSpinBox()
+        self.debug_geom_length_spin.setRange(0.01, 50.0)
+        self.debug_geom_length_spin.setDecimals(3)
+        self.debug_geom_length_spin.setSingleStep(0.1)
+        self.debug_geom_length_spin.setKeyboardTracking(False)
+        self.debug_geom_width_spin = QDoubleSpinBox()
+        self.debug_geom_width_spin.setRange(0.001, 1.0)
+        self.debug_geom_width_spin.setDecimals(4)
+        self.debug_geom_width_spin.setSingleStep(0.01)
+        self.debug_geom_width_spin.setKeyboardTracking(False)
+        debug_geom_style_row.addWidget(QLabel("Length"))
+        debug_geom_style_row.addWidget(self.debug_geom_length_spin)
+        debug_geom_style_row.addWidget(QLabel("Width"))
+        debug_geom_style_row.addWidget(self.debug_geom_width_spin)
+        body_layout.addLayout(debug_geom_style_row)
+
         lock_row = QHBoxLayout()
         self.lock_pos_btn = QPushButton("Lock Position")
         self.lock_rot_btn = QPushButton("Lock Rotation")
@@ -244,10 +266,12 @@ class InspectorWindow(QMainWindow):
         sim_form = QFormLayout(sim_group)
         self.auto_reset_checkbox = QCheckBox("Auto reset on env end")
         self.manual_reset_checkbox = QCheckBox("Enable manual reset")
+        self.show_role_name_labels_checkbox = QCheckBox("Show role names above heads")
         self.paused_status_label = QLabel("Paused: No")
         self.game_over_status_label = QLabel("Game over: No")
         sim_form.addRow(self.auto_reset_checkbox)
         sim_form.addRow(self.manual_reset_checkbox)
+        sim_form.addRow(self.show_role_name_labels_checkbox)
         sim_form.addRow("Status", self.paused_status_label)
         sim_form.addRow("", self.game_over_status_label)
 
@@ -310,6 +334,37 @@ class InspectorWindow(QMainWindow):
         self._simulation_control: Optional["SimulationControl"] = None
         self._gravity_changed_cb: Optional[Callable[[float, float, float], None]] = None
         self._controls_syncing = False
+        self._debug_geometry_flags: Dict[str, bool] = {}
+        self._debug_geom_style_syncing = False
+        self._debug_geom_style_changed_cb: Optional[Callable[[float, float], None]] = None
+
+    def setup_debug_geometry_controls(
+        self,
+        initial_length: float,
+        initial_width: float,
+        on_changed: Callable[[float, float], None],
+    ):
+        self._debug_geom_style_changed_cb = on_changed
+        self._debug_geom_style_syncing = True
+        self.debug_geom_length_spin.setValue(float(initial_length))
+        self.debug_geom_width_spin.setValue(float(initial_width))
+        self._debug_geom_style_syncing = False
+        self.debug_geom_length_spin.valueChanged.connect(self._on_debug_geom_style_changed)
+        self.debug_geom_width_spin.valueChanged.connect(self._on_debug_geom_style_changed)
+
+    def _on_debug_geom_style_changed(self, _value: float):
+        if self._debug_geom_style_syncing or self._debug_geom_style_changed_cb is None:
+            return
+        self._debug_geom_style_changed_cb(
+            float(self.debug_geom_length_spin.value()),
+            float(self.debug_geom_width_spin.value()),
+        )
+
+    def get_debug_geometry_length(self) -> float:
+        return float(self.debug_geom_length_spin.value())
+
+    def get_debug_geometry_width(self) -> float:
+        return float(self.debug_geom_width_spin.value())
 
     def setup_controls_tab(
         self,
@@ -317,6 +372,8 @@ class InspectorWindow(QMainWindow):
         viewer_controls_cfg: "ViewerControlsConfig",
         gameplay_bindings: Optional[List[dict]] = None,
         initial_gravity: Optional[List[float]] = None,
+        show_role_name_labels: bool = True,
+        on_show_role_name_labels_changed: Optional[Callable[[bool], None]] = None,
     ):
         from script.viewer_controls import format_keys
 
@@ -324,6 +381,7 @@ class InspectorWindow(QMainWindow):
         self._controls_syncing = True
         self.auto_reset_checkbox.setChecked(simulation_control.auto_reset_on_env_end)
         self.manual_reset_checkbox.setChecked(simulation_control.manual_reset_enabled)
+        self.show_role_name_labels_checkbox.setChecked(show_role_name_labels)
         if initial_gravity is not None and len(initial_gravity) >= 3:
             self.gravity_x.setValue(float(initial_gravity[0]))
             self.gravity_y.setValue(float(initial_gravity[1]))
@@ -332,6 +390,8 @@ class InspectorWindow(QMainWindow):
 
         self.auto_reset_checkbox.toggled.connect(self._on_auto_reset_toggled)
         self.manual_reset_checkbox.toggled.connect(self._on_manual_reset_toggled)
+        if on_show_role_name_labels_changed is not None:
+            self.show_role_name_labels_checkbox.toggled.connect(on_show_role_name_labels_changed)
 
         while self.controls_help_layout.count():
             item = self.controls_help_layout.takeAt(0)
@@ -400,12 +460,18 @@ class InspectorWindow(QMainWindow):
             float(self.gravity_z.value()),
         ]
 
-    def sync_controls_status(self, game_over: bool = False):
+    def sync_controls_status(
+        self,
+        game_over: bool = False,
+        show_role_name_labels: Optional[bool] = None,
+    ):
         if self._simulation_control is None:
             return
         self._controls_syncing = True
         self.auto_reset_checkbox.setChecked(self._simulation_control.auto_reset_on_env_end)
         self.manual_reset_checkbox.setChecked(self._simulation_control.manual_reset_enabled)
+        if show_role_name_labels is not None:
+            self.show_role_name_labels_checkbox.setChecked(show_role_name_labels)
         self._controls_syncing = False
         self.paused_status_label.setText(
             f"Paused: {'Yes' if self._simulation_control.paused else 'No'}"
@@ -438,6 +504,7 @@ class InspectorWindow(QMainWindow):
         self._save_joint_field_values()
         self._save_rl_action_values()
         self._save_command_values()
+        self._save_debug_geometry_flag()
 
         self._spec = spec
         self._world_idx = world_idx
@@ -484,6 +551,7 @@ class InspectorWindow(QMainWindow):
 
     def _on_body_selection_changed(self):
         self._save_body_field_values()
+        self._save_debug_geometry_flag()
         self._rebuild_body_panel()
         self._update_apply_buttons()
 
@@ -684,6 +752,36 @@ class InspectorWindow(QMainWindow):
         if self._spec is None:
             return None
         return f"{self._spec.catalog_key}|env{self._world_idx}"
+
+    def _save_debug_geometry_flag(self):
+        key = self._active_body_storage_key
+        if key is None:
+            return
+        self._debug_geometry_flags[key] = self.debug_geometry_checkbox.isChecked()
+
+    def _restore_debug_geometry_flag(self):
+        key = self._body_pin_storage_key()
+        if key is None:
+            self.debug_geometry_checkbox.blockSignals(True)
+            self.debug_geometry_checkbox.setChecked(False)
+            self.debug_geometry_checkbox.blockSignals(False)
+            return
+        checked = self._debug_geometry_flags.get(key, False)
+        self.debug_geometry_checkbox.blockSignals(True)
+        self.debug_geometry_checkbox.setChecked(checked)
+        self.debug_geometry_checkbox.blockSignals(False)
+
+    def _on_debug_geometry_toggled(self, checked: bool):
+        key = self._body_pin_storage_key()
+        if key is not None:
+            self._debug_geometry_flags[key] = checked
+
+    def is_debug_geometry_enabled(self) -> bool:
+        return self.debug_geometry_checkbox.isChecked()
+
+    def iter_debug_geometry_flags(self):
+        for key, enabled in self._debug_geometry_flags.items():
+            yield key, enabled
 
     def _body_pin_storage_key(self) -> Optional[str]:
         prefix = self._env_storage_prefix()
@@ -894,6 +992,7 @@ class InspectorWindow(QMainWindow):
             self.body_form.addRow(row)
         self._restore_body_field_pins()
         self._restore_body_field_values()
+        self._restore_debug_geometry_flag()
         self._update_body_lock_buttons()
         self._update_apply_buttons()
         self._active_body_storage_key = self._body_pin_storage_key()
