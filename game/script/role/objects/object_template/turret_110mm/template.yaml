@@ -4,11 +4,42 @@ mount_anchor_name: turret_base_anchor
 host_anchor_name: hull_mount_anchor
 host_body_prim_suffix: vehicle_body
 tool_base_body_prim_suffix: turret_body
-
-# TODO 很可能需要改進名稱，目前的命名像是在表明必須要有俯仰角（有俯仰角對炮塔來説合理，可是車頂關節并非只能支援炮塔）
-# 雖然這個設置代表的是炮塔但結構應該優化比如加一個新屬性 "功能"，然後將 pitch_joint_name 放到 "功能" 裏面
-pitch_joint_name: RevoluteJoint
 control_config_path: control_configs.yaml
+
+# 掛載後的行為（action）。aim = 讓炮管對準第三人稱相機方向。
+# 此欄位讓 tool_function_registry 在環境真的用到 turret_110mm 時，
+# 才延遲加載 turret_110mm/functions/aim.py 的 aim action。
+action: aim
+# 以下是 aim action 的專屬配置（由 Turret110mmAimAction 讀取）
+aim:
+  # 俯仰關節名（炮管必須是該 RevoluteJoint 的子體，不能用 turret_body）
+  pitch_joint_name: RevoluteJoint
+  # 瞄準剛體（炮管）/ Body used for aim direction
+  aim_body_prim_suffix: gun_110
+  # Y 軸 RevoluteJoint：+q 為俯角，與相機 pitch_error 符號相反
+  # 數值與舊通用 ToolAimControlConfig 預設一致（重構不改行為）；
+  # 單一關卡可用 level tool_configs 的舊平鋪鍵 aim_control 覆寫。
+  control:
+    pitch_joint_sign: -1.0
+    pitch_torque_gain: 80000.0
+    pitch_damping: 80000.0
+    max_pitch_torque: 40000.0
+    angle_dead_zone_deg: 0.5
+    # 動態重力補償：由輸出扭矩與俯仰角變化線上估測 coeff（τ_g = coeff * cos(q)）
+    pitch_gravity_comp_enable: false
+    pitch_gravity_learn_rate: 0.08
+    pitch_gravity_basis: cos
+    pitch_gravity_rate_eps: 0.2
+    pitch_gravity_accel_eps: 2.0
+    pitch_gravity_dq_eps: 0.002
+  # turret_110mm 專屬第三人稱人類瞄準視角（掛載後在 CustomViewerGL 顯示）
+  view:
+    circle_radius_px: 14.0
+    circle_segments: 24
+    circle_color: [255, 0, 0, 220]
+    limit_line_color: [255, 0, 0, 200]
+    limit_line_half_width_px: 90.0
+    line_width: 2.0
 object_type: usd
 object:
   pattern: turret_110mm

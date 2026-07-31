@@ -320,10 +320,14 @@ tool_configs:
     proximity_threshold: 0.75
     proximity_height_threshold: 3.5
     # 瞄準剛體（炮管）/ Body used for aim direction (barrel)
-    aim_body_prim_suffix: turret_body
+    aim_body_prim_suffix: gun_110
     # 工具級瞄準參數覆蓋（可選）/ Optional per-tool aim overrides
     aim_control:
       aim_forward_local: [1.0, 0.0, 0.0]
+      pitch_joint_sign: -1.0
+      pitch_torque_gain: 80.0
+      pitch_damping: 8.0
+      max_pitch_torque: 40.0
     abilities:
     - Shoot
     - Articulation_body_control

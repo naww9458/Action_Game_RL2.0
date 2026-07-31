@@ -9,6 +9,7 @@ import warp as wp
 
 from script.role.objects.tool_anchor import resolve_anchor_pair
 from script.role.objects.object_template.loader import get_object_template
+from script.role.objects.object_template.tool_function_registry import create_tool_action
 from script.role.objects.usd import _join_asset_path
 from script.simulate.mount_joint_builder import (
     build_tool_mount_joint,
@@ -16,7 +17,6 @@ from script.simulate.mount_joint_builder import (
     compute_max_mount_joints_per_env,
 )
 from script.simulate.mount_joint_registry import MountJointRegistry, ToolMountRecord
-from script.simulate.tool_camera_aim import ToolAimControlConfig
 
 if TYPE_CHECKING:
     from script.levels.levels import Levels
@@ -77,6 +77,20 @@ def _normalize_optional_int_candidates(
             out.append(int(v))
         return out or list(range(num_players))
     return [int(value)]
+
+
+def _host_spawn_distance_sq(host: dict, player_configs: List[dict], tool_cfg: dict) -> float:
+    """Squared horizontal distance between a host's default spawn and the tool's spawn.
+
+    Used to bind a tool to the host it was placed next to when multiple players
+    are compatible (e.g. two armored vehicles + two turrets).
+    """
+    player_idx = int(host["host_player_index"])
+    player_pos = player_configs[player_idx].get("default_position") or (0.0, 0.0, 0.0)
+    tool_pos = tool_cfg.get("default_position") or (0.0, 0.0, 0.0)
+    dx = float(player_pos[0]) - float(tool_pos[0])
+    dy = float(player_pos[1]) - float(tool_pos[1])
+    return dx * dx + dy * dy
 
 
 def setup_tool_mount_joints(level: "Levels") -> Optional[MountJointRegistry]:
@@ -179,12 +193,17 @@ def setup_tool_mount_joints(level: "Levels") -> Optional[MountJointRegistry]:
             tool_object.get("file_name", ""),
         )
 
-        resolved_host: Optional[dict] = None
         resolved_host_body_path: Optional[str] = None
         resolved_tool_body_path: Optional[str] = None
         resolved_host_local: Optional[wp.transform] = None
         resolved_tool_local: Optional[wp.transform] = None
 
+        # When several players can host this tool (host_player_index: null),
+        # collect every compatible host and bind to the one whose default spawn
+        # is nearest to the tool's spawn. Without this, each tool binds to the
+        # first compatible player, so a second armored vehicle never sees the
+        # mount prompt (level8-1 / level9-2 have two vehicles + two turrets).
+        valid_hosts: List[dict] = []
         last_key_error: Optional[Exception] = None
         for host_player_index in host_player_index_candidates:
             if host_player_index >= len(players.index_obj_role) or host_player_index < 0:
@@ -200,6 +219,7 @@ def setup_tool_mount_joints(level: "Levels") -> Optional[MountJointRegistry]:
                 host_object.get("file_name", ""),
             )
 
+            matched = False
             for host_anchor_name in host_anchor_candidates:
                 for host_body_prim_suffix in host_body_prim_suffix_candidates:
                     try:
@@ -218,32 +238,45 @@ def setup_tool_mount_joints(level: "Levels") -> Optional[MountJointRegistry]:
                             host_body_prim_suffix=str(host_body_prim_suffix),
                             tool_base_body_prim_suffix=str(effective_tool_base_body_prim_suffix),
                         )
-                        resolved_host = {
-                            "host_player_index": host_player_index,
-                            "host_role_id": host_role_id,
-                            "host_meta": host_meta,
-                            "host_label": host_label,
-                        }
-                        resolved_host_body_path = host_body_path
-                        resolved_tool_body_path = tool_body_path
-                        resolved_host_local = host_local
-                        resolved_tool_local = tool_local
+                        valid_hosts.append(
+                            {
+                                "host_player_index": host_player_index,
+                                "host_role_id": host_role_id,
+                                "host_meta": host_meta,
+                                "host_label": host_label,
+                                "host_body_path": host_body_path,
+                                "tool_body_path": tool_body_path,
+                                "host_local": host_local,
+                                "tool_local": tool_local,
+                            }
+                        )
+                        matched = True
                         break
                     except KeyError as e:
                         last_key_error = e
                         continue
-                if resolved_host is not None:
+                if matched:
                     break
-            if resolved_host is not None:
-                break
 
-        if resolved_host is None or resolved_host_body_path is None or resolved_tool_body_path is None:
+        if not valid_hosts:
             raise KeyError(
                 f"Tool '{tool_key}' could not resolve a valid host mount anchor/body prim. "
                 f"Tried host_player_index={host_player_index_candidates}, "
                 f"host_anchor_name={host_anchor_candidates}, host_body_prim_suffix={host_body_prim_suffix_candidates}. "
                 f"Last error: {last_key_error!r}"
             )
+
+        if len(valid_hosts) > 1:
+            resolved_host = min(
+                valid_hosts,
+                key=lambda h: _host_spawn_distance_sq(h, player_configs, tool_cfg),
+            )
+        else:
+            resolved_host = valid_hosts[0]
+        resolved_host_body_path = resolved_host["host_body_path"]
+        resolved_tool_body_path = resolved_host["tool_body_path"]
+        resolved_host_local = resolved_host["host_local"]
+        resolved_tool_local = resolved_host["tool_local"]
 
         host_player_index = int(resolved_host["host_player_index"])
         host_role_id = int(resolved_host["host_role_id"])
@@ -263,13 +296,11 @@ def setup_tool_mount_joints(level: "Levels") -> Optional[MountJointRegistry]:
             if template_internal:
                 internal_joint_names = list(template_internal)
 
-        effective_pitch_joint_name = _resolve_pitch_joint_name(
-            tool_cfg,
-            tool_template,
-            internal_joint_names,
-            tool_key=tool_key,
-            tool_pattern=pattern_str,
-        )
+        # Load the tool's attached-tool action (lazy: only imported when a
+        # level actually uses this object pattern).
+        action = create_tool_action(pattern_str)
+        if action is not None:
+            action.configure(tool_cfg, tool_template)
 
         metadata = collect_tool_mount_metadata(
             builder=builder,
@@ -279,37 +310,23 @@ def setup_tool_mount_joints(level: "Levels") -> Optional[MountJointRegistry]:
             tool_joint_end=tool_joint_end,
             path_joint_map=tool_meta.get("path_joint_map") or {},
             internal_joint_names=internal_joint_names,
-            pitch_joint_name=effective_pitch_joint_name,
         )
+
+        if action is not None:
+            action.resolve_mount_refs(
+                builder=builder,
+                path_joint_map=tool_meta.get("path_joint_map") or {},
+                path_body_map=tool_meta.get("path_body_map") or {},
+                tool_joint_start=tool_joint_start,
+                tool_joint_end=tool_joint_end,
+                tool_body_idx=int(tool_body_idx),
+            )
 
         mount_axis = tuple(float(v) for v in (tool_cfg.get("mount_joint_axis") or [0.0, 0.0, 1.0]))
         mount_limits = tool_cfg.get("mount_joint_limits") or [-math.pi, math.pi]
         mount_joint_type = str(tool_cfg.get("mount_joint_type", "revolute"))
         tool_body_indices = sorted(
             {int(v) for v in (tool_meta.get("path_body_map") or {}).values()}
-        )
-
-        aim_body_idx = _resolve_aim_body_idx(
-            tool_meta.get("path_body_map") or {},
-            str(tool_cfg.get("aim_body_prim_suffix") or effective_tool_base_body_prim_suffix),
-            default_body_idx=int(tool_body_idx),
-        )
-        attach_cfg = None
-        try:
-            from script.role.abilities.ability import Ability
-            from script.role.abilities.abilities_cfg import get_tool_attachment_detail
-
-            attach_cfg = get_tool_attachment_detail(Ability._default_configs)
-        except Exception:
-            attach_cfg = None
-        default_aim_cfg = ToolAimControlConfig()
-        if attach_cfg is not None and attach_cfg.aim_control is not None:
-            default_aim_cfg = ToolAimControlConfig.from_mapping(
-                attach_cfg.aim_control.model_dump()
-            )
-        aim_config = ToolAimControlConfig.from_mapping(
-            tool_cfg.get("aim_control"),
-            defaults=default_aim_cfg,
         )
 
         build_result = build_tool_mount_joint(
@@ -336,8 +353,7 @@ def setup_tool_mount_joints(level: "Levels") -> Optional[MountJointRegistry]:
                 tool_root_body_idx=metadata.tool_root_body_idx,
                 tool_free_joint_idx=metadata.tool_free_joint_idx,
                 tool_internal_joint_idxs=list(metadata.tool_internal_joint_idxs),
-                pitch_joint_name=str(effective_pitch_joint_name or ""),
-                pitch_joint_idx=metadata.pitch_joint_idx,
+                tool_pattern=str(pattern_str or ""),
                 host_anchor_local=host_local,
                 tool_anchor_local=tool_local,
                 mount_axis=mount_axis,
@@ -354,8 +370,7 @@ def setup_tool_mount_joints(level: "Levels") -> Optional[MountJointRegistry]:
                 mount_joint_type=build_result.mount_joint_type,
                 uses_weld_fallback=build_result.uses_weld_fallback,
                 slot_index=slot_index,
-                aim_body_idx=int(aim_body_idx),
-                aim_config=aim_config,
+                action=action,
             )
         )
         slot_index += 1
@@ -372,41 +387,6 @@ def setup_tool_mount_joints(level: "Levels") -> Optional[MountJointRegistry]:
 
     level.mount_joint_registry = registry
     return registry
-
-
-def _resolve_pitch_joint_name(
-    tool_cfg: dict,
-    tool_template: Optional[dict],
-    internal_joint_names: List[str],
-    *,
-    tool_key: str,
-    tool_pattern: Optional[str],
-) -> Optional[str]:
-    pitch = tool_cfg.get("pitch_joint_name")
-    if pitch is None and tool_template:
-        pitch = tool_template.get("pitch_joint_name")
-    if pitch is None and len(internal_joint_names) == 1:
-        pitch = internal_joint_names[0]
-    if internal_joint_names and not pitch:
-        pattern_hint = tool_pattern or "<pattern>"
-        raise ValueError(
-            f"Tool '{tool_key}' has internal_joint_names but missing pitch_joint_name. "
-            f"Set it in tool_configs or object_template/{pattern_hint}/template.yaml."
-        )
-    if pitch is None:
-        return None
-    return str(pitch).strip()
-
-
-def _resolve_aim_body_idx(path_body_map: dict, prim_suffix: str, default_body_idx: int) -> int:
-    if not path_body_map:
-        return default_body_idx
-    suffix = prim_suffix.strip().lower()
-    for path, idx in path_body_map.items():
-        leaf = path.rstrip("/").split("/")[-1].lower()
-        if leaf == suffix or leaf.endswith(suffix) or suffix in leaf:
-            return int(idx)
-    return default_body_idx
 
 
 def _resolve_tool_role_id(tools, tool_key: str) -> int:

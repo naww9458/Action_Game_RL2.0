@@ -7,6 +7,7 @@ turret_110mm:
     joint_pos:
       RevoluteJoint: 0.0
     joint_actuation:
+      # 掛載瞄準時會關掉此位置伺服，改由 joint_f 驅動俯仰
       stiffness: 500.0
       damping: 50.0
       armature: 0.01
@@ -15,4 +16,5 @@ turret_110mm:
       keyboard: {}
       mouse: {}
     # Mount geometry: template.yaml + level tool_configs.
-    # Aim / proximity defaults: abilities_default_cfg Tool_attachment + level tool_configs overrides.
+    # Aim params: object_template/turret_110mm/template.yaml `aim.control`
+    # (read by Turret110mmAimAction in functions/aim.py).

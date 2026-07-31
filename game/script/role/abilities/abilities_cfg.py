@@ -19,19 +19,6 @@ class KeyConfig(BaseModel):
     mouse: Dict[str, List[str]] = Field(default_factory=dict)
 
 
-class AimControlConfig(BaseModel):
-    yaw_torque_gain: float = 200.0
-    yaw_damping: float = 20.0
-    max_yaw_torque: float = 500.0
-    pitch_torque_gain: float = 150.0
-    pitch_damping: float = 15.0
-    max_pitch_torque: float = 300.0
-    angle_dead_zone_deg: float = 0.5
-    weld_yaw_drive_gain: float = 8.0
-    aim_forward_local: List[float] = Field(default_factory=lambda: [1.0, 0.0, 0.0])
-    world_up: List[float] = Field(default_factory=lambda: [0.0, 0.0, 1.0])
-
-
 class AbilityDetail(BaseModel):
     force: float
     speed: float
@@ -43,7 +30,6 @@ class AbilityDetail(BaseModel):
 class ToolAttachmentDetail(AbilityDetail):
     proximity_threshold: Optional[float] = None
     proximity_height_threshold: Optional[float] = None
-    aim_control: Optional[AimControlConfig] = None
 
 
 def parse_ability_detail(name: str, raw: dict) -> AbilityDetail:

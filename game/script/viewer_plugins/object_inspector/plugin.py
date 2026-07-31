@@ -350,18 +350,9 @@ class ObjectInspectorPlugin:
 
         registry = getattr(self._game.level, "mount_joint_registry", None)
         if registry is not None:
-            for record in registry.records.values():
-                if record.tool_role_object_id == global_role_id:
-                    forward = record.aim_config.aim_forward_local
-                    return (float(forward[0]), float(forward[1]), float(forward[2]))
-
-        if global_role_id < len(BaseRole._object_game_params):
-            params = BaseRole._object_game_params[global_role_id]
-            aim_control = params.get("aim_control")
-            if isinstance(aim_control, dict):
-                forward = aim_control.get("aim_forward_local")
-                if isinstance(forward, (list, tuple)) and len(forward) >= 3:
-                    return (float(forward[0]), float(forward[1]), float(forward[2]))
+            forward = registry.get_tool_forward_local(global_role_id)
+            if forward is not None:
+                return forward
         return default
 
     def _resolve_debug_geometry_convention(self, spec: ObjectInspectorSpec, world_idx: int) -> int:

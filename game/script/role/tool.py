@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import math
-from typing import Dict, List, Literal, Optional, Union
+from typing import List, Literal, Optional, Union
 
 from pydantic import Field
 
@@ -26,9 +26,6 @@ class ToolModel(BaseRoleModel):
     mount_joint_limits: List[float] = Field(default_factory=lambda: [-math.pi, math.pi])
     internal_joint_names: List[str] = []
 
-    # TODO 很可能需要改進名稱，目前的命名像是在表明必須要有俯仰角（有俯仰角對炮塔來説合理，可是車頂關節并非只能支援炮塔）
-    # 雖然這個設置代表的是炮塔但結構應該優化比如加一個新屬性 "功能"，然後將 pitch_joint_name 放到 "功能" 裏面
-    pitch_joint_name: Optional[str] = None
     # Which host player object(s) to mount onto.
     # - int: use a specific player index
     # - list: try multiple player indices until one matches
@@ -36,8 +33,6 @@ class ToolModel(BaseRoleModel):
     host_player_index: Optional[Union[int, List[Optional[int]]]] = None
     proximity_threshold: float = 0.75
     proximity_height_threshold: float = 3.5
-    aim_body_prim_suffix: Optional[str] = None
-    aim_control: Optional[Dict[str, object]] = None
     abilities: List[str] = Field(default_factory=lambda: list(DEFAULT_TOOL_ABILITIES))
 
 

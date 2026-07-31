@@ -24,7 +24,6 @@ class ToolMountMetadata:
     tool_free_joint_idx: Optional[int]
     tool_root_body_idx: int
     tool_internal_joint_idxs: List[int]
-    pitch_joint_idx: Optional[int]
     host_body_idx: int
     tool_body_idx: int
 
@@ -113,7 +112,6 @@ def collect_tool_mount_metadata(
     tool_joint_end: int,
     path_joint_map: dict,
     internal_joint_names: Sequence[str],
-    pitch_joint_name: Optional[str] = None,
 ) -> ToolMountMetadata:
     tool_free_joint_idx = _find_free_joint(builder, tool_joint_start, tool_joint_end)
     if tool_free_joint_idx is not None:
@@ -128,20 +126,10 @@ def collect_tool_mount_metadata(
         tool_joint_end,
     )
 
-    pitch_joint_idx: Optional[int] = None
-    if pitch_joint_name:
-        pitch_joint_idx = resolve_joint_index_by_leaf_name(
-            path_joint_map,
-            pitch_joint_name,
-            tool_joint_start,
-            tool_joint_end,
-        )
-
     return ToolMountMetadata(
         tool_free_joint_idx=tool_free_joint_idx,
         tool_root_body_idx=tool_root_body_idx,
         tool_internal_joint_idxs=internal_joint_idxs,
-        pitch_joint_idx=pitch_joint_idx,
         host_body_idx=int(host_body_idx),
         tool_body_idx=int(tool_body_idx),
     )

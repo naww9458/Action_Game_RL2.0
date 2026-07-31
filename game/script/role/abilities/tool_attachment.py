@@ -134,7 +134,7 @@ class Tool_attachment(Ability):
                 # Attach/detach snaps body_q; refresh shared CPU snapshot for aim.
                 body_q_np = state.body_q.numpy()
 
-        self.mount_registry.apply_attached_aim(
+        self.mount_registry.apply_attached_actions(
             state.body_q,
             state.body_qd,
             physics_manager.control,
@@ -144,6 +144,8 @@ class Tool_attachment(Ability):
             dt=1.0 / max(1, int(getattr(self, "_fps", 50) or 50)),
             host_role_object_id=human_obj_idx,
             body_q_np=body_q_np,
+            joint_q=state.joint_q,
+            joint_qd=state.joint_qd,
         )
 
     def rl_action(self, actions, **kwargs):

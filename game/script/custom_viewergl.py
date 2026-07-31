@@ -126,6 +126,8 @@ class CustomViewerGL(ViewerGL):
 
         self.object_inspector = ObjectInspectorPlugin()
         self._mouse_press_pos = None
+        self._action_view_batch = None
+        self._action_view_shapes: list = []
 
     def _build_binding_lookup(self):
         camera_move_ids = {
@@ -369,10 +371,67 @@ class CustomViewerGL(ViewerGL):
         self.renderer.window.view = Mat4()
         # 極速繪製
         self._ui_batch.draw()
+        self._draw_tool_action_overlays(window_w, window_h)
         # 還原狀態
         gl.glEnable(gl.GL_DEPTH_TEST)
         self.renderer.window.projection = proj
         self.renderer.window.view = view
+
+    def _draw_tool_action_overlays(self, window_w: int, window_h: int) -> None:
+        """Draw screen-space overlays produced by attached tool actions.
+
+        Generic: every attached ``ToolAction`` may return overlay geometry via
+        :meth:`ToolAction.view_overlay`; the action owns *what* to draw (e.g. the
+        turret_110mm third-person aim HUD) so this module stays tool-agnostic.
+        """
+        if self.game is None or self.follow_role_index is None:
+            return
+        follow_targets = self._resolve_follow_targets()
+        if follow_targets is None:
+            return
+        host_role_object_id = follow_targets[0]
+        level = getattr(self.game, "level", None)
+        mount_registry = getattr(level, "mount_joint_registry", None) if level is not None else None
+        if mount_registry is None:
+            return
+
+        overlays: list = []
+        for record in mount_registry.records.values():
+            action = record.action
+            if action is None or not record.attached:
+                continue
+            overlay = action.view_overlay(
+                mount_registry,
+                record,
+                host_role_object_id=host_role_object_id,
+                window_w=float(window_w),
+                window_h=float(window_h),
+                camera_pitch_deg=float(self.camera.pitch),
+                camera_fov_deg=float(getattr(self.camera, "fov", 100.0) or 100.0),
+            )
+            if overlay is not None:
+                overlays.append((action, overlay))
+
+        if not overlays:
+            self._action_view_shapes = []
+            return
+
+        # Rebuild each frame: shapes positions change with camera pitch.
+        self._action_view_batch = pyglet.graphics.Batch()
+        kept: list = []
+        for action, overlay in overlays:
+            result = action.draw_view_overlay(
+                overlay,
+                shapes_module=shapes,
+                batch=self._action_view_batch,
+            )
+            if result is None:
+                continue
+            _batch, shapes_keep = result
+            if shapes_keep:
+                kept.extend(list(shapes_keep))
+        self._action_view_shapes = kept
+        self._action_view_batch.draw()
 
     def _compute_follow_camera_position(
         self,
