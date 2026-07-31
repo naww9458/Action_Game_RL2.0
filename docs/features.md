@@ -94,18 +94,29 @@
         4. 史萊姆：沒有專屬模型文件，采用全粒子加流體模擬，以一個主粒子爲核心通過内聚力吸引下屬粒子，并通過數個範圍内自主移動的分粒子實現觸手/形變能力 (未實現)
 
 ### 工具（Tool）：
-    新增角色類型，用於 **可從載具上拆裝的模塊化裝備**（炮塔、武器等）。在關卡 YAML 的 `tool_configs` 中按 key 配置，與 `player_configs` / `platform_configs` 并列。
+    新增角色類型，用於 **可從載具上拆裝的模塊化裝備**（炮塔、武器等）。在關卡 YAML 的 `tool_configs` 中按 **list** 配置（每個工具一條），與 `player_configs` / `platform_configs` 并列。
 
     與玩家的關係：
         - **Player**：宿主（host），負責駕駛與掛載操作；需配置 `Tool_attachment` 能力
         - **Tool**：被掛載物，關卡加載時通常以 **FREE 關節浮置** 於場景中，靠近宿主後由 `Tool_attachment` 啟用 mount joint / weld 約束完成掛載
 
+    統一 ID 規則：
+        - 所有角色物件以 **物件 ID** 作為唯一識別：list 容器角色（player/platform/tool）用 `id` 欄位；
+          dict 容器角色（entity/ability_generated_object）的 dict key 是 **物件子角色**
+          （`object_sub_role`），代表這類會批量生成、位置由計算得出的物件類別，
+          而非唯一的物件 ID（因此不與欄位 `id` 同步）
+        - `name` 只是可重複的顯示名稱，不再作為識別符
+
     掛載相關配置（可在關卡 `tool_configs` 或 `object_template/<pattern>/template.yaml` 中定義）：
         - `mount_anchor_name` / `host_anchor_name`：工具與車體 USD 錨點 prim 名
         - `host_body_prim_suffix` / `tool_base_body_prim_suffix`：錨點所屬剛體後綴
         - `host_player_index`：綁定哪個玩家索引為宿主（可省略以自動嘗試）
+        - `host_player_id`：以 player_configs 的物件 ID（`id` 欄位）明確指定宿主（優先於 `host_player_index`）。
+          指定後工具的初始坐標/旋轉/速度/角速度可省略——它會在宿主生成點出生，掛載時再吸附到宿主身上。
         - `internal_joint_names` / `pitch_joint_name`：工具內部關節；`pitch_joint_name` 指定相機瞄準俯仰 DOF
         - `aim_control`：瞄準 PD 增益、死區、扭矩上限等
+        - `start_attached`：設為 `true` 時，環境啟動（及每次 reset 後）工具自動掛載到宿主上，不需按 U。
+          取消此選項後，工具的初始姿態欄位會重新出現（因為工具仍需以浮置姿態生成）
 
     物件範例：110 毫米火炮炮塔（`turret_110mm`）
         - 資產：`turret_110mm.usdc`，模板路徑 `game/script/role/objects/object_template/turret_110mm/`
@@ -129,6 +140,25 @@
 
 
 3. 環境運行時顯示環境情況的介面（包含顯示物件位置/速度/姿態以及調整對應值的功能）
+
+    屬性分類規則（環境編輯頁面與運行時顯示介面一致，依物件欄位性質分為三大類）：
+        - 角色屬性：對該角色**所有物件**（無論 object template 為何）都通用的欄位，
+          且不進入 object template。包括 `type` / `id` / `name` / `color` / 初始坐標 /
+          初始旋轉 / 初始速度 / 初始角速度 / `controller` / `team_id` / `health`；
+          dict 容器角色的「物件子角色」（`object_sub_role`）等同於 list 角色的 `id`，
+          也是角色屬性；以及 Tool 專屬的「連接宿主」（`host_player_id`）、
+          「啟動時自動掛載」（`start_attached`）等每物件自身的設定。
+        - 物件屬性：與特定物件/模板相關、會進入 object template 並可透過
+          "Add Object Template" 批量套用預設參數的欄位。該下拉框位於環境編輯頁面
+          的「物件屬性」區段頂部，與模型屬性緊貼、和角色屬性明顯區分。包括
+          `abilities`（能力）、
+          掛載介面（`mount_anchor_name` / `host_anchor_name` / `host_body_prim_suffix` /
+          `tool_base_body_prim_suffix` / `mount_joint_type` 等）、`possess_offset`、
+          `separation` 等。不同物件類型（例如標準球體 vs Unitree G1）這些欄位可能不同。
+        - 模型屬性：加入物理引擎時輸入的參數，作為「物件屬性」最底部的次級區域。
+          例如剛體球體的半徑/質量/摩擦力/彈性，或 Unitree G1 的模型路徑等
+          （即 `object` 欄位內的內容）。
+
     環境顯示介面：
         通過鼠標點擊環境顯示介面中對應物件來選擇
 

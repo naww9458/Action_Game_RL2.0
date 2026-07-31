@@ -7,6 +7,8 @@ from script.role.base_role import BaseRole, BaseRoleModel
 class EntityModel(BaseRoleModel):
     type: Literal["entity"] = "entity"
     name: str = "New_Entity"
+    # 此類物件會依 separation 批量計算位置而生成多個實體，
+    # dict key 即為「物件子角色」（object_sub_role），非唯一的物件 ID。
     separation: Optional[List[int]] = [1, 1, 1] # XYZ 平均分割為多少份
 
 
@@ -25,10 +27,12 @@ class Entity(BaseRole):
         gap = 0.00001 
 
         if configs:
-            for config in configs.values():
-                separation = config["separation"]
+            for key, config in configs.items():
+                cfg = dict(config)
+                # dict key 即為物件子角色（object_sub_role），無需額外欄位
+                separation = cfg["separation"]
                 if separation == [1, 1, 1]:
-                    config_list.append(config)
+                    config_list.append(cfg)
                     continue
 
                 size_total = config["object"]["size"]

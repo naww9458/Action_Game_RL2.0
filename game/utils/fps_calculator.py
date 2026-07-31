@@ -8,7 +8,7 @@ class fpsCalculator:
         self.render_fps_counter = 0
         self.render_fps_timer = time.time()
 
-    def update(self):
+    def update(self, print_fps_when_update: bool=False):
         self.render_fps_counter += 1
         current_time = time.time()
         time_diff = current_time - self.render_fps_timer
@@ -18,10 +18,11 @@ class fpsCalculator:
             self.render_fps_counter = 0
             self.render_fps_timer = current_time
 
-            # total_entities = len(self.players) + len(self.platforms) + len(self.ability_generated_objects)
-            # print(F"FPS: {int(self.fps_current)}, total_steps: {self.current_step_cpu[:5]}, player scores: {self.episode_total_rewards}")
-            # print(F"FPS: {int(self.fps_current)}, total_steps: {self.current_step_cpu[:5]}")
-            # print(F"FPS: {int(self.fps_current)}")
+            if print_fps_when_update:
+                # total_entities = len(self.players) + len(self.platforms) + len(self.ability_generated_objects)
+                # print(F"FPS: {int(self.fps_current)}, total_steps: {self.current_step_cpu[:5]}, player scores: {self.episode_total_rewards}")
+                # print(F"FPS: {int(self.fps_current)}, total_steps: {self.current_step_cpu[:5]}")
+                print(F"FPS: {int(self.fps_current)}")
         else:
             self.updated_step = False
 

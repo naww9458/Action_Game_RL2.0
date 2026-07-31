@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import math
-from typing import TYPE_CHECKING, Dict, List, Optional, Union
+from typing import TYPE_CHECKING, List, Optional, Union
 
 import warp as wp
 
@@ -94,7 +94,7 @@ def _host_spawn_distance_sq(host: dict, player_configs: List[dict], tool_cfg: di
 
 
 def setup_tool_mount_joints(level: "Levels") -> Optional[MountJointRegistry]:
-    tool_configs: Dict[str, dict] = level.level_configs.get("tool_configs") or {}
+    tool_configs: List[dict] = level.level_configs.get("tool_configs") or []
     if not tool_configs:
         # No tools → no mount registry (avoid empty create/bind on non-tool levels).
         level.mount_joint_registry = None
@@ -119,8 +119,14 @@ def setup_tool_mount_joints(level: "Levels") -> Optional[MountJointRegistry]:
     )
 
     slot_index = 0
-    for tool_key, tool_cfg in tool_configs.items():
-        tool_role_id = _resolve_tool_role_id(tools, tool_key)
+    for tool_index, tool_cfg in enumerate(tool_configs):
+        # tool_key 以物件 ID（id 欄位）為準，缺省時退回 name / 索引
+        tool_key = str(
+            tool_cfg.get("id")
+            or tool_cfg.get("name")
+            or f"tool_{tool_index}"
+        )
+        tool_role_id = _resolve_tool_role_id(tools, tool_index)
 
         tool_meta = physics_manager.object_metadata_by_role.get(tool_role_id, {})
         tool_label = physics_manager.role_object_labels.get(tool_role_id, "")
@@ -184,9 +190,11 @@ def setup_tool_mount_joints(level: "Levels") -> Optional[MountJointRegistry]:
                 tool_key=tool_key,
                 tool_pattern=pattern_str,
             )
-        host_player_index_candidates = _normalize_optional_int_candidates(
-            tool_cfg.get("host_player_index"),
+        host_player_index_candidates = _resolve_host_player_candidates(
+            tool_cfg,
+            player_configs=player_configs,
             num_players=len(players.index_obj_role),
+            tool_key=tool_key,
         )
         tool_asset = _join_asset_path(
             tool_object.get("file_path_or_source", ""),
@@ -354,6 +362,7 @@ def setup_tool_mount_joints(level: "Levels") -> Optional[MountJointRegistry]:
                 tool_free_joint_idx=metadata.tool_free_joint_idx,
                 tool_internal_joint_idxs=list(metadata.tool_internal_joint_idxs),
                 tool_pattern=str(pattern_str or ""),
+                start_attached=bool(tool_cfg.get("start_attached", False)),
                 host_anchor_local=host_local,
                 tool_anchor_local=tool_local,
                 mount_axis=mount_axis,
@@ -383,18 +392,45 @@ def setup_tool_mount_joints(level: "Levels") -> Optional[MountJointRegistry]:
             f"[ToolMount] '{tool_key}': host={host_label} tool={tool_label} "
             f"root_body={metadata.tool_root_body_idx} free_joint={metadata.tool_free_joint_idx} "
             f"{mount_desc} (disabled until U attach)"
+            + (f" [bound to player {resolved_host['host_player_index']}]" if tool_cfg.get("host_player_id") else "")
         )
 
     level.mount_joint_registry = registry
     return registry
 
 
-def _resolve_tool_role_id(tools, tool_key: str) -> int:
+def _resolve_tool_role_id(tools, tool_index: int) -> int:
     if tools is None:
         raise RuntimeError("Tool role was not instantiated but tool_configs is non-empty")
-    if tool_key in tools.tool_config_keys:
-        idx = tools.tool_config_keys.index(tool_key)
-        return tools.index_obj_role[idx]
-    if len(tools.index_obj_role) == 1:
-        return tools.index_obj_role[0]
-    raise KeyError(f"Could not resolve tool role object id for '{tool_key}'")
+    if 0 <= tool_index < len(tools.index_obj_role):
+        return tools.index_obj_role[tool_index]
+    raise KeyError(f"Could not resolve tool role object id for tool index '{tool_index}'")
+
+
+def _resolve_host_player_candidates(
+    tool_cfg: dict,
+    *,
+    player_configs: List[dict],
+    num_players: int,
+    tool_key: str,
+) -> List[int]:
+    """Resolve the host player candidate indices for a tool.
+
+    ``host_player_id`` (unique player ``id`` / object ID) takes priority over the
+    legacy ``host_player_index``. When ``host_player_id`` is set the tool is
+    explicitly bound to that single player.
+    """
+    host_player_id = tool_cfg.get("host_player_id")
+    if host_player_id:
+        for index, cfg in enumerate(player_configs):
+            cfg_id = str(cfg.get("id") or cfg.get("name") or "")
+            if cfg_id == str(host_player_id):
+                return [index]
+        raise KeyError(
+            f"Tool '{tool_key}' host_player_id={host_player_id!r} does not match any "
+            f"player_configs id. Available: {sorted(str(c.get('id') or c.get('name') or '') for c in player_configs)}"
+        )
+    return _normalize_optional_int_candidates(
+        tool_cfg.get("host_player_index"),
+        num_players=num_players,
+    )

@@ -8,7 +8,7 @@ action stored on each record and is loaded lazily by the tool function registry.
 from __future__ import annotations
 
 from dataclasses import dataclass, field
-from typing import Dict, List, Optional, Tuple
+from typing import Dict, List, Optional, Sequence, Tuple
 
 import newton
 import numpy as np
@@ -41,6 +41,8 @@ class ToolMountRecord:
     proximity_height_threshold: float = 3.5
     tool_body_indices: List[int] = field(default_factory=list)
     tool_pattern: str = ""
+    # Mount this tool automatically when the level starts (and after resets).
+    start_attached: bool = False
     mount_joint_idx: Optional[int] = None
     mount_eq_idx: Optional[int] = None
     mount_joint_dof_idx: Optional[int] = None
@@ -270,9 +272,12 @@ class MountJointRegistry:
         body_f: wp.array | None = None,
         joint_qd: wp.array | None = None,
         body_q_prev: wp.array | None = None,
+        force: bool = False,
     ) -> bool:
         record = self.records.get(tool_key)
-        if record is None or record.attached or self._model is None:
+        if record is None or self._model is None:
+            return False
+        if record.attached and not force:
             return False
 
         host_global = self.global_body_idx(world, record.host_body_idx)
@@ -341,6 +346,48 @@ class MountJointRegistry:
         record.attached = False
         record.mount_yaw = 0.0
         return True
+
+    def attach_start_attached(
+        self,
+        body_q: wp.array,
+        body_qd: wp.array,
+        joint_q: wp.array,
+        *,
+        worlds: Optional[Sequence[int]] = None,
+        body_f: wp.array | None = None,
+        joint_qd: wp.array | None = None,
+        body_q_prev: wp.array | None = None,
+    ) -> int:
+        """Enable mounts for every tool configured with ``start_attached: true``.
+
+        Snaps each tool to its host in the given worlds (default: all worlds)
+        and enables the mount joint/equality constraint, so the environment
+        begins with the tool already attached. Called right after the initial
+        env reset and after each episode reset.
+        """
+        if self._model is None:
+            return 0
+        if worlds is None:
+            worlds = range(self.num_env)
+
+        count = 0
+        for record in self.records.values():
+            if not record.start_attached:
+                continue
+            for world in worlds:
+                if self.enable_attachment(
+                    record.tool_key,
+                    body_q,
+                    body_qd,
+                    joint_q,
+                    world=int(world),
+                    body_f=body_f,
+                    joint_qd=joint_qd,
+                    body_q_prev=body_q_prev,
+                    force=True,
+                ):
+                    count += 1
+        return count
 
     def notify_joint_dof_properties(self) -> None:
         if self._solver is None:

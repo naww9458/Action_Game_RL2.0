@@ -41,16 +41,20 @@ language_select: '語言選擇:'
 launch_tb: 啟動 TensorBoard
 level_list: 關卡列表
 level_path: '關卡路徑:'
+add_object_template: 套用物件模板
 max_episode_step: '最大步數 (max_episode_step):'
+model_attr_section: --- 模型屬性 ---
 model_obs_type: '觀察類型 (model_obs_type):'
 new_level_series: 新增關卡系列
 new_sub_level: 新增子關卡
 none_tip: 輸入 None 表示禁用
 num_env: '環境數量 (num_env):'
 num_envs: '環境數量 (num_envs):'
-obj_key: 物件 ID (唯一鍵)
+obj_id: '物件 ID (id):'
+obj_sub_role: 物件子角色 (object_sub_role)
 obj_list: 物件列表
 obj_name: 物件顯示名稱
+object_attr_section: --- 物件屬性 ---
 obs_height: '觀察高度 (obs_height):'
 obs_width: '觀察寬度 (obs_width):'
 open_folder: 打開目錄
@@ -67,6 +71,7 @@ reload_preset: 重新載入
 render_mode: '渲染模式 (render_mode):'
 requires_grad: '需要梯度 (requires_grad):'
 resume_checkpoint: '恢復檢查點路徑 (可選):'
+role_attr_section: --- 角色屬性 ---
 run_list: 實驗列表
 save_back: 保存並返回
 save_preset: 保存預設
@@ -74,6 +79,7 @@ save_success: 保存成功
 select_series_desc: 請選擇要在哪個系列下新增子關卡：
 select_series_title: 選擇關卡系列
 start_test: 🚀 開始測試
+start_attached: '啟動時自動掛載 (start_attached):'
 start_train: 開始訓練
 stop_eval: 停止評估
 stop_tb: 關閉 TensorBoard
@@ -93,6 +99,8 @@ tip_select_first: 請先選擇一個子關卡（例如：子關卡 0）才能進
 train: 訓練
 train_mode: 訓練模式
 train_started: 訓練已在子進程啟動
+host_player_id: '連接宿主 (host_player_id):'
+tool_host_none: None (自動匹配)
 tool_attach_prompt: 按下 U 键连接工具
 view_3d: 3D 交互視圖區域
 window_envs: '視窗顯示環境數量 (window_envs):'

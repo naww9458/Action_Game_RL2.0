@@ -9,6 +9,8 @@ from script.role.base_role import BaseRole, BaseRoleModel
 class AbilityGeneratedObjectModel(BaseRoleModel):
     type: Literal["ability_generated_object"] = "ability_generated_object"
     name: str = "New_Ability_Generated_Object"
+    # 此類物件會依 quantity 批量生成，dict key 即為「物件子角色」
+    # （object_sub_role，例如子彈類型），非唯一的物件 ID。
     ability_class_name: str = "DefaultAbility"
     default_expired_step: float = 100.0
     quantity: int = 1
@@ -23,6 +25,8 @@ class AbilityGeneratedObject(BaseRole):
 
     def __init__(self, configs, **kwargs):
         super().__init__(**kwargs)
+
+        # dict key 即為物件子角色（object_sub_role），無需額外欄位同步
 
         self.expired_steps = None 
         self.owner_mapping: dict[list[list[int]]] = {}

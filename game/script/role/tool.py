@@ -31,8 +31,16 @@ class ToolModel(BaseRoleModel):
     # - list: try multiple player indices until one matches
     # - None: try all players until one matches
     host_player_index: Optional[Union[int, List[Optional[int]]]] = None
+    # Explicit host binding by unique player identifier (player_configs `name`).
+    # Takes priority over `host_player_index`. When set, the tool's initial
+    # pose (default_position/rotation/velocity/angular_velocity) is optional —
+    # it spawns at the host's spawn pose and snaps onto the host when mounted.
+    host_player_id: Optional[str] = None
     proximity_threshold: float = 0.75
     proximity_height_threshold: float = 3.5
+    # When True, the tool is mounted on its host as soon as the level starts
+    # (and re-mounted after every env reset) — no U-key attach needed.
+    start_attached: bool = False
     abilities: List[str] = Field(default_factory=lambda: list(DEFAULT_TOOL_ABILITIES))
 
 
@@ -40,19 +48,19 @@ class Tool(BaseRole):
     role_key = "tool"
     model_cls = ToolModel
     path = "tool_configs"
-    container = "dict"
+    # 工具是唯一物件（有明確的宿主綁定），以 list 容器 + id 欄位識別，
+    # 與 player/platform 一致，而非 entity/ability_generated 的 dict 子類別結構。
+    container = "list"
 
-    def __init__(self, configs: Optional[Dict[str, dict]] = None, **kwargs):
+    def __init__(self, configs: Optional[List[dict]] = None, **kwargs):
         super().__init__(**kwargs)
         config_list: List[dict] = []
-        self.tool_config_keys: List[str] = []
 
         if configs:
-            for key, config in configs.items():
+            for config in configs:
                 cfg = dict(config)
                 if not cfg.get("abilities"):
                     cfg["abilities"] = list(DEFAULT_TOOL_ABILITIES)
                 config_list.append(cfg)
-                self.tool_config_keys.append(key)
 
         self.setup(configs=config_list)

@@ -38,7 +38,7 @@ class ToolMountBuildResult:
     uses_weld_fallback: bool
 
 
-def compute_max_mount_joints_per_env(tool_configs: Dict[str, dict]) -> int:
+def compute_max_mount_joints_per_env(tool_configs: Sequence[dict]) -> int:
     """Total mount joints required per environment (one per tool config)."""
     return len(tool_configs)
 

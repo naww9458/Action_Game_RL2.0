@@ -54,7 +54,8 @@ class Levels:
         print("Setup Entity!")
         self.entities: Entity = Entity(configs=self.level_configs.get("entity_configs", []))
         print("Setup Tool!")
-        tool_configs = self.level_configs.get("tool_configs") or {}
+        tool_configs = self.level_configs.get("tool_configs") or []
+        self._inherit_host_spawn_pose_for_tools(tool_configs)
         self.tools: Tool | None = Tool(configs=tool_configs) if tool_configs else None
         print("Setup AbilityGeneratedObject!")
         self.abilities_objects: AbilityGeneratedObject = AbilityGeneratedObject(configs=self.level_configs.get("ability_generated_object_configs", []))
@@ -76,6 +77,39 @@ class Levels:
                                            )
         
         self.fps = GameConfig.FPS_ACTION
+
+    def _inherit_host_spawn_pose_for_tools(self, tool_configs: List[dict]) -> None:
+        """For tools bound to a host via ``host_player_id``, inherit the host's
+        spawn pose so the tool's own initial pose fields can be omitted in YAML.
+
+        The tool still needs a valid spawn transform at build time (before the
+        mount joint snaps it onto the host), so it spawns at its host's pose.
+        """
+        player_configs = self.level_configs.get("player_configs") or []
+        host_by_id = {}
+        for cfg in player_configs:
+            hid = str(cfg.get("id") or cfg.get("name") or "")
+            if hid:
+                host_by_id[hid] = cfg
+        pose_keys = (
+            "default_position",
+            "default_rotation",
+            "default_velocity",
+            "default_angular_velocity",
+        )
+        for tool_cfg in tool_configs:
+            host_id = tool_cfg.get("host_player_id")
+            if not host_id:
+                continue
+            host_cfg = host_by_id.get(str(host_id))
+            if host_cfg is None:
+                raise ValueError(
+                    f"Tool '{tool_cfg.get('name', '')}' host_player_id={host_id!r} "
+                    f"does not match any player_configs name. Available: {sorted(host_by_id)}"
+                )
+            for key in pose_keys:
+                if tool_cfg.get(key) is None and host_cfg.get(key) is not None:
+                    tool_cfg[key] = host_cfg.get(key)
 
     def resolve_player_pattern(self, player_index: int = 0) -> str:
         """Resolve articulation-body player pattern from level YAML player_configs."""
@@ -202,7 +236,7 @@ class Levels:
         print(f"Action Space Config: {action_space_config}")
 
     def _configure_tool_abilities(self):
-        tool_configs = list((self.level_configs.get("tool_configs") or {}).values())
+        tool_configs = self.level_configs.get("tool_configs") or []
         for ability in self.tools.abilities_instance_list:
             if hasattr(ability, "configure_from_tool_configs"):
                 ability.configure_from_tool_configs(tool_configs, self)
@@ -327,6 +361,46 @@ class Levels:
         
         # 2. 🌟 一鍵委託物理管理器進行多態重置！無須再傳入一堆重複、臃腫的 position/rotation 陣列
         self.physics_manager.reset_obj()
+
+        # 3. Re-mount tools configured with `start_attached: true` in reset envs.
+        self._restore_start_attached_tools(terminated)
+
+    def _restore_start_attached_tools(self, terminated) -> None:
+        """After a reset, re-attach tools whose level config has `start_attached: true`.
+
+        ``reset_obj`` restores each object to its (randomized) spawn transform, so a
+        pre-attached tool must be snapped back onto its host and its mount joint
+        re-enabled in every world that was reset.
+        """
+        registry = self.mount_joint_registry
+        if registry is None or not registry.records:
+            return
+        if getattr(registry, "_model", None) is None:
+            return
+        if not any(getattr(r, "start_attached", False) for r in registry.records.values()):
+            return
+
+        try:
+            terminated_np = terminated.numpy() if hasattr(terminated, "numpy") else np.asarray(terminated)
+        except Exception:
+            terminated_np = None
+        if terminated_np is None or len(terminated_np) == 0:
+            worlds = None
+        else:
+            worlds = [int(i) for i in range(min(len(terminated_np), self.num_env)) if bool(terminated_np[i])]
+            if not worlds:
+                return
+
+        state = self.physics_manager.state_0
+        registry.attach_start_attached(
+            state.body_q,
+            state.body_qd,
+            state.joint_q,
+            worlds=worlds,
+            body_f=getattr(state, "body_f", None),
+            joint_qd=getattr(state, "joint_qd", None),
+            body_q_prev=getattr(state, "body_q_prev", None),
+        )
 
     @wp.kernel
     def update_reset_mask_kernel(

@@ -51,8 +51,7 @@ if __name__ == '__main__':
 
             
             if render_mode != "window":
-                fps_calculator.update()
-                print("FPS: ", fps_calculator.fps_current)
+                fps_calculator.update(print_fps_when_update=True)
 
     except Exception as e:
         print(f"發生異常: {e}")

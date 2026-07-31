@@ -2,6 +2,13 @@ id: mjlab_unitere_g1
 display_name: Unitree G1
 control_config_path: control_configs.yaml
 object_type: usd
+# 物件屬性：可透過 "Add Object Template" 批量套用到 player_configs
+possess_offset:
+  - 0.0
+  - 0.0
+  - 0.0
+abilities:
+  - Articulation_body_control_rl_assisted
 object:
   pattern: unitree_g1
   type: usd

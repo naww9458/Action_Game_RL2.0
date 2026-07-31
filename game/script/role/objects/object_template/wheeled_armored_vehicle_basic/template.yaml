@@ -2,13 +2,18 @@ id: wheeled_armored_vehicle_basic
 display_name: Wheeled Armored Vehicle (Basic)
 control_config_path: control_configs.yaml
 object_type: usd
+# 物件屬性：可透過 "Add Object Template" 批量套用到 player_configs
+possess_offset: null  # 使用 control_configs 锚点偏移 / use anchor offset from control_configs
+abilities:
+  - Articulation_body_control
+  - Tool_attachment
 object:
   pattern: wheeled_armored_vehicle_basic
   type: usd
-  object_friction: 0.5
+  object_friction: 0.6
   object_elasticity: 0.0
   file_name: wheeled_armored_vehicle_basic.usdc
-  file_path_or_source: Action_Game_RL_Assets/assets/
+  file_path_or_source: ./Action_Game_RL_Assets/assets/
   floating: null
   base_joint: null
   parent_body: -1
@@ -38,4 +43,3 @@ object:
   use_mujoco_policy_init: true
   control_task: differential_drive
   control_policy_version: null
-possess_offset: null  # 使用 control_configs 锚点偏移 / use anchor offset from control_configs

@@ -33,6 +33,34 @@ from typing import List, get_origin, get_args, Union
 
 _MISSING_FIELD_DEFAULT = object()
 
+# 角色屬性白名單：只有對該角色所有物件（無論 object template 為何）都通用、
+# 且不進入 object template 的欄位才能作為「角色屬性」。
+# 不在白名單中的非模型屬性欄位，一律視為「物件屬性」。
+_ROLE_ATTR_FIELDS = frozenset({
+    "type", "id", "name", "color",
+    "default_position", "default_rotation",
+    "default_velocity", "default_angular_velocity",
+    "controller", "team_id", "health",
+    # dict 容器角色（entity/ability_generated_object）的 dict key 即為
+    # 「物件子角色」（object_sub_role），等同於 list 角色的 id：是單一配置
+    # 自身的唯一鍵，不進入模板
+    # 工具每物件配置：連接宿主 / 自動掛載不進入模板，是單一工具自身的設定
+    "host_player_index",
+    "host_player_id",
+    "proximity_threshold",
+    "proximity_height_threshold",
+    "start_attached",
+})
+
+# 加入物理引擎時輸入的「模型屬性」欄位（在「物件屬性」內最底部的次級區域）
+_MODEL_ATTR_FIELD = "object"
+
+# 物件模板（template.yaml）頂層中保留給模板本身使用的 key，
+# 套用模板時不會複製到角色配置
+_OBJECT_TEMPLATE_RESERVED_KEYS = frozenset({
+    "id", "display_name", "object_type", "control_config_path", "object",
+})
+
 
 def get_editor_field_default(field_info):
     """Return a YAML-safe Pydantic field default for an absent editor value."""
@@ -512,7 +540,9 @@ class EditPage(BasePage):
         """根據 role_infos 自動生成新增按鈕"""
         for role_name, info in self.role_infos.items():
             btn = QPushButton(TR.get(f"add_{role_name}"))
-            btn.clicked.connect(lambda checked, i=info: self.add_object_from_registry(i))
+            btn.clicked.connect(
+                lambda checked, i=info, rn=role_name: self.add_object_from_registry(i, rn)
+            )
             self.add_btns_layout.addWidget(btn)
 
     def load_config(self, file_path):
@@ -561,8 +591,10 @@ class EditPage(BasePage):
             
             if container == "list":
                 for i, obj_data in enumerate(data_source):
-                    name = obj_data.get("name") or obj_data.get("object", {}).get("pattern") or f"{role_name} {i}"
-                    child = QTreeWidgetItem(root_item, [name])
+                    obj_id = str(obj_data.get("id") or "")
+                    disp_name = obj_data.get("name") or obj_data.get("object", {}).get("pattern") or f"{role_name} {i}"
+                    label = f"{obj_id} ({disp_name})" if obj_id and obj_id != disp_name else (obj_id or disp_name)
+                    child = QTreeWidgetItem(root_item, [label])
                     info_tuple = (path_key, i, model_cls)
                     tid = self._get_next_temp_id(info_tuple)
                     child.setData(0, Qt.ItemDataRole.UserRole, tid)
@@ -571,8 +603,9 @@ class EditPage(BasePage):
                         new_selected_item = child
             elif container == "dict":
                 for key, obj_data in data_source.items():
-                    name = obj_data.get("name") or obj_data.get("object", {}).get("pattern") or key
-                    child = QTreeWidgetItem(root_item, [name])
+                    disp_name = obj_data.get("name") or obj_data.get("object", {}).get("pattern") or key
+                    label = f"{key} ({disp_name})" if key != disp_name else key
+                    child = QTreeWidgetItem(root_item, [label])
                     info_tuple = (path_key, key, model_cls)
                     tid = self._get_next_temp_id(info_tuple)
                     child.setData(0, Qt.ItemDataRole.UserRole, tid)
@@ -620,7 +653,8 @@ class EditPage(BasePage):
         if isinstance(index, str) and data_type != "env":
             name_input = QLineEdit(str(index))
             name_input.editingFinished.connect(lambda: self.rename_dict_key(data_type, index, name_input.text()))
-            self.add_zebra_row(f"{TR.get('obj_key')}:", name_input)
+            # dict 容器角色的 key = 物件子角色（object_sub_role）
+            self.add_zebra_row(f"{TR.get('obj_sub_role')}:", name_input)
 
         if target_data and model_cls:
             self.render_editor_recursive(target_data, model_cls)
@@ -642,47 +676,208 @@ class EditPage(BasePage):
         self.attr_form.addRow(container)
         self.row_counter += 1
 
+    # 明確指定連接對象（host_player_id）且 start_attached 時，
+    # 工具的初始姿態參數由宿主繼承，無需編輯
+    _POSE_FIELDS_WHEN_HOST_BOUND = (
+        "default_position",
+        "default_rotation",
+        "default_velocity",
+        "default_angular_velocity",
+        "host_player_index",
+    )
+
+    def _should_hide_pose(self, data_source) -> bool:
+        """工具明確綁定宿主且啟動即掛載時，初始姿態由宿主繼承，隱藏編輯欄位。
+
+        取消 start_attached 後（或未指定 host_player_id）初始姿態欄位重新出現。
+        """
+        return bool(
+            data_source
+            and data_source.get("host_player_id")
+            and data_source.get("start_attached")
+        )
+
+    def _add_section_header(self, text, color="#888", border_color=None):
+        """添加分區標題。
+
+        color 為文字顏色；border_color 提供時會在左側畫一條強調色邊條，
+        用於讓「角色屬性 / 物件屬性 / 模型屬性」三個區段明顯區分。
+        """
+        label = QLabel(text)
+        if border_color:
+            label.setStyleSheet(
+                f"color: {color}; font-weight: bold;"
+                f"border-left: 4px solid {border_color};"
+                f"background-color: #2a2a2a;"
+                f"padding: 4px 8px; margin: 6px 0;"
+            )
+        else:
+            label.setStyleSheet(f"color: {color}; font-weight: bold; margin: 5px 10px;")
+        self.attr_form.addRow(label)
+
+    def _prepare_field_value(self, data_source, field_name, field_info):
+        val = data_source.get(field_name)
+        if val is None:
+            default_value = get_editor_field_default(field_info)
+            if default_value is not _MISSING_FIELD_DEFAULT:
+                val = default_value
+                data_source[field_name] = val
+        return val
+
+    def _render_field(self, data_source, field_name, field_info):
+        """渲染單一欄位（含嵌套模型處理）"""
+        val = self._prepare_field_value(data_source, field_name, field_info)
+        field_type = field_info.annotation
+        if hasattr(field_type, '__metadata__'):
+            field_type = field_type.__args__[0]
+        # 嵌套模型處理
+        if inspect.isclass(field_type) and issubclass(field_type, BaseModel):
+            self._add_section_header(f"--- {field_name.upper()} ---")
+            if not isinstance(val, dict):
+                val = {}
+                data_source[field_name] = val
+            self.render_editor_recursive(val, field_type, indent=True)
+            return
+        self.add_editable_row(field_name, val, data_source, field_type=field_type)
+
     def render_editor_recursive(self, data_source, model_class, indent=False):
-        """遞歸渲染 Pydantic 模型屬性"""
+        """遞歸渲染 Pydantic 模型屬性，依欄位性質分為三大區段：
+
+          1. 角色屬性  — 角色屬性白名單內的欄位，對該角色所有物件都通用
+                         （type / id / name / 初始坐標旋轉速度角速度 / controller /
+                         team_id / health，以及 tool 的 host_player_id、start_attached 等）
+                        置於最頂部，與物件/模型屬性明顯區分。
+          2. 物件屬性  — 不在白名單內的非模型屬性欄位，與特定物件/模板相關、
+                         會進入 object template 並可批量套用（abilities、掛載介面
+                         mount_anchor_name / tool_base_body_prim_suffix 等）。
+                         區段頂部提供 Add Object Template 下拉框可批量套用。
+          3. 模型屬性  — 加入物理引擎時輸入的參數（object 的 radius / mass /
+                         friction / 模型路徑等），作為「物件屬性」底部緊貼的次級
+        """
+        hide_pose = self._should_hide_pose(data_source)
+
+        # 判斷目前編輯的是否為 dict 容器角色（entity / ability_generated_object）。
+        # dict 角色以 dict key（物件子角色 object_sub_role）識別，而非 id 欄位，
+        # 因此隱藏 id 欄位（key 由上方編輯列維護）。
+        current_path = None
+        if self._current_temp_id in self._temp_registry:
+            current_path = self._temp_registry[self._current_temp_id][0]
+        is_dict_role = any(
+            info["container"] == "dict" and info["path"] == current_path
+            for info in self.role_infos.values()
+        )
+
+        role_fields = []
+        object_fields = []
         special_fields = []
-        
+
         for field_name, field_info in model_class.model_fields.items():
-            val = data_source.get(field_name)
-            if val is None:
-                default_value = get_editor_field_default(field_info)
-                if default_value is not _MISSING_FIELD_DEFAULT:
-                    val = default_value
-                    data_source[field_name] = val
-
-            # 收集 object 準備最後處理
-            if field_name in ("object", "solver_config"):
-                special_fields.append((field_name, val))
+            if hide_pose and field_name in self._POSE_FIELDS_WHEN_HOST_BOUND:
+                # 初始姿態由宿主繼承，隱藏編輯欄位（保留已存在值以免破壞舊配置）
                 continue
-
-            field_type = field_info.annotation
-            if hasattr(field_type, '__metadata__'):
-                field_type = field_type.__args__[0]
-            
-            # 嵌套模型處理
-            if inspect.isclass(field_type) and issubclass(field_type, BaseModel):
-                label = QLabel(f"--- {field_name.upper()} ---")
-                label.setStyleSheet("color: #888; font-weight: bold; margin: 5px 10px;")
-                self.attr_form.addRow(label)
-                if not isinstance(val, dict):
-                    val = {}; data_source[field_name] = val
-                self.render_editor_recursive(val, field_type, indent=True)
+            if is_dict_role and field_name == "id":
+                # dict 角色的唯一鍵由上方編輯列維護，不在此重複編輯
                 continue
+            if field_name in (_MODEL_ATTR_FIELD, "solver_config"):
+                special_fields.append(field_name)
+            elif field_name in _ROLE_ATTR_FIELDS:
+                role_fields.append(field_name)
+            else:
+                object_fields.append(field_name)
 
-            self.add_editable_row(field_name, val, data_source, field_type=field_type)
-            
-        # 遍歷完一般屬性後，最後渲染 object
-        for field_name, val in special_fields:
-            self.render_special_union_section(field_name, val, data_source)
+        # 角色模型（具備 type 判別欄位）才套用三區段排版；
+        # 環境配置等不屬角色的模型維持原本平鋪排版
+        is_role_model = "type" in model_class.model_fields
+        # 只有樹上選中的頂層物件（具備 object 模型欄位）才顯示
+        # Add Object Template 入口；嵌套模型由 _render_field 遞歸進入，
+        # 不應出現模板選擇器
+        is_top_level_object = (
+            _MODEL_ATTR_FIELD in model_class.model_fields
+            and self._current_temp_id in self._temp_registry
+            and self._temp_registry[self._current_temp_id][2] is model_class
+        )
+
+        # 1. 角色屬性（與物件/模型屬性明顯區分，置於最頂部）
+        if role_fields and is_role_model:
+            self._add_section_header(
+                TR.get("role_attr_section"), color="#b39ddb", border_color="#9575cd"
+            )
+            for field_name in role_fields:
+                self._render_field(data_source, field_name, model_class.model_fields[field_name])
+        elif role_fields:
+            for field_name in role_fields:
+                self._render_field(data_source, field_name, model_class.model_fields[field_name])
+
+        # 2. 物件屬性（頂部提供 Add Object Template 批量套用入口，
+        #    模型屬性緊貼其後渲染）
+        if is_role_model and (object_fields or is_top_level_object):
+            self._add_section_header(
+                TR.get("object_attr_section"), color="#ffb74d", border_color="#fb8c00"
+            )
+            if is_top_level_object:
+                self._add_object_template_selector(data_source)
+            for field_name in object_fields:
+                self._render_field(data_source, field_name, model_class.model_fields[field_name])
+        elif object_fields:
+            for field_name in object_fields:
+                self._render_field(data_source, field_name, model_class.model_fields[field_name])
+
+        # 3. 模型屬性（物件屬性內最底部的次級區域，緊貼物件屬性）
+        for field_name in special_fields:
+            self.render_special_union_section(
+                field_name, data_source.get(field_name), data_source
+            )
+
+    def _add_object_template_selector(self, data_source):
+        """在「物件屬性」區段頂部提供 Add Object Template 下拉框。
+
+        選擇模板後一次套用模型屬性（object 欄位）與物件屬性
+        （abilities、掛載介面等），再刷新整個編輯器。
+        """
+        template_combo = QComboBox()
+        template_combo.addItem("None", None)
+        self._object_templates = load_object_templates()
+        for template_id, template_data in self._object_templates.items():
+            template_combo.addItem(template_data.get("display_name", template_id), template_id)
+
+        def on_template_selected(_label):
+            template_id = template_combo.currentData()
+            if not template_id:
+                return
+            template_data = self._object_templates.get(template_id)
+            if not template_data:
+                return
+            # 1. 套用模型屬性（object 欄位：radius/mass/friction/模型路徑等）
+            object_type = template_data.get("object_type", "usd")
+            template_object = copy.deepcopy(template_data.get("object", {}))
+            template_object["type"] = object_type
+            data_source["object"] = template_object
+            # 2. 批量套用物件屬性（僅套用「物件屬性」白名單內、且本角色模型具備的欄位）
+            user_data = self._temp_registry.get(self._current_temp_id)
+            role_model_cls = user_data[2] if user_data else None
+            if role_model_cls is not None:
+                for t_key, t_val in template_data.items():
+                    if t_key in _OBJECT_TEMPLATE_RESERVED_KEYS:
+                        continue
+                    # 角色屬性白名單內的欄位是每個物件的通用配置，不隨模板套用
+                    if t_key in _ROLE_ATTR_FIELDS:
+                        continue
+                    if t_key in role_model_cls.model_fields:
+                        data_source[t_key] = copy.deepcopy(t_val)
+            if self._current_temp_id:
+                self.refresh_editor_by_temp_id(self._current_temp_id)
+
+        template_combo.currentIndexChanged.connect(on_template_selected)
+        self.attr_form.addRow(f"    {TR.get('add_object_template')}:", template_combo)
 
     def render_special_union_section(self, key, current_val, data_source):
         """渲染 object / solver_config 專用的 Dropdown 與彩色屬性區域"""
         # 標題與容器
-        label = QLabel(f"{key.upper()} Configuration:")
+        section_text = (
+            TR.get("model_attr_section") if key == "object"
+            else f"{key.upper()} Configuration:"
+        )
+        label = QLabel(section_text)
         
         # 根據 key 的種類，動態獲取 Registry 及框線樣式顏色
         if key == "object":
@@ -727,33 +922,6 @@ class EditPage(BasePage):
         combo.currentTextChanged.connect(on_type_changed)
         self.attr_form.addRow(f"    Select {key.capitalize()}:", combo)
 
-        if key == "object":
-            template_combo = QComboBox()
-            template_combo.addItem("None", None)
-            self._object_templates = load_object_templates()
-            for template_id, template_data in self._object_templates.items():
-                template_combo.addItem(template_data.get("display_name", template_id), template_id)
-
-            def on_template_selected(_label):
-                template_id = template_combo.currentData()
-                if not template_id:
-                    return
-                template_data = self._object_templates.get(template_id)
-                if not template_data:
-                    return
-                object_type = template_data.get("object_type", "usd")
-                template_object = copy.deepcopy(template_data.get("object", {}))
-                template_object["type"] = object_type
-                data_source[key] = template_object
-                combo.blockSignals(True)
-                combo.setCurrentText(object_type)
-                combo.blockSignals(False)
-                if self._current_temp_id:
-                    self.refresh_editor_by_temp_id(self._current_temp_id)
-
-            template_combo.currentIndexChanged.connect(on_template_selected)
-            self.attr_form.addRow("    Add Object Template:", template_combo)
-
         # 彩色標記區域 (QFrame)
         frame = QFrame()
         frame.setFrameShape(QFrame.Shape.StyledPanel)
@@ -783,19 +951,30 @@ class EditPage(BasePage):
         self.row_counter = original_zebra 
         self.attr_form.addRow(frame)
 
-    def add_object_from_registry(self, info: dict):
+    def add_object_from_registry(self, info: dict, role_name: str = ""):
         model_cls = info["model"]
         path_key = info["path"]
         container_type = info["container"]
         new_data = copy.deepcopy(get_pydantic_default(model_cls))
 
+        # list 容器角色以「物件 ID」(id 欄位) 識別；
+        # dict 容器角色（entity/ability_generated_object）的 dict key 即為
+        # 「物件子角色」（object_sub_role），key 本身即為該角色的唯一鍵。
+        base = role_name or path_key.replace("_configs", "")
+
         if container_type == "list":
-            if path_key not in self.current_yaml_data: self.current_yaml_data[path_key] = []
+            if path_key not in self.current_yaml_data:
+                self.current_yaml_data[path_key] = []
+            new_id = f"{base}_{len(self.current_yaml_data[path_key])}"
+            new_data["id"] = new_id
+            if not new_data.get("name"):
+                new_data["name"] = new_id
             self.current_yaml_data[path_key].append(new_data)
         else:
-            if path_key not in self.current_yaml_data: self.current_yaml_data[path_key] = {}
-            new_id = f"new_{path_key.replace('_configs', '')}_{len(self.current_yaml_data[path_key])}"
-            self.current_yaml_data[path_key][new_id] = new_data
+            if path_key not in self.current_yaml_data:
+                self.current_yaml_data[path_key] = {}
+            new_key = f"new_{base}_{len(self.current_yaml_data[path_key])}"
+            self.current_yaml_data[path_key][new_key] = new_data
         self.refresh_object_tree()
 
     def delete_selected_object(self):
@@ -824,10 +1003,19 @@ class EditPage(BasePage):
         configs = self.current_yaml_data.get(path_key, {})
         if new_name in configs: return 
         configs[new_name] = configs.pop(old_name)
+        # dict key 即為物件子角色（object_sub_role），無需同步內部欄位
         # 更新 registry 中的 index (key) 以保持連貫性
         if self._current_temp_id in self._temp_registry:
             dt, idx, mc = self._temp_registry[self._current_temp_id]
             self._temp_registry[self._current_temp_id] = (dt, new_name, mc)
+        self.refresh_object_tree()
+
+    def _on_role_id_edited(self, data_type, index, new_id, data_source):
+        """物件 ID 欄位編輯後刷新樹（list 容器角色以 id 欄位為物件 ID）。
+
+        dict 容器角色（entity/ability_generated_object）以物件子角色
+        object_sub_role（dict key）識別，不透過 id 欄位改名。
+        """
         self.refresh_object_tree()
 
     def create_vector_input(self, key, labels, data_source, is_range=False, is_int=False):
@@ -873,7 +1061,10 @@ class EditPage(BasePage):
         return container
 
     def add_editable_row(self, key, value, data_source, use_zebra=True, field_type=None):
-        label_text = TR.get(key) if key == "controller" else f"{key}:"
+        if key == "id":
+            label_text = TR.get("obj_id")
+        else:
+            label_text = TR.get(key) if key in ("controller", "start_attached", "host_player_id") else f"{key}:"
         update_call = self.preview_widget.update 
         # 修改：將 default_rotation 移出 generic 列表，單獨處理以支持 Random Range
         vector_keys = ["space_xyz", "gravity", "default_velocity", "default_angular_velocity", "size", "color"]
@@ -907,6 +1098,35 @@ class EditPage(BasePage):
             if not isinstance(current_vals, list): current_vals = []
             widget = MultiSelectComboBox(all_abilities, current_vals)
             widget.selectionChanged.connect(lambda vals: [data_source.update({key: vals}), update_call()])
+
+        elif key == "host_player_id":
+            # 明確指定要連接的宿主物件（依 player_configs 的物件 ID / id 欄位）
+            widget = QComboBox()
+            widget.addItem(TR.get("tool_host_none"), None)
+            for p_cfg in self.current_yaml_data.get("player_configs", []):
+                p_id = str(p_cfg.get("id") or p_cfg.get("name") or "")
+                if p_id:
+                    widget.addItem(p_id, p_id)
+            current = data_source.get(key)
+            if current:
+                idx = widget.findData(current)
+                widget.setCurrentIndex(idx if idx >= 0 else 0)
+            else:
+                widget.setCurrentIndex(0)
+            widget.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Preferred)
+
+            def on_host_player_id_changed(_idx):
+                selected = widget.currentData()
+                data_source[key] = selected
+                if selected and data_source.get("start_attached"):
+                    # 明確指定連接且啟動即掛載時，初始姿態由宿主繼承，從配置中移除
+                    for pose_key in self._POSE_FIELDS_WHEN_HOST_BOUND:
+                        data_source.pop(pose_key, None)
+                # 依 start_attached 狀態隱藏/重新顯示初始姿態欄位
+                if self._current_temp_id:
+                    self.refresh_editor_by_temp_id(self._current_temp_id)
+
+            widget.currentIndexChanged.connect(on_host_player_id_changed)
 
         elif key in vector_keys:
             current_val = data_source.get(key, [])
@@ -946,6 +1166,21 @@ class EditPage(BasePage):
             v_layout.addWidget(rot_widget)
             widget = container
 
+        elif key == "start_attached":
+            # 專屬的「啟動時自動掛載」選擇框：勾選 = 環境啟動（及每次 reset）後工具自動掛載
+            widget = QCheckBox()
+            widget.setChecked(bool(value))
+            widget.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Preferred)
+
+            def on_start_attached_changed(s):
+                data_source[key] = (s == Qt.CheckState.Checked.value)
+                update_call()
+                # 取消 start_attached 後初始姿態欄位重新出現
+                if self._current_temp_id:
+                    self.refresh_editor_by_temp_id(self._current_temp_id)
+
+            widget.stateChanged.connect(on_start_attached_changed)
+
         elif isinstance(value, bool):
             widget = QComboBox(); widget.addItems(["True", "False"]); widget.setCurrentText(str(value))
             widget.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Preferred)
@@ -965,7 +1200,15 @@ class EditPage(BasePage):
         else:
             widget = QLineEdit(str(value)); widget.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Preferred)
             widget.textChanged.connect(lambda v: [data_source.update({key: v}), update_call()])
-            if key == "name": widget.editingFinished.connect(lambda: self.refresh_object_tree())
+            if key == "name":
+                widget.editingFinished.connect(lambda: self.refresh_object_tree())
+            elif key == "id":
+                # 物件 ID 欄位：dict 容器同步 key，list 容器直接更新顯示
+                user_data = self._temp_registry.get(self._current_temp_id)
+                data_type, index = (user_data[0], user_data[1]) if user_data else (None, None)
+                widget.editingFinished.connect(
+                    lambda: self._on_role_id_edited(data_type, index, widget.text(), data_source)
+                )
 
         if use_zebra:
             self.add_zebra_row(label_text, widget)

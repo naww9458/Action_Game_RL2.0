@@ -40,16 +40,20 @@ language_select: 'Language:'
 launch_tb: Launch TensorBoard
 level_list: Level List
 level_path: 'Level Path:'
+add_object_template: Apply Object Template
 max_episode_step: 'Max Episode Step (max_episode_step):'
+model_attr_section: --- Model Attributes ---
 model_obs_type: 'Obs Type (model_obs_type):'
 new_level_series: New Level Series
 new_sub_level: New Sub Level
 none_tip: Enter 'None' for disable
 num_env: 'Num Environments (num_env):'
 num_envs: 'Num Envs (num_envs):'
-obj_key: Object ID (Key)
+obj_id: 'Object ID (id):'
+obj_sub_role: Object Sub-role (object_sub_role)
 obj_list: Object List
 obj_name: Display Name
+object_attr_section: --- Object Attributes ---
 obs_height: 'Obs Height (obs_height):'
 obs_width: 'Obs Width (obs_width):'
 open_folder: Open Folder
@@ -66,6 +70,7 @@ reload_preset: Reload
 render_mode: 'Render Mode (render_mode):'
 requires_grad: 'Requires Gradient (requires_grad):'
 resume_checkpoint: 'Resume Checkpoint (optional):'
+role_attr_section: --- Role Attributes ---
 run_list: Run List
 save_back: Save and Back
 save_preset: Save Preset
@@ -73,6 +78,7 @@ save_success: Saved successfully
 select_series_desc: 'Select the series to add a sub-level to:'
 select_series_title: Select Level Series
 start_test: 🚀 Start Test
+start_attached: 'Attach tool on start (start_attached):'
 start_train: Start Training
 stop_eval: Stop Eval
 stop_tb: Stop TensorBoard
@@ -92,6 +98,8 @@ tip_select_first: Please select a sub-level first
 train: Train
 train_mode: Train Mode
 train_started: Training started in subprocess
+host_player_id: 'Connect to Host (host_player_id):'
+tool_host_none: None (Auto)
 tool_attach_prompt: Press U to attach tool
 view_3d: 3D Interactive View
 window_envs: 'Window Display Envs (window_envs):'

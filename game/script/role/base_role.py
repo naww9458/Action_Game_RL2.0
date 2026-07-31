@@ -35,13 +35,17 @@ ObjectConfig = ObjectRegistry.get_object_union()
 
 class BaseRoleModel(BaseModel):
     type: Literal["base"] = "base"
+    # 物件唯一標識（object ID）。list 容器角色（player/platform/tool）以本欄位為 ID；
+    # dict 容器角色（entity/ability_generated_object）的 dict key 即為「物件子角色」
+    # （object_sub_role），不屬於唯一的物件 ID。
+    id: str = ""
     name: str = ""
     color: List[int] = [200, 200, 200]
     default_position: List[RandomizableValue] = [0.0, 0.0, 0.0]
     default_rotation: List[RandomizableValue] = [0.0, 0.0]
     default_velocity: List[float] = [0.0, 0.0, 0.0]
     default_angular_velocity: List[float] = [0.0, 0.0, 0.0]
-    possess_offset: List[float] = Field(default_factory=lambda: [0.0, 0.0, 0.0])
+    possess_offset: Optional[List[float]] = Field(default_factory=lambda: [0.0, 0.0, 0.0])
     abilities: list[str] = []
 
     object: ObjectConfig = RigidBoxModel() # 預設剛體正方體

@@ -4,6 +4,24 @@ mount_anchor_name: turret_base_anchor
 host_anchor_name: hull_mount_anchor
 host_body_prim_suffix: vehicle_body
 tool_base_body_prim_suffix: turret_body
+# 掛載介面（物件屬性）：可透過 "Add Object Template" 批量套用到 tool_configs
+mount_joint_type: revolute
+mount_joint_axis:
+  - 0.0
+  - 0.0
+  - 1.0
+mount_joint_limits:
+  - -3.14159
+  - 3.14159
+internal_joint_names:
+  - RevoluteJoint
+possess_offset:
+  - 0.0
+  - 0.0
+  - 0.0
+abilities:
+  - Shoot
+  - Articulation_body_control
 control_config_path: control_configs.yaml
 
 # 掛載後的行為（action）。aim = 讓炮管對準第三人稱相機方向。
@@ -58,7 +76,7 @@ object:
   ignore_paths:
     - /root/GroundPlane
   collapse_fixed_joints: false
-  enable_self_collisions: true
+  enable_self_collisions: false
   apply_up_axis_from_stage: false
   root_path: /
   joint_ordering: dfs
