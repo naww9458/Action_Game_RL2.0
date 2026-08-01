@@ -1,4 +1,3 @@
-import numpy as np
 import warp as wp
 
 from .ability import Ability
@@ -12,7 +11,15 @@ class Move_topdown_viewing_angle(Ability):
         self.random_offset = None
         self.forces_bot = None
         self.last_reset_bot_xy_force = None
-        self.reset_bot_xy_force_cooldown = wp.int32(int(0.3 * GameConfig.FPS_ACTION)) 
+        self.reset_bot_xy_force_cooldown = wp.int32(int(0.3 * GameConfig.FPS_ACTION))
+
+        cfg = Ability._default_configs.root.get(self.ability_name)
+        self.decay = wp.float32(float(getattr(cfg, "decay", 0.8)) if cfg else 0.8)
+
+    def apply_ability_config_overrides(self, overrides) -> None:
+        super().apply_ability_config_overrides(overrides)
+        if isinstance(overrides, dict) and "decay" in overrides:
+            self.decay = wp.float32(float(overrides["decay"]))
 
     def human_control_interface(self, keyboard_keys, mouse_buttons, look_yaw, index_human_player_gpu, **kwargs):
         if look_yaw is None or not getattr(self, "_configured", False):
@@ -49,6 +56,7 @@ class Move_topdown_viewing_angle(Ability):
 
                 self.force,
                 self.speed,
+                self.decay,
 
                 self.articulation_body.view_object_indices_gpus[pattern],
                 self.articulation_body.num_objects_env,
@@ -75,6 +83,7 @@ class Move_topdown_viewing_angle(Ability):
 
         force: float,
         speed: float,
+        decay: float,
 
         view_object_indices: wp.array(dtype=int),
         num_objects_env: int,
@@ -121,7 +130,6 @@ class Move_topdown_viewing_angle(Ability):
         curr_v_2d_sq = curr_qd[0]*curr_qd[0] + curr_qd[1]*curr_qd[1]
         
         if curr_v_2d_sq > speed * speed:
-            decay = 0.8
             control_vel[world, obj_idx, 0] = wp.vec3(curr_qd[0] * decay, curr_qd[1] * decay, curr_qd[2])
             control_mask[world, obj_idx, 0] = control_mask[world, obj_idx, 0] | 4
 
@@ -155,6 +163,7 @@ class Move_topdown_viewing_angle(Ability):
 
                 self.force,
                 self.speed,
+                self.decay,
                 
                 self.articulation_body.view_object_indices_gpus[pattern],
                 self.articulation_body.num_objects_env,
@@ -181,6 +190,7 @@ class Move_topdown_viewing_angle(Ability):
 
         force: float,
         speed: float,
+        decay: float,
 
         view_object_indices_gpus: wp.array(dtype=int),
         num_objects_env: int,
@@ -222,7 +232,6 @@ class Move_topdown_viewing_angle(Ability):
         curr_qd = body_qd[global_body_idx]
         curr_v_2d_sq = curr_qd[0]*curr_qd[0] + curr_qd[1]*curr_qd[1]
         overspeed = wp.where(curr_v_2d_sq > speed * speed, 1.0, 0.0) * active
-        decay = 0.8
         # Blend toward decayed velocity without branching (mask bit still discrete).
         # TODO 一個環境只能有一個 RL Agent
         control_vel[tid, 0, 0] = wp.vec3(
@@ -263,6 +272,7 @@ class Move_topdown_viewing_angle(Ability):
 
                 self.force,
                 self.speed,
+                self.decay,
 
                 self.articulation_body.view_object_indices_gpus[pattern],
                 self.articulation_body.num_objects_env,
@@ -289,6 +299,7 @@ class Move_topdown_viewing_angle(Ability):
         reset_bot_xy_force_cooldown: wp.int32,
         force: wp.float32,
         speed: wp.float32,
+        decay: wp.float32,
 
         view_object_indices_gpus: wp.array(dtype=int),
         num_objects_env: int,
@@ -338,7 +349,6 @@ class Move_topdown_viewing_angle(Ability):
         curr_v_2d_sq = curr_qd[0]*curr_qd[0] + curr_qd[1]*curr_qd[1]
         
         if curr_v_2d_sq > speed * speed:
-            decay = 0.8
             control_vel[world, obj_idx, 0] = wp.vec3(curr_qd[0] * decay, curr_qd[1] * decay, curr_qd[2])
             control_mask[world, obj_idx, 0] = control_mask[world, obj_idx, 0] | 4
 
@@ -358,12 +368,7 @@ class Move_topdown_viewing_angle(Ability):
         super().update_index_bot(index_rl_players_gpu=index_rl_players_gpu, num_rl_players=num_rl_players, index_bot_players_gpu=index_bot_players_gpu, num_bot_players=num_bot_players)
         self.forces_bot = wp.zeros(self.num_bot_players, dtype=wp.vec3, device=self.physics_manager.device)
         self.last_reset_bot_xy_force = wp.zeros(shape=self.num_bot_players, dtype=wp.int32, device=self.physics_manager.device)
-
-        import numpy as np
-        seed = GameConfig.SEED
-        seeds_np = np.arange(seed, seed+self.num_bot_players + 1, dtype=np.int32)
-        self.seeds = wp.array(seeds_np, dtype=wp.int32, device=self.physics_manager.device)
-        self.random_offset = wp.zeros(shape=self.num_bot_players, dtype=wp.int32, device=self.physics_manager.device)
+        self.setup_bot_random_state(offset_attr="random_offset")
 
     def reset(self):
         return super().reset()

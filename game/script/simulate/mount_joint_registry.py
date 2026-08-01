@@ -538,6 +538,8 @@ class MountJointRegistry:
         body_q_np: np.ndarray | None = None,
         joint_q: wp.array | None = None,
         joint_qd: wp.array | None = None,
+        mouse_buttons=None,
+        body_f=None,
     ) -> None:
         """Forward per-frame camera input to every attached tool action."""
         for record in self.records.values():
@@ -563,6 +565,8 @@ class MountJointRegistry:
                 body_q_np=body_q_np,
                 joint_q=joint_q,
                 joint_qd=joint_qd,
+                mouse_buttons=mouse_buttons,
+                body_f=body_f,
             )
 
     def get_attached_tool_pattern(self, host_player_index: int) -> Optional[str]:

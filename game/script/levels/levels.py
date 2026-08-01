@@ -71,10 +71,19 @@ class Levels:
         self.mount_joint_registry: MountJointRegistry = getattr(self, "mount_joint_registry", None)
         GameConfig.NUM_PLAYERS = self.players.num_total_object_role
         GameConfig.NUM_OBJECTS_TOTAL = self.num_objects_total
-        self.abilities_objects.update_owner(num_object_total=BaseRole._num_objects_total, 
-                                            num_players_each_env=self.players.num_role_each_env, 
-                                            index_players_offset_env_list=self.players.index_role_offset_env_list,
-                                           )
+        if self.tools is not None:
+            num_tools_each_env = self.tools.num_role_each_env
+            index_tools_offset_env_list = self.tools.index_role_offset_env_list
+        else:
+            num_tools_each_env = 0
+            index_tools_offset_env_list = [0] * self.num_env
+        self.abilities_objects.update_owner(
+            num_object_total=BaseRole._num_objects_total,
+            num_players_each_env=self.players.num_role_each_env,
+            index_players_offset_env_list=self.players.index_role_offset_env_list,
+            num_tools_each_env=num_tools_each_env,
+            index_tools_offset_env_list=index_tools_offset_env_list,
+        )
         
         self.fps = GameConfig.FPS_ACTION
 

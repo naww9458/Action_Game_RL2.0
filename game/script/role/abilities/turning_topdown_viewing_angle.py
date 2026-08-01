@@ -3,27 +3,33 @@ import warp as wp
 from script.game_config import GameConfig
 
 from .ability import Ability
-from utils.warp_math import sigmoid, safe_atan2, calculate_ballistic_aim_dir
-
-from typing import TYPE_CHECKING
-if TYPE_CHECKING:
-    from script.role.player import Player
+from utils.warp_math import calculate_ballistic_aim_dir
 
 class Turning_topdown_viewing_angle(Ability):
     def __init__(self):
         super().__init__(self.__class__.__name__)
-        # 新增平滑係數與控制增益
-        self.turn_smoothing = 0.5 
+        # 控制增益
         self.torque_gain = 100.0   # 扭矩增益，越大則越快達到目標速度
         self.max_torque = 400.0    # 最大扭矩限制
 
-        abilities_configs = Ability._default_configs.root.get("Shoot", None)
-        if abilities_configs:
-            self.bullet_speed = abilities_configs.speed
-        else:
-            self.bullet_speed = 0.0  # 預設子彈速度
+        cfg = Ability._default_configs.root.get(self.ability_name)
+        self.torque_gain = wp.float32(float(getattr(cfg, "torque_gain", 100.0)) if cfg else 100.0)
+        self.max_torque = wp.float32(float(getattr(cfg, "max_torque", 400.0)) if cfg else 400.0)
+        # Bot 瞄準用的彈道子彈速度，獨立於 Shoot 能力，避免跨能力耦合。
+        self.bullet_speed = wp.float32(float(getattr(cfg, "bullet_speed", 0.0)) if cfg else 0.0)
 
         self.gravity = GameConfig.GRAVITY[2]
+
+    def apply_ability_config_overrides(self, overrides) -> None:
+        super().apply_ability_config_overrides(overrides)
+        if not isinstance(overrides, dict):
+            return
+        if "bullet_speed" in overrides:
+            self.bullet_speed = wp.float32(float(overrides["bullet_speed"]))
+        if "torque_gain" in overrides:
+            self.torque_gain = wp.float32(float(overrides["torque_gain"]))
+        if "max_torque" in overrides:
+            self.max_torque = wp.float32(float(overrides["max_torque"]))
             
     def human_control_interface(self, look_yaw, look_pitch, index_human_player_gpu, **kwargs):
         """

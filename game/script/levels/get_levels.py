@@ -79,6 +79,10 @@ def get_level(level: int,
     except Exception as e:
         import traceback
         traceback.print_exc()
+        # The config is required downstream (level_class resolution, GameConfig,
+        # environment params). Swallowing it would only produce a confusing
+        # 'NoneType' AttributeError later, so surface the real error instead.
+        raise e
 
     level_class = _resolve_level_class(level, sub_level, config_obj)
 

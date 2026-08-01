@@ -27,6 +27,7 @@ from ..third_person_aim_view import (
     draw_turret_110mm_aim_view_overlay,
     joint_pitch_limits_to_camera_pitch_deg,
 )
+from .recoil import apply_turret_recoil
 
 # ---------------------------------------------------------------------------
 # Config / state
@@ -35,18 +36,29 @@ from ..third_person_aim_view import (
 
 @dataclass
 class TurretAimControlConfig:
-    yaw_torque_gain: float = 200.0
-    yaw_damping: float = 20.0
-    max_yaw_torque: float = 500.0
-    pitch_torque_gain: float = 15000000000000000000000000.0
-    pitch_damping: float = 15.0
-    max_pitch_torque: float = 3000000000000000000000000.0
+    """Aim control parameters for turret_110mm.
+
+    All tuning values are declared in the object template
+    (``object_template/turret_110mm/template.yaml`` -> ``aim.control``) and
+    loaded via :meth:`from_mapping`. The class defaults below are *neutral*
+    runtime-safety fallbacks (0.0 = no driving force) or structural
+    conventions shared with the template — never authoritative tuning values.
+    """
+
+    yaw_torque_gain: float = 0.0
+    yaw_damping: float = 0.0
+    max_yaw_torque: float = 0.0
+    pitch_torque_gain: float = 0.0
+    pitch_damping: float = 0.0
+    max_pitch_torque: float = 0.0
     # Maps host-local pitch_error → joint-q delta. turret_110mm Y-axis: +q depresses.
     pitch_joint_sign: float = -1.0
-    angle_dead_zone_deg: float = 0.5
-    weld_yaw_drive_gain: float = 8.0
+    angle_dead_zone_deg: float = 0.0
+    weld_yaw_drive_gain: float = 0.0
     aim_forward_local: Tuple[float, float, float] = (1.0, 0.0, 0.0)
     world_up: Tuple[float, float, float] = (0.0, 0.0, 1.0)
+    # Pitch joint limits used only when the physics model reports none (deg).
+    pitch_limit_fallback_deg: Tuple[float, float] = (-10.0, 10.0)
     # Online gravity torque τ_g = coeff * basis(q); coeff learned from torque + Δq.
     pitch_gravity_comp_enable: bool = False
     pitch_gravity_learn_rate: float = 0.08
@@ -66,6 +78,7 @@ class TurretAimControlConfig:
             return base
         forward = raw.get("aim_forward_local", base.aim_forward_local)
         up = raw.get("world_up", base.world_up)
+        fallback = raw.get("pitch_limit_fallback_deg", base.pitch_limit_fallback_deg)
         basis = str(raw.get("pitch_gravity_basis", base.pitch_gravity_basis)).lower()
         if basis not in ("cos", "sin"):
             basis = base.pitch_gravity_basis
@@ -81,6 +94,10 @@ class TurretAimControlConfig:
             weld_yaw_drive_gain=float(raw.get("weld_yaw_drive_gain", base.weld_yaw_drive_gain)),
             aim_forward_local=tuple(float(v) for v in forward),
             world_up=tuple(float(v) for v in up),
+            pitch_limit_fallback_deg=(
+                float(fallback[0]),
+                float(fallback[1]),
+            ),
             pitch_gravity_comp_enable=bool(
                 raw.get("pitch_gravity_comp_enable", base.pitch_gravity_comp_enable)
             ),
@@ -411,6 +428,10 @@ class Turret110mmAimAction(ToolAction):
         self.cfg: TurretAimControlConfig = TurretAimControlConfig()
         self.pitch_gravity_state: PitchGravityState = PitchGravityState()
         self._view_style: Turret110mmAimViewStyle = Turret110mmAimViewStyle()
+        # Shoot trigger edge-detect + Shoot ability lazy cache
+        self._prev_mouse_left: bool = False
+        self._shoot_cache: object = None
+        self._physics_manager_cache: object = None
 
     # -- config -------------------------------------------------------------
 
@@ -530,8 +551,17 @@ class Turret110mmAimAction(ToolAction):
 
         dof_idx = int(joint_qd_start[joint_idx])
         coord_idx = int(joint_q_start[joint_idx])
-        lower = float(joint_limit_lower[dof_idx]) if joint_limit_lower is not None else math.radians(-10.0)
-        upper = float(joint_limit_upper[dof_idx]) if joint_limit_upper is not None else math.radians(10.0)
+        fallback_lo, fallback_hi = self.cfg.pitch_limit_fallback_deg
+        lower = (
+            float(joint_limit_lower[dof_idx])
+            if joint_limit_lower is not None
+            else math.radians(fallback_lo)
+        )
+        upper = (
+            float(joint_limit_upper[dof_idx])
+            if joint_limit_upper is not None
+            else math.radians(fallback_hi)
+        )
         return AimDofSpec(
             global_dof_idx=dof_idx,
             local_coord_idx=coord_idx,
@@ -559,6 +589,93 @@ class Turret110mmAimAction(ToolAction):
         self.pitch_gravity_state.reset()
         if self.pitch_dof_spec is not None:
             self.pitch_dof_spec.current_target = 0.0
+
+    # -- shoot ---------------------------------------------------------------
+
+    def _handle_shoot(
+        self,
+        registry,
+        record,
+        *,
+        world: int,
+        aim_body_q,
+        cfg,
+    ) -> None:
+        """Spawn a projectile (and recoil) when the human left-clicks.
+
+        Parameters come from the generic ``Shoot`` ability's per-tool fire config
+        (muzzle offset / recoil force) read from control_configs.yaml. The recoil
+        is applied directly here (turret-owned business logic) after a successful
+        muzzle fire, keeping the generic ability pure. The recoil impulse is
+        staged in the turret articulation's control-force buffer so it survives
+        the per-substep ``clear_forces()`` and reaches the solver.
+        """
+        # ── Barrel forward direction (world-space, unit) ──────────────────
+        barrel_forward = body_forward_world(aim_body_q, cfg.aim_forward_local)
+
+        # ── Resolve the Shoot ability + per-tool firing config ────────────
+        shoot = self._resolve_shoot()
+        if shoot is None:
+            return
+        owner_idx = int(record.tool_role_object_id)
+        fire_cfg = shoot.get_owner_fire_config(owner_idx)
+        if fire_cfg is None:
+            return
+
+        # ── Spawn position: barrel body centre + muzzle offset (world space) ──
+        aim_body_pos = np.array(
+            [float(aim_body_q[0]), float(aim_body_q[1]), float(aim_body_q[2])],
+            dtype=np.float64,
+        )
+        spawn_world = aim_body_pos + _rotate_vec_by_quat(
+            _quat_to_np(aim_body_q[3:]),
+            np.array(fire_cfg.spawn_offset, dtype=np.float64),
+        )
+
+        fired = shoot.fire_from_aim_action(
+            physics_manager=self._physics_manager_cache,
+            owner_obj_idx=owner_idx,
+            spawn_pos_world=(
+                float(spawn_world[0]),
+                float(spawn_world[1]),
+                float(spawn_world[2]),
+            ),
+            barrel_forward_dir=(
+                float(barrel_forward[0]),
+                float(barrel_forward[1]),
+                float(barrel_forward[2]),
+            ),
+        )
+        if fired and fire_cfg.recoil_force > 0.0:
+            apply_turret_recoil(
+                articulation_body=getattr(shoot, "articulation_body", None),
+                tool_pattern=record.tool_pattern or "",
+                world=world,
+                tool_root_body_idx=record.tool_root_body_idx,
+                barrel_forward_dir=(
+                    float(barrel_forward[0]),
+                    float(barrel_forward[1]),
+                    float(barrel_forward[2]),
+                ),
+                recoil_force=fire_cfg.recoil_force,
+            )
+
+    def _resolve_shoot(self):
+        """Lazy-resolve the generic ``Shoot`` ability singleton."""
+        if self._shoot_cache is not None:
+            return self._shoot_cache
+        try:
+            from script.role.abilities import get_shared_ability
+            shoot = get_shared_ability("Shoot")
+        except Exception:
+            return None
+
+        self._shoot_cache = shoot
+        # Also cache physics_manager reference from the shoot ability
+        pm = getattr(shoot, "physics_manager", None)
+        if pm is not None:
+            self._physics_manager_cache = pm
+        return shoot
 
     def _set_pitch_position_actuation(
         self,
@@ -621,6 +738,8 @@ class Turret110mmAimAction(ToolAction):
         body_q_np=None,
         joint_q=None,
         joint_qd=None,
+        mouse_buttons=None,
+        body_f=None,
     ) -> None:
         model = registry.model
         if model is None:
@@ -690,6 +809,23 @@ class Turret110mmAimAction(ToolAction):
             yaw_error = 0.0
         if abs(pitch_error) < dead_zone:
             pitch_error = 0.0
+
+        # ── Shoot trigger (human control only, Phase 1) ──────────────────
+        mouse_left = (
+            mouse_buttons is not None
+            and hasattr(mouse_buttons, "__getitem__")
+            and len(mouse_buttons) > 0
+            and bool(mouse_buttons[0])
+        )
+        if mouse_left and not self._prev_mouse_left:
+            self._handle_shoot(
+                registry,
+                record,
+                world=world,
+                aim_body_q=aim_body_q,
+                cfg=cfg,
+            )
+        self._prev_mouse_left = mouse_left
 
         relpose_dirty = False
         joint_f_dirty = False

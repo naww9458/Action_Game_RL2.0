@@ -7,6 +7,7 @@ Move_topdown_viewing_angle:
   force: 80000.0
   speed: 8.0
   cooldown: 0.0
+  decay: 0.8
   key:
     keyboard:
       front: [w, up]
@@ -41,6 +42,11 @@ Turning_topdown_viewing_angle:
   force: 0.0
   speed: 10.0
   cooldown: 0.0
+  # Bot 瞄準彈道計算用的子彈速度（與 Shoot 能力解耦，獨立可調）
+  bullet_speed: 100.0
+  # RL 旋轉控制增益（只在 rl_action 使用）
+  torque_gain: 100.0
+  max_torque: 400.0
   key:
     keyboard: {}
     mouse: {}
@@ -52,10 +58,19 @@ Turning_topdown_viewing_angle:
     description: "Multiply the output by 180 degrees for rotation"
 
 # 射擊 (Shoot)
+# 以下 shoot 專用參數是「發射」行為的通用預設值，可被環境配置
+# (level_*_default_cfg.yaml 的 abilities.<Shoot> 字典) 或
+# 物件模板 (object_template/*/control_configs.yaml 的 shoot 區段) 覆寫。
 Shoot:
   force: 0.0
   speed: 100.0
   cooldown: 1.0
+  forward_force_n: 0.0
+  recoil_force_n: 0.0
+  projectile_generation_point_offset: [0.0, 0.0, 0.0]
+  cooldown_s: 1.0
+  projectile_mass_kg: 4.0
+  projectile_radius_m: 0.055
   key:
     keyboard: {}
     mouse:

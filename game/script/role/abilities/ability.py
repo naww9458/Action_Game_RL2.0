@@ -96,6 +96,8 @@ class Ability(ABC):
         self._primary_view_ctx: Optional[PatternViewContext] = None
         # Global singletons may be wired from both players and tools; keep both.
         self._env_mappings_by_role: Dict[str, tuple] = {}
+        # Per-owner ability config overrides keyed by role object index.
+        self._role_ability_configs: Dict[int, Dict[str, Any]] = {}
 
         # 確保只被初始化一次
         if Ability._default_configs is None:
@@ -160,6 +162,33 @@ class Ability(ABC):
         self.index_bot_players_gpu = index_bot_players_gpu
         self.num_bot_players = num_bot_players
 
+    def setup_bot_random_state(
+        self,
+        seeds_attr: str = "seeds",
+        offset_attr: str = "offset",
+    ) -> None:
+        """Allocate per-bot RNG seeds / offsets on the physics device.
+
+        Common setup used by bot actions that randomize behavior (Shoot, Jump,
+        Move). ``seeds_attr`` / ``offset_attr`` name the instance attributes to
+        fill so subclasses can keep their own attribute names (e.g. Move uses
+        ``random_offset``).
+        """
+        import numpy as np
+
+        seed = GameConfig.SEED
+        seeds_np = np.arange(seed, seed + self.num_bot_players + 1, dtype=np.int32)
+        setattr(
+            self,
+            seeds_attr,
+            wp.array(seeds_np, dtype=wp.int32, device=self.physics_manager.device),
+        )
+        setattr(
+            self,
+            offset_attr,
+            wp.zeros(shape=self.num_bot_players, dtype=wp.int32, device=self.physics_manager.device),
+        )
+
     @abstractmethod
     def reset(self):
         pass
@@ -219,6 +248,52 @@ class Ability(ABC):
     def configure_from_object(self, object_config: dict, player_config: dict | None = None) -> None:
         self.pattern = resolve_articulation_player_pattern(object_config, player_config)
         self.control_policy_version = resolve_control_policy_version(object_config)
+
+    # ------------------------------------------------------------------
+    # 每個角色的能力配置覆寫 (abilities 字典形式)
+    #
+    # 環境配置中的角色 abilities 現在可寫成
+    #   abilities:
+    #     Shoot:
+    #       speed: 200.0
+    #       forward_force_n: 62000.0
+    # 而非單純的列表。角色加入物理引擎時會呼叫 register_role_ability_config，
+    # 將「此角色專用的能力參數」以 owner 的 role object index 為鍵存起來，
+    # 子類可以依 owner 解析自己的專用參數 (例如 Shoot 的發射參數)。
+    # ------------------------------------------------------------------
+    def register_role_ability_config(
+        self, role_object_index: int, ability_cfg: Dict[str, Any]
+    ) -> None:
+        """Register per-owner ability config overrides from a role's abilities dict.
+
+        ``role_object_index`` is the role object's index in the physics manager
+        (player/tool object index). ``ability_cfg`` is the dict-form entry from the
+        role config, e.g. ``{"speed": 200.0, "forward_force_n": 62000.0}``.
+        """
+        if not isinstance(ability_cfg, dict) or not ability_cfg:
+            return
+        self._role_ability_configs[int(role_object_index)] = dict(ability_cfg)
+        self.apply_ability_config_overrides(ability_cfg)
+
+    def get_role_ability_config(self, role_object_index: int) -> Dict[str, Any]:
+        """Return the raw per-owner ability config dict registered for an owner."""
+        return self._role_ability_configs.get(int(role_object_index), {})
+
+    def apply_ability_config_overrides(self, overrides: Dict[str, Any]) -> None:
+        """Apply common ability attribute overrides (force/speed/cooldown).
+
+        ``cooldown`` is expressed in seconds in the config and converted to frames.
+        Subclasses may override to apply ability-specific parameters per owner.
+        """
+        if not isinstance(overrides, dict) or not overrides:
+            return
+        fps = Ability._fps or GameConfig.FPS_ACTION
+        if "force" in overrides:
+            self.force = wp.float32(float(overrides["force"]))
+        if "speed" in overrides:
+            self.speed = wp.float32(float(overrides["speed"]))
+        if "cooldown" in overrides:
+            self.cooldown = int(float(overrides["cooldown"]) * fps)
 
     def _view_ctx(self, controller: str) -> Optional[PatternViewContext]:
         """Return cached per-controller view context, or None if missing/invalid."""

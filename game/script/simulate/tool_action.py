@@ -86,6 +86,8 @@ class ToolAction:
         body_q_np=None,
         joint_q=None,
         joint_qd=None,
+        mouse_buttons=None,
+        body_f=None,
     ) -> None:
         """Drive the attached tool each frame (called before physics substeps)."""
 

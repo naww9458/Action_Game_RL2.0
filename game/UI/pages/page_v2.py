@@ -75,6 +75,61 @@ def get_editor_field_default(field_info):
     return value
 
 
+_ABILITIES_SCHEMA_CACHE = None
+
+
+def _load_abilities_schema() -> dict:
+    """Load the raw abilities_default_cfg.yaml as {ability_name: {param: value}}.
+
+    Used by the abilities editor to render per-ability parameter input boxes.
+    """
+    global _ABILITIES_SCHEMA_CACHE
+    if _ABILITIES_SCHEMA_CACHE is None:
+        path = (
+            Path(__file__).resolve().parents[2]
+            / "script"
+            / "role"
+            / "abilities"
+            / "abilities_default_cfg.yaml"
+        )
+        try:
+            with open(path, "r", encoding="utf-8") as f:
+                raw = yaml.safe_load(f) or {}
+            _ABILITIES_SCHEMA_CACHE = raw if isinstance(raw, dict) else {}
+        except Exception as e:  # pragma: no cover - defensive UI fallback
+            print(f"Failed to load abilities schema for editor: {e}")
+            _ABILITIES_SCHEMA_CACHE = {}
+    return _ABILITIES_SCHEMA_CACHE
+
+
+def _ability_param_fields(schema: dict) -> dict:
+    """Return editable numeric params per ability.
+
+    ``{ability_name: {field: ("float" | "vec3", default)}}``. Skips nested
+    ``key`` / ``action_space`` dicts; numeric scalars become spin boxes and
+    3-element numeric lists become XYZ vector inputs.
+    """
+    result = {}
+    for name, raw in (schema or {}).items():
+        if not isinstance(raw, dict):
+            continue
+        fields = {}
+        for field, val in raw.items():
+            if field in ("key", "action_space") or isinstance(val, bool):
+                continue
+            if isinstance(val, (int, float)):
+                fields[field] = ("float", float(val))
+            elif (
+                isinstance(val, list)
+                and len(val) >= 3
+                and all(isinstance(v, (int, float)) for v in val)
+            ):
+                fields[field] = ("vec3", [float(v) for v in val[:3]])
+        if fields:
+            result[name] = fields
+    return result
+
+
 
 
 
@@ -176,6 +231,133 @@ class MultiSelectComboBox(QComboBox):
             if it.checkState() == Qt.CheckState.Checked:
                 res.append(it.text())
         return res
+
+
+class AbilityConfigEditor(QWidget):
+    """Edits a role's ``abilities`` as dict form ``{ability_name: {param: value}}``.
+
+    A multi-select combo enables/disables abilities; below it, each enabled
+    ability gets its own group box with numeric parameter spin boxes sourced
+    from ``abilities_default_cfg.yaml``. Legacy list form (``["Shoot", ...]``)
+    is normalized to dict form with empty parameter dicts on load.
+    """
+
+    valueChanged = pyqtSignal()
+
+    def __init__(self, all_abilities, current_value, param_fields, parent=None):
+        super().__init__(parent)
+        self._all_abilities = list(all_abilities or [])
+        self._param_fields = param_fields or {}
+        if isinstance(current_value, dict):
+            self._value = {
+                str(k): dict(v) for k, v in current_value.items() if str(k) in self._all_abilities
+            }
+        else:
+            self._value = {
+                str(n): {} for n in (current_value or []) if str(n) in self._all_abilities
+            }
+
+        self._layout = QVBoxLayout(self)
+        self._layout.setContentsMargins(0, 0, 0, 0)
+        self._layout.setSpacing(2)
+
+        self._combo = MultiSelectComboBox(self._all_abilities, list(self._value.keys()))
+        self._combo.selectionChanged.connect(self._on_selection_changed)
+        self._layout.addWidget(self._combo)
+
+        self._params_host = QWidget()
+        self._params_layout = QVBoxLayout(self._params_host)
+        self._params_layout.setContentsMargins(0, 0, 0, 0)
+        self._params_layout.setSpacing(2)
+        self._layout.addWidget(self._params_host)
+
+        self._rebuild_params()
+
+    def _on_selection_changed(self, selected):
+        new_value = {}
+        for name in selected:
+            new_value[name] = self._value.get(name, {})
+        self._value = new_value
+        self._rebuild_params()
+        self.valueChanged.emit()
+
+    def _clear_params(self):
+        while self._params_layout.count():
+            item = self._params_layout.takeAt(0)
+            w = item.widget()
+            if w is not None:
+                w.deleteLater()
+
+    def _rebuild_params(self):
+        self._clear_params()
+        for name in self._value:
+            fields = self._param_fields.get(name, {})
+            if not fields:
+                continue
+            group = QGroupBox(name)
+            group.setStyleSheet("QGroupBox { font-weight: bold; }")
+            form = QFormLayout(group)
+            form.setLabelAlignment(Qt.AlignmentFlag.AlignRight)
+            form.setContentsMargins(6, 2, 6, 2)
+            entry = self._value[name]
+            for field, (kind, default) in fields.items():
+                label = QLabel(field)
+                label.setStyleSheet("color: #888;")
+                current = entry.get(field, default)
+                if kind == "vec3":
+                    widget = self._create_vec3(name, field, current)
+                else:
+                    widget = self._create_spin(name, field, current)
+                form.addRow(label, widget)
+            self._params_layout.addWidget(group)
+
+    def _create_spin(self, name, field, value):
+        spin = FlexibleDoubleSpinBox()
+        try:
+            spin.setValue(float(value))
+        except (TypeError, ValueError):
+            spin.setValue(0.0)
+        spin.valueChanged.connect(
+            lambda v, n=name, f=field: self._update_scalar(n, f, v)
+        )
+        return spin
+
+    def _create_vec3(self, name, field, value):
+        container = QWidget()
+        h = QHBoxLayout(container)
+        h.setContentsMargins(0, 0, 0, 0)
+        h.setSpacing(2)
+        if isinstance(value, list) and len(value) >= 3:
+            vec = [float(v) for v in value[:3]]
+        else:
+            vec = [0.0, 0.0, 0.0]
+        for i in range(3):
+            s = FlexibleDoubleSpinBox()
+            s.setValue(vec[i])
+            s.valueChanged.connect(
+                lambda v, n=name, f=field, i=i: self._update_vec3(n, f, i, v)
+            )
+            h.addWidget(s)
+        return container
+
+    def _update_scalar(self, name, field, value):
+        self._value.setdefault(name, {})[field] = float(value)
+        self.valueChanged.emit()
+
+    def _update_vec3(self, name, field, idx, value):
+        entry = self._value.setdefault(name, {})
+        vec = entry.get(field)
+        if not isinstance(vec, list):
+            vec = [0.0, 0.0, 0.0]
+        while len(vec) < 3:
+            vec.append(0.0)
+        vec[idx] = float(value)
+        entry[field] = vec
+        self.valueChanged.emit()
+
+    def get_value(self):
+        """Return the dict-form abilities value (keeps empty-override abilities)."""
+        return dict(self._value)
 
 
 
@@ -1095,9 +1277,11 @@ class EditPage(BasePage):
         elif key == "abilities":
             all_abilities = list(Ability._registry.keys())
             current_vals = data_source.get(key, [])
-            if not isinstance(current_vals, list): current_vals = []
-            widget = MultiSelectComboBox(all_abilities, current_vals)
-            widget.selectionChanged.connect(lambda vals: [data_source.update({key: vals}), update_call()])
+            param_fields = _ability_param_fields(_load_abilities_schema())
+            widget = AbilityConfigEditor(all_abilities, current_vals, param_fields)
+            widget.valueChanged.connect(
+                lambda: [data_source.update({key: widget.get_value()}), update_call()]
+            )
 
         elif key == "host_player_id":
             # 明確指定要連接的宿主物件（依 player_configs 的物件 ID / id 欄位）

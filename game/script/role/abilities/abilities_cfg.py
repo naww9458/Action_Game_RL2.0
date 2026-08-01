@@ -1,8 +1,9 @@
 from typing import Dict, List, Optional, Union
 
-from pydantic import BaseModel, Field, RootModel
+from pydantic import BaseModel, ConfigDict, Field, RootModel
 
 TOOL_ATTACHMENT_ABILITY_NAME = "Tool_attachment"
+SHOOT_ABILITY_NAME = "Shoot"
 
 
 class ActionSpaceConfig(BaseModel):
@@ -20,6 +21,8 @@ class KeyConfig(BaseModel):
 
 
 class AbilityDetail(BaseModel):
+    model_config = ConfigDict(extra="allow")
+
     force: float
     speed: float
     cooldown: float
@@ -32,9 +35,22 @@ class ToolAttachmentDetail(AbilityDetail):
     proximity_height_threshold: Optional[float] = None
 
 
+class ShootDetail(AbilityDetail):
+    # 射擊能力專用參數，與 object_template/*/control_configs.yaml 的 shoot 區段同名，
+    # 可在環境配置 (level_*_default_cfg.yaml) 中按環境覆寫。
+    forward_force_n: Optional[float] = None
+    recoil_force_n: Optional[float] = None
+    projectile_generation_point_offset: Optional[List[float]] = None
+    cooldown_s: Optional[float] = None
+    projectile_mass_kg: Optional[float] = None
+    projectile_radius_m: Optional[float] = None
+
+
 def parse_ability_detail(name: str, raw: dict) -> AbilityDetail:
     if name == TOOL_ATTACHMENT_ABILITY_NAME:
         return ToolAttachmentDetail.model_validate(raw)
+    if name == SHOOT_ABILITY_NAME:
+        return ShootDetail.model_validate(raw)
     return AbilityDetail.model_validate(raw)
 
 
@@ -48,8 +64,11 @@ def get_tool_attachment_detail(
 
 
 # 使用 RootModel 來處理動態的鍵值 (能力名稱)
+AbilityDetailT = Union[AbilityDetail, ToolAttachmentDetail, ShootDetail]
+
+
 class AbilitiesConfig(RootModel):
-    root: Dict[str, AbilityDetail]
+    root: Dict[str, AbilityDetailT]
 
     @classmethod
     def model_validate(cls, obj, /, **kwargs):
@@ -59,7 +78,7 @@ class AbilitiesConfig(RootModel):
                 parsed = {
                     name: (
                         entry
-                        if isinstance(entry, (AbilityDetail, ToolAttachmentDetail))
+                        if isinstance(entry, AbilityDetailT)
                         else parse_ability_detail(name, entry)
                     )
                     for name, entry in raw_root.items()

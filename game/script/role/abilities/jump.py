@@ -1,18 +1,11 @@
-import numpy as np
 import warp as wp
 
 from .ability import Ability
-from script.game_config import GameConfig
 
 
 class Jump(Ability):
     def __init__(self):
         super().__init__(self.__class__.__name__)
-        
-        # 定義世界坐標系的「向上」向量
-        # 2D 常用 [0, 1, 0] (Y 軸向上)
-        # 3D 常用 [0, 0, 1] (Z 軸向上)
-        self.up_axis = np.array([0.0, 1.0, 0.0]) 
 
         self.seeds = None
         self.offset = None
@@ -249,12 +242,7 @@ class Jump(Ability):
 
     def update_index_bot(self, index_rl_players_gpu, num_rl_players, index_bot_players_gpu, num_bot_players):
         super().update_index_bot(index_rl_players_gpu=index_rl_players_gpu, num_rl_players=num_rl_players, index_bot_players_gpu=index_bot_players_gpu, num_bot_players=num_bot_players)
-
-        import numpy as np
-        seed = GameConfig.SEED
-        seeds_np = np.arange(seed, seed+self.num_bot_players + 1, dtype=np.int32)
-        self.seeds = wp.array(seeds_np, dtype=wp.int32, device=self.physics_manager.device)
-        self.offset = wp.zeros(shape=self.num_bot_players, dtype=wp.int32, device=self.physics_manager.device)
+        self.setup_bot_random_state()
         
     def reset(self):
         return super().reset()

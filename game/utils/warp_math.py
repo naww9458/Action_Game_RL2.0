@@ -56,6 +56,20 @@ def safe_atan2(y: float, x: float) -> float:
 
 
 @wp.func
+def quat_local_x(q: wp.quat) -> wp.vec3:
+    """World-space +X axis of a body's local frame (rotation matrix first column)."""
+    x = q[0]
+    y = q[1]
+    z = q[2]
+    w = q[3]
+    return wp.vec3(
+        1.0 - 2.0 * (y * y + z * z),
+        2.0 * (x * y + w * z),
+        -2.0 * (x * z - w * y),
+    )
+
+
+@wp.func
 def calculate_ballistic_aim_dir( 
     diff: wp.vec3, 
     bullet_speed: float, 

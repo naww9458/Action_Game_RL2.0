@@ -47,9 +47,17 @@ player_configs:
     - 180.0
   - - 0.0
     - 0.0
+  # 能力參數字典形式：key 為能力名稱，value 為該能力在此環境下的專用參數。
+  # level4 重力為 -98.1 (10x)，射擊初速等參數可在此依環境調整。
   abilities:
-  - Turning_topdown_viewing_angle
-  - Shoot
+    Turning_topdown_viewing_angle:
+      force: 0.0
+      speed: 10.0
+      cooldown: 0.0
+    Shoot:
+      force: 0.0
+      speed: 100.0
+      cooldown: 1.0
   type: player
   default_velocity: &id001
   - 0.0
@@ -90,8 +98,14 @@ player_configs:
   - - 0.0
     - 0.0
   abilities:
-  - Move_topdown_viewing_angle
-  - Turning_topdown_viewing_angle
+    Move_topdown_viewing_angle:
+      force: 80000.0
+      speed: 8.0
+      cooldown: 0.0
+    Turning_topdown_viewing_angle:
+      force: 0.0
+      speed: 10.0
+      cooldown: 0.0
   type: player
   default_velocity: *id001
   default_angular_velocity: *id002

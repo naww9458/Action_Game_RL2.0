@@ -48,9 +48,18 @@ player_configs:
   - - 0.0
     - 0.0
   abilities:
-  - Move_topdown_viewing_angle
-  - Shoot
-  - Turning_topdown_viewing_angle
+    Move_topdown_viewing_angle:
+      force: 80000.0
+      speed: 8.0
+      cooldown: 0.0
+    Shoot:
+      force: 0.0
+      speed: 100.0
+      cooldown: 1.0
+    Turning_topdown_viewing_angle:
+      force: 0.0
+      speed: 10.0
+      cooldown: 0.0
   type: player
   default_velocity: &id001
   - 0.0
@@ -91,9 +100,18 @@ player_configs:
   - - 0.0
     - 0.0
   abilities:
-  - Move_topdown_viewing_angle
-  - Shoot
-  - Turning_topdown_viewing_angle
+    Move_topdown_viewing_angle:
+      force: 80000.0
+      speed: 8.0
+      cooldown: 0.0
+    Shoot:
+      force: 0.0
+      speed: 100.0
+      cooldown: 1.0
+    Turning_topdown_viewing_angle:
+      force: 0.0
+      speed: 10.0
+      cooldown: 0.0
   type: player
   default_velocity: *id001
   default_angular_velocity: *id002

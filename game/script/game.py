@@ -53,6 +53,7 @@ if TYPE_CHECKING:
     from multiprocessing import Queue
     from script.role.player import Player
     from script.role.platform import Platform
+    from script.role.tool import Tool
     from script.role.ability_generated_object import AbilityGeneratedObject
 
 class Game:
@@ -746,6 +747,10 @@ class Game:
             self.ability_generated_objects.update_lifetimes()
         for ability in self.players.abilities_instance_list:
             ability.update_cooldown()
+        tools: Tool = getattr(self.level, "tools", None)
+        if tools is not None:
+            for ability in tools.abilities_instance_list:
+                ability.update_cooldown()
 
 
 

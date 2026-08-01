@@ -29,6 +29,28 @@ def get_object_template(template_id: str) -> Optional[Dict[str, Any]]:
     return load_object_templates().get(template_id)
 
 
+def load_template_control_config(template_id: str) -> Dict[str, Any]:
+    """Load an object template's control config file (raw dict).
+
+    The relative path is declared in the template itself
+    (``control_config_path``, default ``control_configs.yaml``), so callers
+    (e.g. generic abilities) never need to know the template folder layout.
+    Returns an empty dict when the template or file is unavailable.
+    """
+    template = get_object_template(template_id)
+    if template is None:
+        return {}
+    cfg_rel = str(template.get("control_config_path") or "control_configs.yaml")
+    cfg_path = _TEMPLATE_ROOT / template_id / cfg_rel
+    if not cfg_path.exists():
+        return {}
+    try:
+        raw = yaml.safe_load(cfg_path.read_text(encoding="utf-8")) or {}
+    except Exception:
+        return {}
+    return raw if isinstance(raw, dict) else {}
+
+
 def _import_register_callable(module_path: str, callable_name: str) -> Callable[[], None]:
     module = importlib.import_module(module_path)
     register_fn = getattr(module, callable_name, None)

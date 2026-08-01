@@ -18,3 +18,27 @@ turret_110mm:
     # Mount geometry: template.yaml + level tool_configs.
     # Aim params: object_template/turret_110mm/template.yaml `aim.control`
     # (read by Turret110mmAimAction in functions/aim.py).
+
+  # ── 剛體質量參數 ──────────────────────────────────────────────
+  body_masses:
+    turret_body_mass_kg: 4000.0     # 炮塔本體（不含炮管）質量 [kg]
+    gun_110_mass_kg: 1200.0         # 炮管質量 [kg]
+
+  # ── 射擊 (Shoot) 參數 ────────────────────────────────────────
+  shoot:
+    # 炮彈：110 mm 標準剛體球體，質量 4 kg
+    projectile_mass_kg: 4.0
+    projectile_radius_m: 0.055          # 110 mm / 2
+    # 炮管指向的向前線性力 [N]
+    forward_force_n: 62000.0
+    # 反作用力 [N]（施加在 projectile_generation_point，方向與炮彈相反）
+    recoil_force_n: 2000000.0
+    # 炮彈出膛初速 [m/s]（覆寫 Shoot 能力的全域 speed）
+    speed: 200.0
+    # projectile_generation_point 在炮管 (gun_110) 局部座標下的偏移 [m]
+    # +X = 炮管前方 (aligns with aim_forward_local)
+    projectile_generation_point_offset: [2.5, 0.0, 0.0]
+    # gun_110 剛體在 turret_110mm articulation 中的局部索引（DFS order: root=0, gun_110=1）
+    barrel_body_local_idx: 1
+    # 射擊冷卻時間 [s]
+    cooldown_s: 1.0

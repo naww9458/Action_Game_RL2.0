@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import math
 from typing import TYPE_CHECKING, List, Optional, Union
 
 import warp as wp
@@ -11,12 +10,18 @@ from script.role.objects.tool_anchor import resolve_anchor_pair
 from script.role.objects.object_template.loader import get_object_template
 from script.role.objects.object_template.tool_function_registry import create_tool_action
 from script.role.objects.usd import _join_asset_path
+from script.role.tool import ToolModel
 from script.simulate.mount_joint_builder import (
     build_tool_mount_joint,
     collect_tool_mount_metadata,
     compute_max_mount_joints_per_env,
 )
 from script.simulate.mount_joint_registry import MountJointRegistry, ToolMountRecord
+
+# Schema defaults are the single source for values a level may omit
+# (LevelConfig.tool_configs: List[ToolModel] always fills them via model_dump);
+# these references keep runtime safety without re-typing the constants here.
+_MOUNT_SCHEMA_DEFAULTS = ToolModel()
 
 if TYPE_CHECKING:
     from script.levels.levels import Levels
@@ -330,9 +335,13 @@ def setup_tool_mount_joints(level: "Levels") -> Optional[MountJointRegistry]:
                 tool_body_idx=int(tool_body_idx),
             )
 
-        mount_axis = tuple(float(v) for v in (tool_cfg.get("mount_joint_axis") or [0.0, 0.0, 1.0]))
-        mount_limits = tool_cfg.get("mount_joint_limits") or [-math.pi, math.pi]
-        mount_joint_type = str(tool_cfg.get("mount_joint_type", "revolute"))
+        mount_axis = tuple(
+            float(v) for v in (tool_cfg.get("mount_joint_axis") or _MOUNT_SCHEMA_DEFAULTS.mount_joint_axis)
+        )
+        mount_limits = tool_cfg.get("mount_joint_limits") or _MOUNT_SCHEMA_DEFAULTS.mount_joint_limits
+        mount_joint_type = str(
+            tool_cfg.get("mount_joint_type") or _MOUNT_SCHEMA_DEFAULTS.mount_joint_type
+        )
         tool_body_indices = sorted(
             {int(v) for v in (tool_meta.get("path_body_map") or {}).values()}
         )
@@ -367,9 +376,13 @@ def setup_tool_mount_joints(level: "Levels") -> Optional[MountJointRegistry]:
                 tool_anchor_local=tool_local,
                 mount_axis=mount_axis,
                 mount_yaw_limits=(float(mount_limits[0]), float(mount_limits[1])),
-                proximity_threshold=float(tool_cfg.get("proximity_threshold", 0.75)),
+                proximity_threshold=float(
+                    tool_cfg.get("proximity_threshold")
+                    or _MOUNT_SCHEMA_DEFAULTS.proximity_threshold
+                ),
                 proximity_height_threshold=float(
-                    tool_cfg.get("proximity_height_threshold", 3.5)
+                    tool_cfg.get("proximity_height_threshold")
+                    or _MOUNT_SCHEMA_DEFAULTS.proximity_height_threshold
                 ),
                 tool_body_indices=tool_body_indices,
                 mount_joint_idx=build_result.mount_joint_idx,

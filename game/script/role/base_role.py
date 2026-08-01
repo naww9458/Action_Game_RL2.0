@@ -46,7 +46,11 @@ class BaseRoleModel(BaseModel):
     default_velocity: List[float] = [0.0, 0.0, 0.0]
     default_angular_velocity: List[float] = [0.0, 0.0, 0.0]
     possess_offset: Optional[List[float]] = Field(default_factory=lambda: [0.0, 0.0, 0.0])
-    abilities: list[str] = []
+    # abilities 支援兩種形式：
+    #   - 列表形式：["Shoot", "Turning_topdown_viewing_angle"]
+    #   - 字典形式：{"Shoot": {"speed": 200.0, "forward_force_n": 62000.0}, "Turning_topdown_viewing_angle": {"speed": 10.0}}
+    # 字典的 value 是該能力在此角色上的專用參數覆寫。
+    abilities: Union[List[str], Dict[str, Dict[str, Any]]] = Field(default_factory=list)
 
     object: ObjectConfig = RigidBoxModel() # 預設剛體正方體
 
@@ -164,7 +168,7 @@ class BaseRole(ABC):
                                default_angular_velocity: List[Any],  # TODO
                                object: Dict[str, Any],
                                health: float = -1.0,
-                               abilities: List[str] = [],
+                               abilities: Union[List[str], Dict[str, Any]] = None,
                                team_id: int = -1,
                                name: str = "",
                                **kwargs
@@ -304,7 +308,11 @@ class BaseRole(ABC):
 
         # 6. 能力系統處理（關節體控制按 role+robot pattern 分實例）
         role_type = str(type or "player")
-        for ability_name in abilities:
+        if isinstance(abilities, dict):
+            ability_items = list(abilities.items())
+        else:
+            ability_items = [(ability_name, {}) for ability_name in (abilities or [])]
+        for ability_name, ability_cfg in ability_items:
             ability_cls = Ability._registry.get(ability_name)
             share_key = None
             if ability_cls is not None:
@@ -324,9 +332,16 @@ class BaseRole(ABC):
                 self.abilities_instance_list.append(ability)
                 self.abilities_owner_list.append([index])
             else:
+                ability = self.abilities_instance_list[
+                    self.abilities_name_index_dict[registry_key]
+                ]
                 self.abilities_owner_list[
                     self.abilities_name_index_dict[registry_key]
                 ].append(index)
+
+            # 註冊此角色專用的能力參數覆寫 (abilities 字典形式)
+            if isinstance(ability_cfg, dict) and ability_cfg:
+                ability.register_role_ability_config(index, ability_cfg)
 
         return index
 

@@ -34,15 +34,27 @@ aim:
   pitch_joint_name: RevoluteJoint
   # 瞄準剛體（炮管）/ Body used for aim direction
   aim_body_prim_suffix: gun_110
-  # Y 軸 RevoluteJoint：+q 為俯角，與相機 pitch_error 符號相反
-  # 數值與舊通用 ToolAimControlConfig 預設一致（重構不改行為）；
+  # Y 軸 RevoluteJoint：+q 為俯角，與相機 pitch_error 符號相反。
+  # 所有調參數值一律以本檔為唯一來源（代碼中的類默認值僅為中性安全值）；
   # 單一關卡可用 level tool_configs 的舊平鋪鍵 aim_control 覆寫。
   control:
+    # yaw（掛載 revolute 關節）PD 驅動
+    yaw_torque_gain: 200.0
+    yaw_damping: 20.0
+    max_yaw_torque: 500.0
+    # pitch（俯仰關節）PD 驅動
     pitch_joint_sign: -1.0
     pitch_torque_gain: 80000.0
     pitch_damping: 80000.0
     max_pitch_torque: 40000.0
     angle_dead_zone_deg: 0.5
+    # weld 降級模式下的 yaw 角速度增益
+    weld_yaw_drive_gain: 8.0
+    # 瞄準方向約定（炮管局部前向 / 世界 Z 上）
+    aim_forward_local: [1.0, 0.0, 0.0]
+    world_up: [0.0, 0.0, 1.0]
+    # 物理模型未報告關節限位時使用的俯仰角限位（度）
+    pitch_limit_fallback_deg: [-10.0, 10.0]
     # 動態重力補償：由輸出扭矩與俯仰角變化線上估測 coeff（τ_g = coeff * cos(q)）
     pitch_gravity_comp_enable: false
     pitch_gravity_learn_rate: 0.08

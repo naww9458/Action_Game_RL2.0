@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import math
-from typing import List, Literal, Optional, Union
+from typing import Dict, List, Literal, Optional, Union, Any
 
 from pydantic import Field
 
@@ -41,7 +41,9 @@ class ToolModel(BaseRoleModel):
     # When True, the tool is mounted on its host as soon as the level starts
     # (and re-mounted after every env reset) — no U-key attach needed.
     start_attached: bool = False
-    abilities: List[str] = Field(default_factory=lambda: list(DEFAULT_TOOL_ABILITIES))
+    abilities: Union[List[str], Dict[str, Dict[str, Any]]] = Field(
+        default_factory=lambda: list(DEFAULT_TOOL_ABILITIES)
+    )
 
 
 class Tool(BaseRole):

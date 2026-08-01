@@ -234,7 +234,47 @@ platform_configs:
     is_kinematic: true
     as_site: false
     color: null
-ability_generated_object_configs: {}
+ability_generated_object_configs:
+  turret_bullet:
+    name: turret_bullet
+    ability_class_name: Shoot
+    owner_role_type: tool
+    collision_filter_owner_bodies:
+    - turret_body
+    - gun_110
+    quantity: 1
+    default_expired_step: 1.0
+    color:
+    - 255
+    - 100
+    - 0
+    default_position:
+    - -20.0
+    - -20.0
+    - 0.2
+    default_rotation:
+    - 0.0
+    - 0.0
+    type: ability_generated_object
+    default_velocity:
+    - 0.0
+    - 0.0
+    - 0.0
+    default_angular_velocity:
+    - 0.0
+    - 0.0
+    - 0.0
+    abilities: []
+    object:
+      type: rigid_sphere
+      object_friction: 0.0
+      object_elasticity: 0.5
+      radius: 0.055
+      object_mass: 4.0
+      lock_inertia: false
+      is_kinematic: false
+      pattern: turret_bullet
+      as_site: false
 entity_configs:
   new_entity_0:
     type: entity

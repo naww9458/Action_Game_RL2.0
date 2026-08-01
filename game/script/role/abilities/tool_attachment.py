@@ -36,6 +36,12 @@ class Tool_attachment(Ability):
             self.proximity_threshold = float(attach_cfg.proximity_threshold)
         if attach_cfg is not None and attach_cfg.proximity_height_threshold is not None:
             self.proximity_height_threshold = float(attach_cfg.proximity_height_threshold)
+        # 角色配置中的 abilities.Tool_attachment 字典形式覆寫優先於全域配置
+        for role_cfg in self._role_ability_configs.values():
+            if "proximity_threshold" in role_cfg:
+                self.proximity_threshold = float(role_cfg["proximity_threshold"])
+            if "proximity_height_threshold" in role_cfg:
+                self.proximity_height_threshold = float(role_cfg["proximity_height_threshold"])
         if Ability._fps is not None:
             self._fps = int(Ability._fps)
         if self.mount_registry is not None:
@@ -50,6 +56,16 @@ class Tool_attachment(Ability):
             default="Press U to attach tool",
         )
         self._configured = True
+
+    def apply_ability_config_overrides(self, overrides: dict) -> None:
+        """Apply per-owner proximity overrides from the abilities dict form."""
+        super().apply_ability_config_overrides(overrides)
+        if not isinstance(overrides, dict) or not overrides:
+            return
+        if "proximity_threshold" in overrides:
+            self.proximity_threshold = float(overrides["proximity_threshold"])
+        if "proximity_height_threshold" in overrides:
+            self.proximity_height_threshold = float(overrides["proximity_height_threshold"])
 
     def _world_for_role_object(self, role_object_id: int) -> int:
         players = getattr(self, "_players", None)
@@ -146,6 +162,8 @@ class Tool_attachment(Ability):
             body_q_np=body_q_np,
             joint_q=state.joint_q,
             joint_qd=state.joint_qd,
+            mouse_buttons=mouse_buttons,
+            body_f=state.body_f,
         )
 
     def rl_action(self, actions, **kwargs):
