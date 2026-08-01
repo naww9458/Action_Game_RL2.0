@@ -43,3 +43,7 @@ object:
   use_mujoco_policy_init: true
   control_task: differential_drive
   control_policy_version: null
+  # 針對指定 body 覆寫碰撞箱類型（body 名稱支援 * 萬用字元，值為 cylinder/box/sphere）。
+  # Override collision box type for named bodies; keys support '*' wildcards, values: cylinder/box/sphere.
+  body_collision_shape_overrides:
+    Wheels_*: cylinder

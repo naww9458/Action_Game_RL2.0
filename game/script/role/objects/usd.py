@@ -1,9 +1,10 @@
 import newton
 import warp as wp
 
-from typing import List, Literal
+from typing import List, Literal, Optional
 from script.simulate.mesh_builder import MeshBuilder
 from script.role.objects.base_object import BaseObjectModel, BaseObject
+from script.role.objects.collision_shape_override import apply_body_collision_shape_overrides
 from script.role.abilities.articulation_control_config.joint_config_registry import (
     apply_physics_init_for_pattern,
 )
@@ -45,6 +46,7 @@ class UsdModel(BaseObjectModel):
     schema_resolvers: list | None = None
     force_position_velocity_actuation: bool = False
     override_root_xform: bool = False
+    body_collision_shape_overrides: dict[str, str] | None = None
 
 
 def _join_asset_path(base: str, name: str) -> str:
@@ -136,6 +138,7 @@ class UsdObject(BaseObject):
             builder_env.default_shape_cfg.mu = 0.75
 
         path = _join_asset_path(data["file_path_or_source"], data["file_name"])
+        shape_start = builder_env.shape_count
         add_usd_kwargs = dict(
             xform=wp.transform(wp.vec3(pos[0], pos[1], pos[2])),
             floating=data["floating"],
@@ -186,13 +189,46 @@ class UsdObject(BaseObject):
                 try:
                     # Keep the authored visual mesh (e.g. wheel-well recesses) and only
                     # approximate hidden collision copies for shapes that still collide.
-                    builder_env.approximate_meshes(
-                        "bounding_box", keep_visual_shapes=True
-                    )
+                    # Scope the approximation to shapes added by this USD import only,
+                    # so a single object's setting never affects other objects that
+                    # share the same builder.
+                    shape_indices = [
+                        i
+                        for i in range(shape_start, builder_env.shape_count)
+                        if builder_env.shape_type[i] == newton.GeoType.MESH
+                        and builder_env.shape_flags[i] & newton.ShapeFlags.COLLIDE_SHAPES
+                    ]
+                    if shape_indices:
+                        builder_env.approximate_meshes(
+                            "bounding_box",
+                            keep_visual_shapes=True,
+                            shape_indices=shape_indices,
+                        )
                 except Exception as exc:
                     print(
                         f"[UsdObject] approximate_meshes skipped for '{label}': {exc}"
                     )
+
+        # Per-body collision shape type overrides (e.g. wheels -> cylinder).
+        # Applied last so they win over any generic approximation above.
+        overrides = data.get("body_collision_shape_overrides")
+        if overrides:
+            try:
+                replaced = apply_body_collision_shape_overrides(
+                    builder_env,
+                    shape_start=shape_start,
+                    overrides=dict(overrides),
+                )
+                if replaced > 0:
+                    print(
+                        f"[UsdObject] Applied {replaced} body collision shape "
+                        f"override(s) for '{label}'"
+                    )
+            except Exception as exc:
+                print(
+                    f"[UsdObject] body_collision_shape_overrides skipped for "
+                    f"'{label}': {exc}"
+                )
 
         return object_data
 

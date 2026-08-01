@@ -168,7 +168,7 @@
        原因：為保持本專案 Apache-2.0 授權的一致性，暫時移除依賴 NVIDIA Source Code License (1-Way Commercial) 的實作。
        未來將評估以其他相容授權的 Renderer 或自行實作替代方案。
 
-   52. 
+   52. 將 Newton 版本從 1.2 升級到 1.4 
 
    53. 
    54. 

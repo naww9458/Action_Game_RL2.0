@@ -389,6 +389,73 @@ class MountJointRegistry:
                     count += 1
         return count
 
+    def _mount_active_in_world(self, record: ToolMountRecord, world: int) -> bool:
+        """Whether the record's mount joint / weld constraint is currently enabled
+        in ``world`` (reads the live model array)."""
+        model = self._model
+        if model is None:
+            return False
+        if record.uses_weld_fallback and record.mount_eq_idx is not None:
+            eq_enabled = model.equality_constraint_enabled
+            if eq_enabled is None:
+                return False
+            return bool(eq_enabled.numpy()[self.global_eq_idx(world, record.mount_eq_idx)])
+        if record.mount_joint_idx is None:
+            return False
+        joint_enabled = model.joint_enabled
+        if joint_enabled is None:
+            return False
+        return bool(joint_enabled.numpy()[self.global_joint_idx(world, record.mount_joint_idx)])
+
+    def reset_attachments(
+        self,
+        *,
+        worlds: Optional[Sequence[int]] = None,
+    ) -> int:
+        """Detach every tool in the given worlds (default: all worlds).
+
+        Disables each mount joint / equality constraint and clears the
+        per-record attached state, so an env reset returns the world to its
+        pristine, unattached configuration. Tools configured with
+        ``start_attached: true`` are re-attached right after by the caller via
+        :meth:`attach_start_attached`.
+
+        Returns the number of records that were attached and got detached.
+        """
+        if self._model is None:
+            return 0
+        if worlds is None:
+            worlds = range(self.num_env)
+        worlds = [int(w) for w in worlds]
+
+        detached = 0
+        for record in self.records.values():
+            was_attached = record.attached
+            detached_here = False
+            for world in worlds:
+                if not self._mount_active_in_world(record, world):
+                    continue
+                self._set_mount_active(record, world=world, active=False)
+                if record.action is not None:
+                    try:
+                        record.action.on_detach(self, record, world=world)
+                    except Exception:
+                        pass
+                detached += 1
+                detached_here = True
+            if was_attached and detached_here:
+                # The attached flag is per-record, not per-world: only clear it
+                # once the mount is inactive in every world, otherwise a tool
+                # still mounted in a non-reset world would be orphaned.
+                still_active = any(
+                    self._mount_active_in_world(record, w) for w in range(self.num_env)
+                )
+                if not still_active:
+                    record.attached = False
+            record.mount_yaw = 0.0
+            record.prompt_visible = False
+        return detached
+
     def notify_joint_dof_properties(self) -> None:
         if self._solver is None:
             return

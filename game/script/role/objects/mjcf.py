@@ -1,9 +1,10 @@
 import newton
 import warp as wp
 
-from typing import List, Literal
+from typing import List, Literal, Optional
 from script.simulate.mesh_builder import MeshBuilder
 from script.role.objects.base_object import BaseObjectModel, BaseObject
+from script.role.objects.collision_shape_override import apply_body_collision_shape_overrides
 from script.role.abilities.articulation_control_config.joint_config_registry import (
     apply_physics_init_for_pattern,
 )
@@ -47,6 +48,7 @@ class MjcfModel(BaseObjectModel):
     ctrl_direct: bool = False
     override_root_xform: bool = False
     approximate_meshes: bool = True
+    body_collision_shape_overrides: dict[str, str] | None = None
 
 
 def _join_asset_path(base: str, name: str) -> str:
@@ -77,6 +79,7 @@ class MjcfObject(BaseObject):
             builder_env.default_shape_cfg.mu = 0.75
 
         path = _join_asset_path(data["file_path_or_source"], data["file_name"])
+        shape_start = builder_env.shape_count
         visual_classes = data.get("visual_classes")
         if visual_classes is None:
             visual_classes = ("visual",)
@@ -125,7 +128,40 @@ class MjcfObject(BaseObject):
                 builder_env.joint_count,
             )
             if data.get("approximate_meshes", True):
-                builder_env.approximate_meshes("bounding_box")
+                # Scope the approximation to shapes added by this MJCF import only,
+                # so a single object's setting never affects other objects that
+                # share the same builder.
+                shape_indices = [
+                    i
+                    for i in range(shape_start, builder_env.shape_count)
+                    if builder_env.shape_type[i] == newton.GeoType.MESH
+                    and builder_env.shape_flags[i] & newton.ShapeFlags.COLLIDE_SHAPES
+                ]
+                if shape_indices:
+                    builder_env.approximate_meshes(
+                        "bounding_box", shape_indices=shape_indices
+                    )
+
+        # Per-body collision shape type overrides (e.g. wheels -> cylinder).
+        # Applied last so they win over any generic approximation above.
+        overrides = data.get("body_collision_shape_overrides")
+        if overrides:
+            try:
+                replaced = apply_body_collision_shape_overrides(
+                    builder_env,
+                    shape_start=shape_start,
+                    overrides=dict(overrides),
+                )
+                if replaced > 0:
+                    print(
+                        f"[MjcfObject] Applied {replaced} body collision shape "
+                        f"override(s) for '{label}'"
+                    )
+            except Exception as exc:
+                print(
+                    f"[MjcfObject] body_collision_shape_overrides skipped for "
+                    f"'{label}': {exc}"
+                )
 
         return object_data
 

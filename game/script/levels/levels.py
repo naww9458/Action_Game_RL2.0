@@ -358,12 +358,54 @@ class Levels:
             ],
             device=GameConfig.DEVICE
         )
-        
-        # 2. 🌟 一鍵委託物理管理器進行多態重置！無須再傳入一堆重複、臃腫的 position/rotation 陣列
+
+        # 2. Release every tool in the reset envs so the upcoming reset truly
+        #    restores the initial, unattached state.
+        self._reset_tool_attachments(terminated)
+
+        # 3. 🌟 一鍵委託物理管理器進行多態重置！無須再傳入一堆重複、臃腫的 position/rotation 陣列
         self.physics_manager.reset_obj()
 
-        # 3. Re-mount tools configured with `start_attached: true` in reset envs.
+        # 4. Re-mount tools configured with `start_attached: true` in reset envs.
         self._restore_start_attached_tools(terminated)
+
+    def _reset_worlds(self, terminated) -> Optional[List[int]]:
+        """World indices being reset.
+
+        Returns ``None`` when the terminated data is unavailable/empty, which
+        callers treat as "reset all worlds" (matching the initial full reset).
+        Returns an empty list when no world is actually terminated.
+        """
+        try:
+            terminated_np = terminated.numpy() if hasattr(terminated, "numpy") else np.asarray(terminated)
+        except Exception:
+            terminated_np = None
+        if terminated_np is None or len(terminated_np) == 0:
+            return None
+        return [
+            int(i)
+            for i in range(min(len(terminated_np), self.num_env))
+            if bool(terminated_np[i])
+        ]
+
+    def _reset_tool_attachments(self, terminated) -> None:
+        """Detach every tool in the reset envs.
+
+        ``reset_obj`` restores each object to its (randomized) spawn transform,
+        so a tool that was mounted during gameplay (e.g. via the U key) must
+        also lose its mount joint / equality constraint — otherwise the tool
+        stays "connected" to its host even though the world was reset.
+        """
+        registry = self.mount_joint_registry
+        if registry is None or not registry.records:
+            return
+        if getattr(registry, "_model", None) is None:
+            return
+
+        worlds = self._reset_worlds(terminated)
+        if worlds is not None and not worlds:
+            return
+        registry.reset_attachments(worlds=worlds)
 
     def _restore_start_attached_tools(self, terminated) -> None:
         """After a reset, re-attach tools whose level config has `start_attached: true`.
@@ -380,16 +422,9 @@ class Levels:
         if not any(getattr(r, "start_attached", False) for r in registry.records.values()):
             return
 
-        try:
-            terminated_np = terminated.numpy() if hasattr(terminated, "numpy") else np.asarray(terminated)
-        except Exception:
-            terminated_np = None
-        if terminated_np is None or len(terminated_np) == 0:
-            worlds = None
-        else:
-            worlds = [int(i) for i in range(min(len(terminated_np), self.num_env)) if bool(terminated_np[i])]
-            if not worlds:
-                return
+        worlds = self._reset_worlds(terminated)
+        if worlds is not None and not worlds:
+            return
 
         state = self.physics_manager.state_0
         registry.attach_start_attached(

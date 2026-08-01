@@ -78,6 +78,9 @@ player_configs:
   object:
     pattern: wheeled_armored_vehicle_basic
     type: usd
+    # 針對指定 body 覆寫碰撞箱類型（body 名稱支援 * 萬用字元，值為 cylinder/box/sphere）。
+    body_collision_shape_overrides:
+      Wheels_*: cylinder
     object_friction: 0.6
     object_elasticity: 0.0
     file_name: wheeled_armored_vehicle_basic.usdc
@@ -146,6 +149,9 @@ player_configs:
   object:
     pattern: wheeled_armored_vehicle_basic
     type: usd
+    # 針對指定 body 覆寫碰撞箱類型（body 名稱支援 * 萬用字元，值為 cylinder/box/sphere）。
+    body_collision_shape_overrides:
+      Wheels_*: cylinder
     object_friction: 0.6
     object_elasticity: 0.0
     file_name: wheeled_armored_vehicle_basic.usdc
@@ -347,10 +353,12 @@ entity_configs:
     - 1
     - 1
     - 1
+    object_sub_type: new_entity_0
 tool_configs:
 - type: tool
   id: turret_0
   name: turret
+  # 明確指定連接的宿主（player_configs 的物件 ID / id 欄位）
   host_player_id: player_1
   start_attached: true
   color:
@@ -421,6 +429,7 @@ tool_configs:
 - type: tool
   id: turret_1
   name: turret
+  # 明確指定連接的宿主（player_configs 的物件 ID / id 欄位）
   host_player_id: player_2
   start_attached: true
   color:
