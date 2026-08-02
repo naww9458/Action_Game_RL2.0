@@ -9,7 +9,7 @@ lazily only when a level actually uses that tool pattern.
 
 from __future__ import annotations
 
-from typing import TYPE_CHECKING, Optional
+from typing import TYPE_CHECKING, Optional, Sequence
 
 if TYPE_CHECKING:
     from script.simulate.mount_joint_registry import MountJointRegistry, ToolMountRecord
@@ -116,3 +116,13 @@ class ToolAction:
     def forward_local(self) -> tuple[float, float, float]:
         """Tool-local forward direction used for debug geometry (default +X)."""
         return (1.0, 0.0, 0.0)
+
+    def set_rl_control(self, values: Sequence[float]) -> None:
+        """Optional hook: apply one RL / inspector action slice for this tool."""
+
+    def clear_rl_control(self) -> None:
+        """Optional hook: drop RL / inspector control before the next frame."""
+
+    def rl_control_active(self) -> bool:
+        """Whether :meth:`set_rl_control` is driving this frame (default false)."""
+        return False

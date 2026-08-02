@@ -524,6 +524,10 @@ class Game:
         viewer = self.physics_manager.viewerGL
         if viewer is not None and hasattr(viewer, "object_inspector"):
             viewer.object_inspector.apply_rl_action_pins(actions_wp)
+        for ability in self.players.abilities_instance_list:
+            if getattr(ability, "ability_name", None) == "Tool_attachment":
+                ability.apply_human_inspector_tool_actions(actions_wp)
+                break
 
     def _apply_inspector_commands(self):
         viewer = self.physics_manager.viewerGL

@@ -118,6 +118,49 @@ class TurretAimControlConfig:
 
 
 @dataclass
+class TurretRlActionConfig:
+    """RL / inspector continuous control for turret_110mm (template ``aim.rl_action``)."""
+
+    shape: int = 3
+    range: Tuple[float, float] = (-1.0, 1.0)
+    yaw_command_scale_rad: float = 0.0
+    pitch_command_scale_rad: float = 0.0
+    fire_threshold: float = 0.0
+    dim_labels: Tuple[str, ...] = ("turret_yaw", "barrel_pitch", "fire")
+
+    @classmethod
+    def from_mapping(cls, raw: dict | None) -> "TurretRlActionConfig":
+        if not raw:
+            return cls()
+        rng = raw.get("range", [-1.0, 1.0])
+        if not isinstance(rng, list) or len(rng) != 2:
+            rng = [-1.0, 1.0]
+        labels: list[str] = []
+        dims = raw.get("dims")
+        if isinstance(dims, list):
+            for entry in dims:
+                if isinstance(entry, dict) and entry.get("name"):
+                    labels.append(str(entry["name"]))
+                elif isinstance(entry, str):
+                    labels.append(entry)
+        try:
+            shape = max(0, int(raw.get("shape", len(labels) or 3)))
+        except (TypeError, ValueError):
+            shape = len(labels) or 3
+        if labels and len(labels) < shape:
+            for i in range(len(labels), shape):
+                labels.append(f"action_{i}")
+        return cls(
+            shape=shape,
+            range=(float(rng[0]), float(rng[1])),
+            yaw_command_scale_rad=float(raw.get("yaw_command_scale_rad", 0.0)),
+            pitch_command_scale_rad=float(raw.get("pitch_command_scale_rad", 0.0)),
+            fire_threshold=float(raw.get("fire_threshold", 0.0)),
+            dim_labels=tuple(labels) if labels else cls.dim_labels,
+        )
+
+
+@dataclass
 class PitchGravityState:
     """Runtime estimate of gravity torque coefficient for one pitch joint."""
 
@@ -426,10 +469,16 @@ class Turret110mmAimAction(ToolAction):
         self.aim_body_idx: int = -1
         self.pitch_dof_spec: Optional[AimDofSpec] = None
         self.cfg: TurretAimControlConfig = TurretAimControlConfig()
+        self.rl_cfg: TurretRlActionConfig = TurretRlActionConfig()
         self.pitch_gravity_state: PitchGravityState = PitchGravityState()
         self._view_style: Turret110mmAimViewStyle = Turret110mmAimViewStyle()
         # Shoot trigger edge-detect + Shoot ability lazy cache
         self._prev_mouse_left: bool = False
+        self._prev_rl_fire_active: bool = False
+        self._rl_active: bool = False
+        self._rl_yaw: float = 0.0
+        self._rl_pitch: float = 0.0
+        self._rl_fire: float = 0.0
         self._shoot_cache: object = None
         self._physics_manager_cache: object = None
 
@@ -471,6 +520,26 @@ class Turret110mmAimAction(ToolAction):
             defaults=base,
         )
         self._view_style = Turret110mmAimViewStyle.from_mapping(aim_cfg.get("view"))
+        self.rl_cfg = TurretRlActionConfig.from_mapping(aim_cfg.get("rl_action"))
+
+    def set_rl_control(self, values: Sequence[float]) -> None:
+        count = min(len(values), self.rl_cfg.shape)
+        if count <= 0:
+            self.clear_rl_control()
+            return
+        self._rl_active = True
+        self._rl_yaw = float(values[0]) if count > 0 else 0.0
+        self._rl_pitch = float(values[1]) if count > 1 else 0.0
+        self._rl_fire = float(values[2]) if count > 2 else 0.0
+
+    def clear_rl_control(self) -> None:
+        self._rl_active = False
+        self._rl_yaw = 0.0
+        self._rl_pitch = 0.0
+        self._rl_fire = 0.0
+
+    def rl_control_active(self) -> bool:
+        return bool(self._rl_active)
 
     def resolve_mount_refs(
         self,
@@ -797,35 +866,53 @@ class Turret110mmAimAction(ToolAction):
         host_body_q = body_q_np[global_host]
         aim_body_q = body_q_np[global_aim]
 
-        desired_world = camera_forward_z_up(float(camera_yaw), float(camera_pitch))
-        yaw_error, pitch_error = compute_host_local_aim_errors(
-            host_body_q,
-            aim_body_q,
-            desired_world,
-            cfg.aim_forward_local,
-        )
-
-        if abs(yaw_error) < dead_zone:
-            yaw_error = 0.0
-        if abs(pitch_error) < dead_zone:
-            pitch_error = 0.0
-
-        # ── Shoot trigger (human control only, Phase 1) ──────────────────
-        mouse_left = (
-            mouse_buttons is not None
-            and hasattr(mouse_buttons, "__getitem__")
-            and len(mouse_buttons) > 0
-            and bool(mouse_buttons[0])
-        )
-        if mouse_left and not self._prev_mouse_left:
-            self._handle_shoot(
-                registry,
-                record,
-                world=world,
-                aim_body_q=aim_body_q,
-                cfg=cfg,
+        if self._rl_active:
+            yaw_error = float(self._rl_yaw) * float(self.rl_cfg.yaw_command_scale_rad)
+            pitch_error = float(self._rl_pitch) * float(self.rl_cfg.pitch_command_scale_rad)
+            if abs(yaw_error) < dead_zone:
+                yaw_error = 0.0
+            if abs(pitch_error) < dead_zone:
+                pitch_error = 0.0
+            fire_active = float(self._rl_fire) > float(self.rl_cfg.fire_threshold)
+            if fire_active and not self._prev_rl_fire_active:
+                self._handle_shoot(
+                    registry,
+                    record,
+                    world=world,
+                    aim_body_q=aim_body_q,
+                    cfg=cfg,
+                )
+            self._prev_rl_fire_active = fire_active
+        else:
+            desired_world = camera_forward_z_up(float(camera_yaw), float(camera_pitch))
+            yaw_error, pitch_error = compute_host_local_aim_errors(
+                host_body_q,
+                aim_body_q,
+                desired_world,
+                cfg.aim_forward_local,
             )
-        self._prev_mouse_left = mouse_left
+
+            if abs(yaw_error) < dead_zone:
+                yaw_error = 0.0
+            if abs(pitch_error) < dead_zone:
+                pitch_error = 0.0
+
+            mouse_left = (
+                mouse_buttons is not None
+                and hasattr(mouse_buttons, "__getitem__")
+                and len(mouse_buttons) > 0
+                and bool(mouse_buttons[0])
+            )
+            if mouse_left and not self._prev_mouse_left:
+                self._handle_shoot(
+                    registry,
+                    record,
+                    world=world,
+                    aim_body_q=aim_body_q,
+                    cfg=cfg,
+                )
+            self._prev_mouse_left = mouse_left
+            self._prev_rl_fire_active = False
 
         relpose_dirty = False
         joint_f_dirty = False

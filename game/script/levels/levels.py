@@ -206,6 +206,7 @@ class Levels:
 
         for index_p in range(num_players):
             player_actions = {}
+            player_action_offset = 0
             controller = (
                 normalize_controller(player_configs[index_p].get("controller"))
                 if index_p < len(player_configs)
@@ -220,8 +221,14 @@ class Levels:
                     abilities_instance = self.players.abilities_instance_list[i]
                     player_actions[key] = abilities_instance.get_action_spec()
 
+                    by_player = getattr(abilities_instance, "_action_offsets_by_player_index", None)
+                    if by_player is None:
+                        by_player = {}
+                        abilities_instance._action_offsets_by_player_index = by_player
+                    by_player[index_p] = player_action_offset
+                    abilities_instance.action_shape_offset = player_action_offset
+
                     if uses_rl_actions:
-                        abilities_instance.action_shape_offset = rl_action_shape_offset
                         print(
                             f"{abilities_instance.ability_name}.action_shape_offset",
                             abilities_instance.action_shape_offset,
@@ -229,11 +236,12 @@ class Levels:
 
                     action_shape = player_actions[key].get("shape", 0)
                     if isinstance(action_shape, int) and action_shape > 0:
-                        rl_action_shape_offset += action_shape
+                        player_action_offset += action_shape
                     elif action_shape not in (0, "auto", None):
-                        rl_action_shape_offset += int(action_shape)
+                        player_action_offset += int(action_shape)
 
             action_space_config.append(player_actions)
+            rl_action_shape_offset = max(rl_action_shape_offset, player_action_offset)
 
         self.action_shape_offset = rl_action_shape_offset
         try:

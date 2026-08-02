@@ -337,8 +337,15 @@ def _action_dims_from_spec(action_spec: dict, start_offset: int) -> List[ActionD
         step = max((hi - lo) / 200.0, 0.001) if hi > lo else 0.01
 
     dims: List[ActionDimSpec] = []
+    dim_labels = action_spec.get("dims")
     for i in range(shape):
         label = f"action_{i}" if shape > 1 else "action"
+        if isinstance(dim_labels, list) and i < len(dim_labels):
+            entry = dim_labels[i]
+            if isinstance(entry, dict) and entry.get("name"):
+                label = str(entry["name"])
+            elif isinstance(entry, str):
+                label = entry
         dims.append(
             ActionDimSpec(
                 dim_index=start_offset + i,

@@ -190,6 +190,30 @@ class MountJointRegistry:
                 return key
         return None
 
+    def get_attached_record(self, host_role_object_id: int) -> Optional[ToolMountRecord]:
+        host_id = int(host_role_object_id)
+        for record in self.records.values():
+            if record.attached and record.host_role_object_id == host_id:
+                return record
+        return None
+
+    def clear_rl_control_for_host(self, host_role_object_id: int) -> None:
+        record = self.get_attached_record(host_role_object_id)
+        if record is None or record.action is None:
+            return
+        record.action.clear_rl_control()
+
+    def apply_rl_control_for_host(
+        self,
+        host_role_object_id: int,
+        values: Sequence[float],
+    ) -> bool:
+        record = self.get_attached_record(host_role_object_id)
+        if record is None or record.action is None:
+            return False
+        record.action.set_rl_control(values)
+        return True
+
     def toggle_attachment(
         self,
         tool_key: str,

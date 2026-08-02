@@ -119,12 +119,13 @@ Tool_attachment:
     keyboard:
       attach: [u]
     mouse: {}
-  # 附著工具的行為（如炮塔瞄準）由各 object_template/*/functions/ 的 action 提供，
-  # 炮塔專用參數請寫在 object_template/turret_110mm/template.yaml 的 aim 區段。
+  # 附著工具的行為（如炮塔瞄準）由各 object_template/*/functions/ 的 action 提供；
+  # RL 維度在關卡初始化時依 tool_configs 中最大 tool rl_action.shape 動態解析。
+  # TODO attach 僅 Human U 鍵，不佔 RL action 維度。
   action_space:
-    type: "discrete"
-    dtype: "int64"
-    shape: 1
-    n: 2
-    description: "Attach nearby tool to host vehicle when prompt is visible."
+    type: "box"
+    dtype: "float32"
+    shape: 0
+    range: [-1.0, 1.0]
+    description: "RL control for attached tools."
 

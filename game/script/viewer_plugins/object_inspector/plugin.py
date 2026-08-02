@@ -198,12 +198,31 @@ class ObjectInspectorPlugin:
                     apply_torque=impulse.get("torque", False),
                 )
 
+    def is_rl_action_override_enabled(self) -> bool:
+        return (
+            self._window is not None
+            and self.is_visible
+            and self._window.is_rl_action_enabled()
+        )
+
     def apply_rl_action_pins(self, actions_wp):
         if not self._bridge or not self._window or not self.is_visible or not self._game or not self._catalog:
             return
         if not self._window.is_rl_action_enabled():
             return
         self._window.flush_pinned_storage()
+        current = self._window.current_spec()
+        if current is not None and current.player_action is not None:
+            live = self._window.get_rl_action_values()
+            if live:
+                self._bridge.apply_rl_action_pins_to_buffer(
+                    actions_wp,
+                    current.player_action,
+                    self._window.current_world(),
+                    current.local_role_idx,
+                    live,
+                    list(live.keys()),
+                )
         for spec, world_idx, values in self._window.iter_stored_rl_actions(self._catalog):
             pinned_dims = list(values.keys())
             if not pinned_dims:
@@ -216,6 +235,47 @@ class ObjectInspectorPlugin:
                 values,
                 pinned_dims,
             )
+
+    def get_tool_attachment_override_values(self, global_role_object_id: int) -> Optional[List[float]]:
+        """Return Tool_attachment RL dims when inspector override is enabled."""
+        if (
+            not self._window
+            or not self._catalog
+            or not self.is_visible
+            or not self._game
+            or not self._window.is_rl_action_enabled()
+        ):
+            return None
+
+        num_objects_env = self._game.num_objects_env
+        local_role_idx = int(global_role_object_id) % num_objects_env
+        world_idx = int(global_role_object_id) // num_objects_env
+        spec = self._catalog.get_by_role(int(global_role_object_id), num_objects_env)
+        if spec is None or spec.player_action is None:
+            return None
+
+        tool_dims = []
+        for ability in spec.player_action.abilities:
+            if ability.ability_name == "Tool_attachment":
+                tool_dims.extend(ability.dims)
+        if not tool_dims:
+            return None
+
+        current = self._window.current_spec()
+        if (
+            current is not None
+            and current.local_role_idx == local_role_idx
+            and self._window.current_world() == world_idx
+        ):
+            live = self._window.get_rl_action_values()
+            return [float(live.get(dim.dim_index, 0.0)) for dim in tool_dims]
+
+        for iter_spec, widx, stored in self._window.iter_stored_rl_actions(self._catalog):
+            if iter_spec.local_role_idx != local_role_idx or widx != world_idx:
+                continue
+            return [float(stored.get(dim.dim_index, 0.0)) for dim in tool_dims]
+
+        return None
 
     def select_from_ray(self, x: float, y: float):
         if not self._game or not self._viewer or not self._selector or not self._catalog:

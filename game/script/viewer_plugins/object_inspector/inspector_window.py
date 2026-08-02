@@ -1042,26 +1042,64 @@ class InspectorWindow(QMainWindow):
             item = layout.takeAt(0)
             widget = item.widget()
             if widget is not None:
+                widget.setParent(None)
                 widget.deleteLater()
+                continue
+            child_layout = item.layout()
+            if child_layout is not None:
+                if isinstance(child_layout, QVBoxLayout):
+                    self._clear_vbox_layout(child_layout)
+                else:
+                    while child_layout.count():
+                        sub_item = child_layout.takeAt(0)
+                        sub_widget = sub_item.widget()
+                        if sub_widget is not None:
+                            sub_widget.setParent(None)
+                            sub_widget.deleteLater()
+
+    def _replace_scroll_panel(
+        self,
+        scroll: QScrollArea,
+        panel_attr: str,
+        layout_attr: str,
+    ) -> QVBoxLayout:
+        """Swap the scroll-area contents widget so stale children are detached immediately."""
+        old_panel = scroll.takeWidget()
+        if old_panel is not None:
+            old_panel.setParent(None)
+            old_panel.deleteLater()
+
+        new_panel = QWidget()
+        new_layout = QVBoxLayout(new_panel)
+        new_layout.setAlignment(Qt.AlignmentFlag.AlignTop)
+        new_layout.setContentsMargins(0, 0, 0, 0)
+        scroll.setWidget(new_panel)
+        setattr(self, panel_attr, new_panel)
+        setattr(self, layout_attr, new_layout)
+        return new_layout
 
     def _rebuild_rl_action_panel(self):
-        self._clear_vbox_layout(self.rl_action_layout)
         self._rl_action_rows.clear()
+        rl_layout = self._replace_scroll_panel(
+            self.rl_action_scroll,
+            "rl_action_panel",
+            "rl_action_layout",
+        )
         player_action = self._player_action
         if player_action is None:
             label = QLabel("No RL action space for this object.")
-            self.rl_action_layout.addWidget(label)
+            rl_layout.addWidget(label)
             return
 
         if player_action.rl_action_row < 0:
-            self.rl_action_layout.addWidget(
+            rl_layout.addWidget(
                 QLabel("This player is not mapped to an RL action row (view only).")
             )
 
         for ability in player_action.abilities:
             title = QLabel(ability.ability_name)
             title.setStyleSheet("font-weight: bold; margin-top: 8px;")
-            self.rl_action_layout.addWidget(title)
+            rl_layout.addWidget(title)
             for dim in ability.dims:
                 row = ParamRow(
                     dim.display_name,
@@ -1073,7 +1111,7 @@ class InspectorWindow(QMainWindow):
                 )
                 row.spin.valueChanged.connect(self._on_rl_action_value_changed)
                 self._rl_action_rows[dim.dim_index] = row
-                self.rl_action_layout.addWidget(row)
+                rl_layout.addWidget(row)
         self._restore_rl_action_values()
         self._update_rl_action_controls_enabled()
 
@@ -1093,18 +1131,22 @@ class InspectorWindow(QMainWindow):
             self._save_rl_action_values()
 
     def _rebuild_commands_panel(self):
-        self._clear_vbox_layout(self.commands_layout)
         self._command_rows.clear()
+        commands_layout = self._replace_scroll_panel(
+            self.commands_scroll,
+            "commands_panel",
+            "commands_layout",
+        )
         if not self._command_labels:
-            self.commands_layout.addWidget(QLabel("This level has no command inputs."))
+            commands_layout.addWidget(QLabel("This level has no command inputs."))
             return
         title = QLabel("Velocity command for selected env")
         title.setStyleSheet("font-weight: bold;")
-        self.commands_layout.addWidget(title)
+        commands_layout.addWidget(title)
         for idx, label in enumerate(self._command_labels):
             row = ParamRow(label, -1.0, 1.0, 0.01, pin_enabled=True, always_pinned=False)
             self._command_rows[idx] = row
-            self.commands_layout.addWidget(row)
+            commands_layout.addWidget(row)
         self._restore_command_values()
 
     def _on_label_changed(self, label: str):
