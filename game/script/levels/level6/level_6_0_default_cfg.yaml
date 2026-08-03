@@ -184,6 +184,10 @@ entity_configs:
     - 1
     - 1
     - 1
+    possess_offset:
+    - 0.0
+    - 0.0
+    - 0.0
   new_entity_2:
     type: entity
     name: HollowSphere
@@ -233,6 +237,10 @@ entity_configs:
     - 1
     - 1
     - 1
+    possess_offset:
+    - 0.0
+    - 0.0
+    - 0.0
   new_entity_3:
     type: entity
     name: RigidShpere1
@@ -265,10 +273,15 @@ entity_configs:
       object_mass: 0.0
       lock_inertia: false
       is_kinematic: false
+      as_site: false
     separation:
     - 1
     - 1
     - 1
+    possess_offset:
+    - 0.0
+    - 0.0
+    - 0.0
   new_entity_4:
     type: entity
     name: RigidShpere2
@@ -301,7 +314,12 @@ entity_configs:
       object_mass: 0.0
       lock_inertia: false
       is_kinematic: false
+      as_site: false
     separation:
     - 1
     - 1
     - 1
+    possess_offset:
+    - 0.0
+    - 0.0
+    - 0.0

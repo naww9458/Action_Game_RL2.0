@@ -1,0 +1,29 @@
+id: women_sweatshirt
+display_name: Women Sweatshirt (Cloth)
+object_type: soft_usd_cloth
+# 物件屬性：可透過 "Add Object Template" 批量套用到 entity_configs
+object:
+  pattern: women_sweatshirt
+  type: soft_usd_cloth
+  object_friction: 0.5
+  object_elasticity: 0.5
+  file_name: garments/Women_Sweatshirt.usd
+  file_path_or_source: Nvidia
+  mesh_path: /Root/Women_Sweatshirt/Root_Garment
+  scale: 1.0
+  density: 0.02
+  tri_ke: 10000.0
+  tri_ka: 10000.0
+  tri_kd: -100.0
+  tri_drag: null
+  tri_lift: null
+  edge_ke: 5
+  edge_kd: 0.01
+  add_springs: false
+  spring_ke: null
+  spring_kd: null
+  particle_radius: 0.005
+  custom_attributes_particles: null
+  custom_attributes_edges: null
+  custom_attributes_triangles: null
+  custom_attributes_springs: null

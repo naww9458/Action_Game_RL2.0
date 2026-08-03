@@ -1,0 +1,26 @@
+id: hollow_sphere_soft
+display_name: Hollow Sphere (Soft TetMesh)
+object_type: soft_usd_general
+# 物件屬性：可透過 "Add Object Template" 批量套用到 entity_configs
+object:
+  pattern: hollow_sphere_soft
+  type: soft_usd_general
+  object_friction: 0.5
+  object_elasticity: 0.5
+  file_name: hollow_sphere_TetMesh.usdc
+  file_path_or_source: ./Action_Game_RL_Assets/assets/
+  mesh_path: /root/sphere/TetMesh
+  scale: 1.0
+  density: null
+  k_mu: null
+  k_lambda: null
+  k_damp: null
+  tri_ke: 0
+  tri_ka: 0
+  tri_kd: 0
+  tri_drag: 0
+  tri_lift: 0
+  add_surface_mesh_edges: true
+  edge_ke: 0
+  edge_kd: 0
+  particle_radius: 0.15

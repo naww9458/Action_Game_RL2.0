@@ -122,6 +122,11 @@ class ParamRow(QWidget):
         if self.pin_box is not None:
             self.pin_box.setEnabled(enabled)
 
+    def set_value_editable(self, editable: bool):
+        """Enable/disable value controls only; Pin checkbox stays interactive."""
+        self.spin.setEnabled(editable)
+        self.slider.setEnabled(editable)
+
 
 class InspectorWindow(QMainWindow):
     def __init__(self, parent=None):
@@ -286,6 +291,14 @@ class InspectorWindow(QMainWindow):
         gravity_widget.setLayout(gravity_row)
         sim_form.addRow("Gravity XYZ", gravity_widget)
 
+        self.camera_move_speed_spin = QDoubleSpinBox()
+        self.camera_move_speed_spin.setRange(0.1, 100.0)
+        self.camera_move_speed_spin.setDecimals(2)
+        self.camera_move_speed_spin.setSingleStep(0.5)
+        self.camera_move_speed_spin.setKeyboardTracking(False)
+        self.camera_move_speed_spin.valueChanged.connect(self._on_camera_move_speed_changed)
+        sim_form.addRow("Camera Move Speed", self.camera_move_speed_spin)
+
         controls_layout.addWidget(sim_group)
 
         self.controls_help_scroll = QScrollArea()
@@ -327,6 +340,7 @@ class InspectorWindow(QMainWindow):
         self._impulse_callbacks: List[Callable] = []
         self._simulation_control: Optional["SimulationControl"] = None
         self._gravity_changed_cb: Optional[Callable[[float, float, float], None]] = None
+        self._camera_move_speed_changed_cb: Optional[Callable[[float], None]] = None
         self._controls_syncing = False
         self._debug_geometry_flags: Dict[str, bool] = {}
         self._debug_geom_style_syncing = False
@@ -367,6 +381,7 @@ class InspectorWindow(QMainWindow):
         viewer_controls_cfg: "ViewerControlsConfig",
         gameplay_bindings: Optional[List[dict]] = None,
         initial_gravity: Optional[List[float]] = None,
+        initial_camera_move_speed: Optional[float] = None,
         show_role_name_labels: bool = True,
         on_show_role_name_labels_changed: Optional[Callable[[bool], None]] = None,
     ):
@@ -381,6 +396,8 @@ class InspectorWindow(QMainWindow):
             self.gravity_x.setValue(float(initial_gravity[0]))
             self.gravity_y.setValue(float(initial_gravity[1]))
             self.gravity_z.setValue(float(initial_gravity[2]))
+        if initial_camera_move_speed is not None:
+            self.camera_move_speed_spin.setValue(float(initial_camera_move_speed))
         self._controls_syncing = False
 
         self.auto_reset_checkbox.toggled.connect(self._on_auto_reset_toggled)
@@ -433,8 +450,16 @@ class InspectorWindow(QMainWindow):
             float(self.gravity_z.value()),
         )
 
+    def _on_camera_move_speed_changed(self, value: float):
+        if self._controls_syncing or self._camera_move_speed_changed_cb is None:
+            return
+        self._camera_move_speed_changed_cb(float(value))
+
     def set_gravity_changed_callback(self, cb: Callable[[float, float, float], None]):
         self._gravity_changed_cb = cb
+
+    def set_camera_move_speed_changed_callback(self, cb: Callable[[float], None]):
+        self._camera_move_speed_changed_cb = cb
 
     def set_gravity_values(self, gravity: List[float]):
         if len(gravity) < 3:
@@ -587,6 +612,15 @@ class InspectorWindow(QMainWindow):
         "lin_vel": ("vel_x", "vel_y", "vel_z"),
         "ang_vel": ("omega_x", "omega_y", "omega_z"),
     }
+    # One-way cascade: locking/unlocking a primary group also affects the coupled group.
+    # Velocity locks do not cascade back to position/orientation.
+    _BODY_LOCK_CASCADE = {
+        "pos": ("lin_vel",),
+        "quat": ("ang_vel",),
+    }
+    _BODY_PIN_FIELD_KEYS = frozenset(
+        key for keys in _BODY_LOCK_GROUPS.values() for key in keys
+    )
 
     @staticmethod
     def _parse_env_suffix_storage_key(key: str) -> Optional[tuple[str, int, str]]:
@@ -930,6 +964,7 @@ class InspectorWindow(QMainWindow):
             if row is not None:
                 self._body_field_values.setdefault(storage_key, {})[field_key] = row.value()
         self._update_body_lock_buttons()
+        self._update_body_field_editability()
 
     def _is_body_group_locked(self, group: str) -> bool:
         keys = self._BODY_LOCK_GROUPS.get(group, ())
@@ -957,6 +992,15 @@ class InspectorWindow(QMainWindow):
                 }[group]
             )
             btn.blockSignals(False)
+        self._update_body_field_editability()
+
+    def _update_body_field_editability(self):
+        """Only pinned (locked) state fields are editable; Pin checkbox stays enabled."""
+        for field_key, row in self._body_rows.items():
+            if field_key in self._BODY_PIN_FIELD_KEYS:
+                row.set_value_editable(row.is_pinned())
+            else:
+                row.set_value_editable(True)
 
     def _toggle_body_group_lock(self, group: str):
         keys = self._BODY_LOCK_GROUPS.get(group, ())
@@ -966,10 +1010,15 @@ class InspectorWindow(QMainWindow):
             return
         should_lock = not self._is_body_group_locked(group)
         storage_key = self._body_pin_storage_key()
-        for field_key in lockable:
-            if should_lock and storage_key is not None:
-                self._body_field_values.setdefault(storage_key, {})[field_key] = self._body_rows[field_key].value()
-            self._set_body_field_pinned(field_key, should_lock)
+        groups_to_apply = (group, *self._BODY_LOCK_CASCADE.get(group, ()))
+        for apply_group in groups_to_apply:
+            for field_key in self._BODY_LOCK_GROUPS.get(apply_group, ()):
+                row = self._body_rows.get(field_key)
+                if row is None or row.pin_box is None:
+                    continue
+                if should_lock and storage_key is not None:
+                    self._body_field_values.setdefault(storage_key, {})[field_key] = row.value()
+                self._set_body_field_pinned(field_key, should_lock)
         self._update_body_lock_buttons()
 
     def _rebuild_body_panel(self):
@@ -986,6 +1035,7 @@ class InspectorWindow(QMainWindow):
         self._restore_body_field_values()
         self._restore_debug_geometry_flag()
         self._update_body_lock_buttons()
+        self._update_body_field_editability()
         self._update_apply_buttons()
         self._active_body_storage_key = self._body_pin_storage_key()
 

@@ -4,6 +4,7 @@ defaults:
   free_view_mode: true
   show_role_name_labels: true
   role_name_label_height: 2.0
+  camera_move_speed: 4.0
 
 debug_geometry:
   line_length: 1.0

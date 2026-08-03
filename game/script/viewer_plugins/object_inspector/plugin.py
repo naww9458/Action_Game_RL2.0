@@ -56,6 +56,7 @@ class ObjectInspectorPlugin:
         self._window.set_world_changed_callback(self._on_world_changed)
         self._window.set_impulse_callback(self._on_impulse)
         self._window.set_gravity_changed_callback(self._on_gravity_changed)
+        self._window.set_camera_move_speed_changed_callback(self._on_camera_move_speed_changed)
         if labels:
             self._select_catalog_key(labels[0], 0)
         game.physics_manager.pre_substep_callback = self._on_pre_substep
@@ -64,6 +65,7 @@ class ObjectInspectorPlugin:
             viewer_controls_cfg=viewer.viewer_controls_cfg,
             gameplay_bindings=self._collect_gameplay_bindings(game),
             initial_gravity=self._bridge.read_gravity() if self._bridge else None,
+            initial_camera_move_speed=float(getattr(viewer, "_cam_speed", 4.0)),
             show_role_name_labels=viewer.show_role_name_labels,
             on_show_role_name_labels_changed=self._on_show_role_name_labels_changed,
         )
@@ -351,6 +353,10 @@ class ObjectInspectorPlugin:
     def _on_gravity_changed(self, gx: float, gy: float, gz: float):
         if self._bridge:
             self._bridge.set_gravity([gx, gy, gz])
+
+    def _on_camera_move_speed_changed(self, speed: float):
+        if self._viewer is not None:
+            self._viewer._cam_speed = float(speed)
 
     def build_role_name_tag_entries(self) -> List[tuple[str, int, int]]:
         """Return (display_name, global_body_idx, world_idx) for each role instance."""

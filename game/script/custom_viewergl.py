@@ -129,6 +129,7 @@ class CustomViewerGL(ViewerGL):
         # keep local copies for CustomViewerGL follow / free-camera logic.
         self._cam_vel = np.zeros(3, dtype=np.float32)
         self._cam_damp_tau = 0.083
+        self._cam_speed = float(viewer_defaults.get("camera_move_speed", 4.0))
         self._current_fps = 0.0
 
         self.object_inspector = ObjectInspectorPlugin()
@@ -796,7 +797,7 @@ class CustomViewerGL(ViewerGL):
 
         dn = float(np.linalg.norm(desired))
         if dn > 1.0e-6:
-            desired = desired / dn * float(self.camera_speed)
+            desired = desired / dn * float(self._cam_speed)
         else:
             desired[:] = 0.0
 
