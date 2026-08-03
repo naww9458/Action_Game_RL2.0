@@ -198,6 +198,9 @@ class PhysicsManager:
         self.solver_handler.setup(self.model)
         print(f"Solver created: {type(self.solver_handler.solver).__name__}")
 
+        self.collision_pipeline = newton.CollisionPipeline(self.model)
+        self.contacts = self.collision_pipeline.contacts()
+
         # Create two state objects for time integration
         self.state_0 = self.model.state(requires_grad=GameConfig.requires_grad)  # Current state
         self.state_1 = self.model.state(requires_grad=GameConfig.requires_grad)  # Next state
@@ -319,16 +322,16 @@ class PhysicsManager:
             )
 
             # Detect collisions
-            temp_contacts = self.model.collide(self.state_0)
+            self.collision_pipeline.collide(self.state_0, self.contacts)
 
             # 記錄當前 sub-step 的所有碰撞
-            self.contact_sensor.record_rigid_contacts(temp_contacts)
+            self.contact_sensor.record_rigid_contacts(self.contacts)
 
             self.solver_handler.step(
                 state_in=self.state_0,
                 state_out=self.state_1,
                 control=self.control,
-                contacts=temp_contacts,
+                contacts=self.contacts,
                 dt=self.sim_dt
             )
             # Swap states (next becomes current)
@@ -354,12 +357,12 @@ class PhysicsManager:
         self.angular_damping = damping[1]
 
     def set_runtime_gravity(self, gravity):
-        from newton.solvers import SolverNotifyFlags
+        from newton import ModelFlags
 
         self.gravity = list(gravity)
         self.model.set_gravity(tuple(gravity))
         if self.solver_handler is not None and self.solver_handler.solver is not None:
-            self.solver_handler.solver.notify_model_changed(SolverNotifyFlags.MODEL_PROPERTIES)
+            self.solver_handler.solver.notify_model_changed(ModelFlags.MODEL_PROPERTIES)
 
     def read_runtime_gravity(self) -> list[float]:
         gravity_np = self.model.gravity.numpy()

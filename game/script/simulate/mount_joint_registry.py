@@ -51,6 +51,8 @@ class ToolMountRecord:
     uses_weld_fallback: bool = False
     slot_index: int = 0
     mount_yaw: float = 0.0
+    # Virtual-torque yaw rate for the MuJoCo weld fallback (aim.py weld path).
+    mount_yaw_rate: float = 0.0
     attached: bool = False
     prompt_visible: bool = False
     # Generic attached-tool behavior (e.g. turret "aim" action).
@@ -72,6 +74,8 @@ class MountJointRegistry:
         self._solver_supports_joint_toggle = False
         self._uses_mujoco_weld = False
         self._solver = None
+        self._physics_manager = None
+        self._num_objects_env = 1
 
     @property
     def model(self) -> Optional[newton.Model]:
@@ -102,15 +106,22 @@ class MountJointRegistry:
         solver_type: str = "",
         num_env: int = 1,
         solver=None,
+        num_objects_env: int = 1,
     ) -> None:
         self._model = model
         self._device = device
         self._solver = solver
         self.num_env = max(1, int(num_env))
+        self._num_objects_env = max(1, int(num_objects_env))
         self._num_joint_dof_env = int(num_joint_dof_env)
         self._num_rigid_bodies_env = int(num_rigid_bodies_env)
         self._num_joint_count_env = max(1, int(model.joint_count // self.num_env))
-        self._num_eq_count_env = max(0, int(model.equality_constraint_count // self.num_env))
+        self._num_eq_count_env = max(
+            0,
+            int(
+                getattr(model.mujoco, "equality_constraint_count", 0) // self.num_env
+            ),
+        )
         if model.joint_coord_count > 0 and self.num_env > 0:
             self._num_joint_coord_env = max(1, int(model.joint_coord_count // self.num_env))
         else:
@@ -125,6 +136,75 @@ class MountJointRegistry:
         for record in self.records.values():
             if record.action is not None:
                 record.action.bind_model(self, record)
+
+    def attach_physics_pre_substep(self, physics_manager) -> None:
+        """Store physics manager reference for per-frame attached-tool driving."""
+        self._physics_manager = physics_manager
+
+    def drive_attached_tools_frame(
+        self,
+        *,
+        camera_yaw: float = 0.0,
+        camera_pitch: float = 0.0,
+        mouse_buttons=None,
+        host_role_object_id: Optional[int] = None,
+        dt: Optional[float] = None,
+    ) -> None:
+        """Run attached-tool actions once per simulation frame (CUDA-graph safe).
+
+        Must be called from Python before ``physics_manager.simulate()`` / graph
+        launch — Warp CUDA graphs do not replay Python pre-substep callbacks.
+        """
+        pm = self._physics_manager
+        if pm is None or self._model is None:
+            return
+        if not any(record.attached for record in self.records.values()):
+            return
+
+        state = pm.state_0
+        frame_dt = float(dt if dt is not None else getattr(pm, "frame_dt", 1.0 / 50.0))
+        body_q_np = state.body_q.numpy()
+
+        if host_role_object_id is not None:
+            host_id = int(host_role_object_id)
+            world = host_id // self._num_objects_env
+            self.apply_attached_actions(
+                state.body_q,
+                state.body_qd,
+                pm.control,
+                camera_yaw=float(camera_yaw),
+                camera_pitch=float(camera_pitch),
+                world=world,
+                dt=frame_dt,
+                host_role_object_id=host_id,
+                body_q_np=body_q_np,
+                joint_q=state.joint_q,
+                joint_qd=state.joint_qd,
+                mouse_buttons=mouse_buttons,
+                body_f=state.body_f,
+            )
+            return
+
+        for record in self.records.values():
+            if not record.attached or record.action is None:
+                continue
+            host_id = int(record.host_role_object_id)
+            world = host_id // self._num_objects_env
+            self.apply_attached_actions(
+                state.body_q,
+                state.body_qd,
+                pm.control,
+                camera_yaw=0.0,
+                camera_pitch=0.0,
+                world=world,
+                dt=frame_dt,
+                host_role_object_id=host_id,
+                body_q_np=body_q_np,
+                joint_q=state.joint_q,
+                joint_qd=state.joint_qd,
+                mouse_buttons=None,
+                body_f=state.body_f,
+            )
 
     def global_body_idx(self, world: int, local_body_idx: int) -> int:
         return world * self._num_rigid_bodies_env + local_body_idx
@@ -309,6 +389,7 @@ class MountJointRegistry:
 
         host_xform = body_q.numpy()[host_global]
         record.mount_yaw = 0.0
+        record.mount_yaw_rate = 0.0
         desired_tool = compose_body_snap_transform(
             host_xform,
             record.host_anchor_local,
@@ -369,6 +450,7 @@ class MountJointRegistry:
             record.action.on_detach(self, record, world=world)
         record.attached = False
         record.mount_yaw = 0.0
+        record.mount_yaw_rate = 0.0
         return True
 
     def attach_start_attached(
@@ -420,7 +502,7 @@ class MountJointRegistry:
         if model is None:
             return False
         if record.uses_weld_fallback and record.mount_eq_idx is not None:
-            eq_enabled = model.equality_constraint_enabled
+            eq_enabled = model.mujoco.equality_constraint_enabled
             if eq_enabled is None:
                 return False
             return bool(eq_enabled.numpy()[self.global_eq_idx(world, record.mount_eq_idx)])
@@ -477,6 +559,7 @@ class MountJointRegistry:
                 if not still_active:
                     record.attached = False
             record.mount_yaw = 0.0
+            record.mount_yaw_rate = 0.0
             record.prompt_visible = False
         return detached
 
@@ -484,11 +567,11 @@ class MountJointRegistry:
         if self._solver is None:
             return
         try:
-            from newton.solvers import SolverNotifyFlags
+            from newton import ModelFlags
         except ImportError:
             return
         try:
-            self._solver.notify_model_changed(SolverNotifyFlags.JOINT_DOF_PROPERTIES)
+            self._solver.notify_model_changed(ModelFlags.JOINT_DOF_PROPERTIES)
         except Exception:
             pass
 
@@ -496,11 +579,11 @@ class MountJointRegistry:
         if self._solver is None:
             return
         try:
-            from newton.solvers import SolverNotifyFlags
+            from newton import ModelFlags
         except ImportError:
             return
         try:
-            self._solver.notify_model_changed(SolverNotifyFlags.CONSTRAINT_PROPERTIES)
+            self._solver.notify_model_changed(ModelFlags.CONSTRAINT_PROPERTIES)
         except Exception:
             pass
 
@@ -510,7 +593,7 @@ class MountJointRegistry:
             return
 
         if record.uses_weld_fallback and record.mount_eq_idx is not None:
-            eq_enabled = model.equality_constraint_enabled
+            eq_enabled = model.mujoco.equality_constraint_enabled
             if eq_enabled is not None:
                 enabled_np = eq_enabled.numpy()
                 global_eq = self.global_eq_idx(world, record.mount_eq_idx)
@@ -518,7 +601,7 @@ class MountJointRegistry:
                 eq_enabled.assign(enabled_np)
 
                 if active:
-                    relpose_arr = model.equality_constraint_relpose
+                    relpose_arr = model.mujoco.equality_constraint_relpose
                     if relpose_arr is not None:
                         rel_np = relpose_arr.numpy()
                         rel_np[global_eq] = compose_mounted_weld_relpose(
@@ -575,10 +658,11 @@ class MountJointRegistry:
                 and record.host_role_object_id != host_role_object_id
             ):
                 continue
+            record_world = int(record.host_role_object_id) // self._num_objects_env
             action.step(
                 self,
                 record,
-                world=world,
+                world=record_world,
                 dt=dt,
                 camera_yaw=camera_yaw,
                 camera_pitch=camera_pitch,

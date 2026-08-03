@@ -17,7 +17,10 @@ from typing import Optional, Sequence, Tuple
 import numpy as np
 from newton import JointTargetMode
 
-from script.role.objects.tool_anchor import compose_mounted_weld_relpose
+from script.role.objects.tool_anchor import (
+    compose_mounted_tool_transform,
+    compose_mounted_weld_relpose,
+)
 from script.simulate.mount_joint_builder import resolve_joint_index_by_leaf_name
 from script.simulate.tool_action import ToolAction
 
@@ -55,6 +58,12 @@ class TurretAimControlConfig:
     pitch_joint_sign: float = -1.0
     angle_dead_zone_deg: float = 0.0
     weld_yaw_drive_gain: float = 0.0
+    # weld 降級（MuJoCo 無實體 revolute 掛載關節）下的"虛擬扭矩"yaw 模型：
+    # 以二階積分模擬扭矩轉動，限制角加速度與角速度，避免炮塔瞬間對齊相機。
+    weld_yaw_accel_gain: float = 60.0       # 虛擬角加速度 P 增益 [rad/s² per rad]
+    weld_yaw_damping: float = 10.0          # 虛擬角速度阻尼 [1/s]
+    weld_yaw_max_rate_rad_s: float = 1.5    # 最大 yaw 角速度 [rad/s]
+    weld_yaw_max_accel_rad_s2: float = 60.0  # 最大 yaw 角加速度 [rad/s²]
     aim_forward_local: Tuple[float, float, float] = (1.0, 0.0, 0.0)
     world_up: Tuple[float, float, float] = (0.0, 0.0, 1.0)
     # Pitch joint limits used only when the physics model reports none (deg).
@@ -92,6 +101,14 @@ class TurretAimControlConfig:
             pitch_joint_sign=float(raw.get("pitch_joint_sign", base.pitch_joint_sign)),
             angle_dead_zone_deg=float(raw.get("angle_dead_zone_deg", base.angle_dead_zone_deg)),
             weld_yaw_drive_gain=float(raw.get("weld_yaw_drive_gain", base.weld_yaw_drive_gain)),
+            weld_yaw_accel_gain=float(raw.get("weld_yaw_accel_gain", base.weld_yaw_accel_gain)),
+            weld_yaw_damping=float(raw.get("weld_yaw_damping", base.weld_yaw_damping)),
+            weld_yaw_max_rate_rad_s=float(
+                raw.get("weld_yaw_max_rate_rad_s", base.weld_yaw_max_rate_rad_s)
+            ),
+            weld_yaw_max_accel_rad_s2=float(
+                raw.get("weld_yaw_max_accel_rad_s2", base.weld_yaw_max_accel_rad_s2)
+            ),
             aim_forward_local=tuple(float(v) for v in forward),
             world_up=tuple(float(v) for v in up),
             pitch_limit_fallback_deg=(
@@ -125,6 +142,12 @@ class TurretRlActionConfig:
     range: Tuple[float, float] = (-1.0, 1.0)
     yaw_command_scale_rad: float = 0.0
     pitch_command_scale_rad: float = 0.0
+    # barrel_pitch RL 動作語義：
+    #   "target_angle"（預設）= 動作值直接映射為絕對目標俯仰角，
+    #      +1 → 最大仰角（限位下限）、0 → 中間、-1 → 最大俯角（限位上限），
+    #      線性內插（0.5 → 最大仰角與中間的正中間）。
+    #   "error"（舊版）= 動作值 × pitch_command_scale_rad 作為相對角度誤差。
+    pitch_command_mode: str = "target_angle"
     fire_threshold: float = 0.0
     dim_labels: Tuple[str, ...] = ("turret_yaw", "barrel_pitch", "fire")
 
@@ -150,11 +173,15 @@ class TurretRlActionConfig:
         if labels and len(labels) < shape:
             for i in range(len(labels), shape):
                 labels.append(f"action_{i}")
+        mode = str(raw.get("pitch_command_mode", "target_angle")).strip().lower()
+        if mode not in ("target_angle", "error"):
+            mode = "target_angle"
         return cls(
             shape=shape,
             range=(float(rng[0]), float(rng[1])),
             yaw_command_scale_rad=float(raw.get("yaw_command_scale_rad", 0.0)),
             pitch_command_scale_rad=float(raw.get("pitch_command_scale_rad", 0.0)),
+            pitch_command_mode=mode,
             fire_threshold=float(raw.get("fire_threshold", 0.0)),
             dim_labels=tuple(labels) if labels else cls.dim_labels,
         )
@@ -299,6 +326,22 @@ def _wrap_pi(angle: float) -> float:
     return angle
 
 
+def _effective_pitch_limits(
+    lower: float,
+    upper: float,
+    fallback_deg: Tuple[float, float],
+) -> Tuple[float, float]:
+    """Use template fallback when USD/model limits are missing or effectively unlimited."""
+    fb_lo = math.radians(float(fallback_deg[0]))
+    fb_hi = math.radians(float(fallback_deg[1]))
+    if not math.isfinite(lower) or not math.isfinite(upper) or float(lower) > float(upper):
+        return fb_lo, fb_hi
+    span = float(upper) - float(lower)
+    if span <= 1e-6 or span >= 2.0 * math.pi - 1e-3:
+        return fb_lo, fb_hi
+    return float(lower), float(upper)
+
+
 def clamp_angle_to_limits(angle: float, lo: float, hi: float, reference: float) -> float:
     """Clamp *angle* to [lo, hi], preserving continuity near *reference*."""
     span = float(hi) - float(lo)
@@ -315,6 +358,22 @@ def clamp_angle_to_limits(angle: float, lo: float, hi: float, reference: float) 
             return float(hi)
         return wrapped
     return min(valid, key=lambda value: abs(value - float(reference)))
+
+
+def rl_pitch_action_to_target_q(action: float, limit_lower: float, limit_upper: float) -> float:
+    """Map a barrel_pitch RL action in [-1, 1] to an absolute target pitch joint angle.
+
+    +1 → max elevation (limit_lower), 0 → mid-range, -1 → max depression
+    (limit_upper); intermediate values interpolate linearly, so e.g. 0.5 lands
+    halfway between max elevation and the middle. Result is clamped to the limits.
+    """
+    lo = float(limit_lower)
+    hi = float(limit_upper)
+    if not (hi > lo):
+        return 0.0
+    mid = 0.5 * (lo + hi)
+    half = 0.5 * (hi - lo)
+    return max(lo, min(hi, mid - float(action) * half))
 
 
 def measure_mount_yaw_in_host_frame(
@@ -414,6 +473,45 @@ def pd_torque(error: float, rate: float, gain: float, damping: float, max_torque
 def soft_limit_torque(torque: float, max_torque: float) -> float:
     limit = max(abs(max_torque), 1e-6)
     return limit * math.tanh(torque / limit)
+
+
+def integrate_weld_yaw(
+    offset: float,
+    rate: float,
+    error: float,
+    dt: float,
+    *,
+    accel_gain: float,
+    damping: float,
+    max_rate: float,
+    max_accel: float,
+    lo: float,
+    hi: float,
+) -> Tuple[float, float]:
+    """Integrate a virtual torque-driven yaw offset for the MuJoCo weld fallback.
+
+    MuJoCo cannot toggle a revolute mount joint (``joint_enabled`` unsupported),
+    so mounted turrets are kept on the host via a WELD equality constraint and
+    the yaw is kinematic (the tool root is re-snapped each frame). This
+    second-order integrator emulates a torque-driven turret:
+
+        ang_accel = accel_gain * error - damping * rate
+
+    with explicit angular-acceleration and angular-velocity limits, so the
+    turret accelerates toward the camera aim instead of snapping instantly.
+
+    Returns the new ``(offset, rate)`` pair.
+    """
+    accel = float(accel_gain) * error - float(damping) * rate
+    max_a = max(0.0, float(max_accel))
+    if max_a > 0.0:
+        accel = max(-max_a, min(max_a, accel))
+    rate = rate + accel * dt
+    max_r = max(0.0, float(max_rate))
+    if max_r > 0.0:
+        rate = max(-max_r, min(max_r, rate))
+    new_offset = _wrap_pi(offset + rate * dt)
+    return clamp_angle_to_limits(new_offset, lo, hi, offset), rate
 
 
 # ---------------------------------------------------------------------------
@@ -631,6 +729,7 @@ class Turret110mmAimAction(ToolAction):
             if joint_limit_upper is not None
             else math.radians(fallback_hi)
         )
+        lower, upper = _effective_pitch_limits(lower, upper, self.cfg.pitch_limit_fallback_deg)
         return AimDofSpec(
             global_dof_idx=dof_idx,
             local_coord_idx=coord_idx,
@@ -848,8 +947,10 @@ class Turret110mmAimAction(ToolAction):
             else None
         )
         relpose_np = (
-            model.equality_constraint_relpose.numpy()
-            if needs_relpose and model.equality_constraint_relpose is not None
+            model.mujoco.equality_constraint_relpose.numpy()
+            if needs_relpose
+            and hasattr(model, "mujoco")
+            and model.mujoco.equality_constraint_relpose is not None
             else None
         )
 
@@ -868,11 +969,14 @@ class Turret110mmAimAction(ToolAction):
 
         if self._rl_active:
             yaw_error = float(self._rl_yaw) * float(self.rl_cfg.yaw_command_scale_rad)
-            pitch_error = float(self._rl_pitch) * float(self.rl_cfg.pitch_command_scale_rad)
             if abs(yaw_error) < dead_zone:
                 yaw_error = 0.0
-            if abs(pitch_error) < dead_zone:
-                pitch_error = 0.0
+            # target_angle 模式下 pitch_error 不使用（目標角直接由 RL 值線性映射）。
+            pitch_error = 0.0
+            if self.rl_cfg.pitch_command_mode == "error":
+                pitch_error = float(self._rl_pitch) * float(self.rl_cfg.pitch_command_scale_rad)
+                if abs(pitch_error) < dead_zone:
+                    pitch_error = 0.0
             fire_active = float(self._rl_fire) > float(self.rl_cfg.fire_threshold)
             if fire_active and not self._prev_rl_fire_active:
                 self._handle_shoot(
@@ -917,27 +1021,46 @@ class Turret110mmAimAction(ToolAction):
         relpose_dirty = False
         joint_f_dirty = False
         joint_target_pos_dirty = False
+        tool_root_snap: np.ndarray | None = None
 
         lo, hi = record.mount_yaw_limits
-        previous_yaw = float(record.mount_yaw)
-        if record.mount_joint_coord_idx is not None and joint_q_np is not None:
+        # ``record.mount_yaw`` is the weld / mount-joint *offset* from the attach
+        # pose (0 at enable_attachment), not total barrel yaw in the host frame.
+        previous_offset = float(record.mount_yaw)
+        if (
+            not record.uses_weld_fallback
+            and record.mount_joint_coord_idx is not None
+            and joint_q_np is not None
+        ):
             global_coord = registry.global_coord_idx(world, record.mount_joint_coord_idx)
             if 0 <= global_coord < joint_q_np.shape[0]:
-                previous_yaw = float(joint_q_np[global_coord])
-        else:
-            previous_yaw = measure_mount_yaw_in_host_frame(
-                host_body_q,
-                aim_body_q,
-                cfg.aim_forward_local,
-            )
-            record.mount_yaw = previous_yaw
+                previous_offset = float(joint_q_np[global_coord])
 
         if record.uses_weld_fallback:
-            if abs(yaw_error) >= dead_zone:
-                proposed_yaw = _wrap_pi(
-                    previous_yaw + cfg.weld_yaw_drive_gain * yaw_error * float(dt)
+            if self._rl_active:
+                if abs(yaw_error) >= dead_zone:
+                    proposed_offset = _wrap_pi(
+                        previous_offset + cfg.weld_yaw_drive_gain * yaw_error * float(dt)
+                    )
+                    record.mount_yaw = clamp_angle_to_limits(
+                        proposed_offset, lo, hi, previous_offset
+                    )
+            else:
+                # 虛擬扭矩模型：炮塔以受限的角速度/角加速度追蹤相機，
+                # 而非瞬間對齊（修復"水平旋轉太快"）。
+                yaw_error_eff = yaw_error if abs(yaw_error) >= dead_zone else 0.0
+                record.mount_yaw, record.mount_yaw_rate = integrate_weld_yaw(
+                    previous_offset,
+                    record.mount_yaw_rate,
+                    yaw_error_eff,
+                    float(dt),
+                    accel_gain=cfg.weld_yaw_accel_gain,
+                    damping=cfg.weld_yaw_damping,
+                    max_rate=cfg.weld_yaw_max_rate_rad_s,
+                    max_accel=cfg.weld_yaw_max_accel_rad_s2,
+                    lo=lo,
+                    hi=hi,
                 )
-                record.mount_yaw = clamp_angle_to_limits(proposed_yaw, lo, hi, previous_yaw)
             if relpose_np is not None and record.mount_eq_idx is not None:
                 global_eq = registry.global_eq_idx(world, record.mount_eq_idx)
                 relpose_np[global_eq] = compose_mounted_weld_relpose(
@@ -947,6 +1070,17 @@ class Turret110mmAimAction(ToolAction):
                     mount_axis=record.mount_axis,
                 )
                 relpose_dirty = True
+            if record.tool_root_body_idx >= 0:
+                tool_root_snap = compose_mounted_tool_transform(
+                    host_body_q,
+                    record.host_anchor_local,
+                    record.tool_anchor_local,
+                    yaw_rad=float(record.mount_yaw),
+                    mount_axis=record.mount_axis,
+                )
+                body_q_np[registry.global_body_idx(world, record.tool_root_body_idx)] = (
+                    tool_root_snap
+                )
         elif record.mount_joint_dof_idx is not None and joint_f_np is not None:
             global_mount_dof = registry.global_dof_idx(world, record.mount_joint_dof_idx)
             mount_rate = 0.0
@@ -977,13 +1111,22 @@ class Turret110mmAimAction(ToolAction):
                 and 0 <= global_pitch_dof < joint_f_np.shape[0]
             ):
                 current_q = float(joint_q_np[global_coord])
-                # Desired joint angle from signed pitch error, clamped to USD limits.
-                target_q = clamp_angle_to_limits(
-                    current_q + float(cfg.pitch_joint_sign) * pitch_error,
-                    pitch_spec.limit_lower,
-                    pitch_spec.limit_upper,
-                    current_q,
-                )
+                if self._rl_active and self.rl_cfg.pitch_command_mode == "target_angle":
+                    # RL 動作直接指定絕對目標俯仰角：
+                    #   +1 → 最大仰角、0 → 中間、-1 → 最大俯角、0.5 → 仰角與中間之間。
+                    target_q = rl_pitch_action_to_target_q(
+                        float(self._rl_pitch),
+                        pitch_spec.limit_lower,
+                        pitch_spec.limit_upper,
+                    )
+                else:
+                    # Desired joint angle from signed pitch error, clamped to USD limits.
+                    target_q = clamp_angle_to_limits(
+                        current_q + float(cfg.pitch_joint_sign) * pitch_error,
+                        pitch_spec.limit_lower,
+                        pitch_spec.limit_upper,
+                        current_q,
+                    )
                 pitch_spec.current_target = target_q
 
                 # Neutralize any leftover POSITION actuator (target==current → zero P term).
@@ -1038,11 +1181,25 @@ class Turret110mmAimAction(ToolAction):
 
         if (
             relpose_dirty
-            and model.equality_constraint_relpose is not None
+            and hasattr(model, "mujoco")
+            and model.mujoco.equality_constraint_relpose is not None
             and relpose_np is not None
         ):
-            model.equality_constraint_relpose.assign(relpose_np)
+            model.mujoco.equality_constraint_relpose.assign(relpose_np)
             registry.notify_solver()
+        if tool_root_snap is not None and body_q is not None:
+            body_q.assign(body_q_np)
+            if joint_q is not None and record.tool_free_joint_idx is not None:
+                jq_np = joint_q.numpy()
+                global_free = registry.global_joint_idx(world, int(record.tool_free_joint_idx))
+                q_start = int(model.joint_q_start.numpy()[global_free])
+                jq_np[q_start : q_start + 7] = tool_root_snap
+                joint_q.assign(jq_np)
+            if body_qd is not None and record.tool_root_body_idx >= 0:
+                body_qd_np = body_qd.numpy()
+                root_idx = registry.global_body_idx(world, record.tool_root_body_idx)
+                body_qd_np[root_idx, 0:6] = 0.0
+                body_qd.assign(body_qd_np)
         if joint_f_dirty and control is not None and joint_f_np is not None:
             control.joint_f.assign(joint_f_np)
         if joint_target_pos_dirty and control is not None and joint_target_pos_np is not None:

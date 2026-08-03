@@ -31,9 +31,6 @@ class VBDSolverModel(BaseSolverModel):
     rigid_avbd_gamma: float = 0.999
     rigid_contact_hard: bool = True
     rigid_contact_history: bool = False
-    rigid_contact_stick_motion_eps: float = 0.0001
-    rigid_contact_stick_freeze_translation_eps: float = 0.0001
-    rigid_contact_stick_freeze_angular_eps: float = 0.0001
     rigid_contact_k_start: float = 100
     rigid_body_contact_buffer_size: int = 64
     rigid_body_particle_contact_buffer_size: int = 256
@@ -43,7 +40,6 @@ class VBDSolverModel(BaseSolverModel):
     rigid_joint_angular_k_start: float = 10
     rigid_joint_linear_kd: float = 0
     rigid_joint_angular_kd: float = 0
-    rigid_enable_dahl_friction: bool | None = None
 
 
 class VBDSolver(BaseSolver):

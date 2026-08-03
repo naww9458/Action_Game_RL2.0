@@ -48,15 +48,23 @@ aim:
     pitch_damping: 80000.0
     max_pitch_torque: 40000.0
     angle_dead_zone_deg: 0.5
-    # weld 降級模式下的 yaw 角速度增益
+    # weld 降級模式下的 yaw 角速度增益（RL 連續控制用）
     weld_yaw_drive_gain: 8.0
+    # weld 降級模式（MuJoCo 無實體掛載關節）下的人類瞄準"虛擬扭矩"模型：
+    # 角加速度 = accel_gain*誤差 - damping*角速度，並限制角速度/角加速度上限，
+    # 讓炮塔以受限速度追蹤相機而非瞬間對齊。
+    weld_yaw_accel_gain: 60.0
+    weld_yaw_damping: 10.0
+    weld_yaw_max_rate_rad_s: 1.5
+    weld_yaw_max_accel_rad_s2: 60.0
     # 瞄準方向約定（炮管局部前向 / 世界 Z 上）
     aim_forward_local: [1.0, 0.0, 0.0]
     world_up: [0.0, 0.0, 1.0]
     # 物理模型未報告關節限位時使用的俯仰角限位（度）
     pitch_limit_fallback_deg: [-10.0, 10.0]
     # 動態重力補償：由輸出扭矩與俯仰角變化線上估測 coeff（τ_g = coeff * cos(q)）
-    pitch_gravity_comp_enable: false
+    # 炮管質量 1200kg，若不補償會因重力產生約 2~3° 的穩態誤差，導致炮管無法到達 ±10° 限位。
+    pitch_gravity_comp_enable: true
     pitch_gravity_learn_rate: 0.08
     pitch_gravity_basis: cos
     pitch_gravity_rate_eps: 0.2
@@ -71,7 +79,13 @@ aim:
       - name: turret_yaw
       - name: barrel_pitch
       - name: fire
-    # action=±1 映射為瞄準誤差（弧度），再經既有 PD 驅動關節
+    # barrel_pitch 為"目標旋轉角度"模式（pitch_command_mode: target_angle）：
+    #   動作值線性映射到絕對目標俯仰角（限位 -10° ~ +10°），
+    #   +1 → 最大仰角 -10°、0 → 中間 0°、-1 → 最大俯角 +10°、0.5 → -5°。
+    # 舊版 error 模式（動作值 × pitch_command_scale_rad 作為相對誤差）仍可選用。
+    pitch_command_mode: target_angle
+    # yaw 保持"誤差比例"模式：動作值 ±1 對應 yaw_command_scale_rad 弧度的瞄準誤差，
+    # 再經既有 PD / weld 虛擬扭矩驅動關節（weld 模式受 max_rate 限制）。
     yaw_command_scale_rad: 1.57079632679
     pitch_command_scale_rad: 0.17453292519
     fire_threshold: 0.0

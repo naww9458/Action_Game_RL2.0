@@ -158,7 +158,9 @@ class Levels:
                 solver_type=solver_type,
                 num_env=self.num_env,
                 solver=self.physics_manager.solver_handler.solver if self.physics_manager.solver_handler else None,
+                num_objects_env=BaseRole._num_objects_env,
             )
+            self.mount_joint_registry.attach_physics_pre_substep(self.physics_manager)
         self.initialize_player_roles()
 
         for i, ability in enumerate(self.players.abilities_instance_list):

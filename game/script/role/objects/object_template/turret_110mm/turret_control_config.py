@@ -35,6 +35,11 @@ class TurretTaskConfig:
     joint_stiffness: float
     joint_damping: float
     joint_armature: float
+    # 俯仰關節物理限位剛度：0.0 = MuJoCo 硬限位（有限角度物理上不可超越）。
+    # use_mujoco_policy_init 預設的 soft-limit（limit_ke=1000）彈簧過弱，
+    # 會被 1200 kg 炮管的重力矩推過限位，故砲管限位需用硬限位守護。
+    joint_limit_ke: float
+    joint_limit_kd: float
 
     @classmethod
     def from_yaml(
@@ -72,6 +77,8 @@ class TurretTaskConfig:
             joint_stiffness=float(actuation.get("stiffness", 500.0)),
             joint_damping=float(actuation.get("damping", 50.0)),
             joint_armature=float(actuation.get("armature", 0.01)),
+            joint_limit_ke=float(actuation.get("limit_ke", 0.0)),
+            joint_limit_kd=float(actuation.get("limit_kd", 0.0)),
         )
         _TASK_CONFIG_CACHE[cache_key] = instance
         return instance
@@ -156,12 +163,15 @@ class TurretTaskConfig:
 
             nominal = self._nominal_for_label(label)
             for local_dof, qd in enumerate(range(qd_start, qd_end)):
-                builder_env.joint_q[q_start + local_dof] = nominal
+                coord_idx = q_start + local_dof
+                builder_env.joint_q[coord_idx] = nominal
                 builder_env.joint_target_pos[qd] = nominal
                 builder_env.joint_target_ke[qd] = self.joint_stiffness
                 builder_env.joint_target_kd[qd] = self.joint_damping
                 builder_env.joint_armature[qd] = self.joint_armature
                 builder_env.joint_target_mode[qd] = int(JointTargetMode.POSITION)
+                builder_env.joint_limit_ke[qd] = self.joint_limit_ke
+                builder_env.joint_limit_kd[qd] = self.joint_limit_kd
                 applied += 1
 
         print(

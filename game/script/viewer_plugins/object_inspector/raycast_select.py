@@ -65,14 +65,9 @@ class RaycastSelector:
             [], dtype=int, device=self.device
         )
 
-        kernel = (
-            raycast.raycast_kernel
-            if getattr(self.model, "has_heightfields", False)
-            else raycast.raycast_kernel_no_hfield
-        )
-
+        # Newton 1.4: 9 inputs + 6 outputs (heightfields use mesh BVH internally).
         wp.launch(
-            kernel=kernel,
+            kernel=raycast.raycast_kernel,
             dim=self.model.shape_count,
             inputs=[
                 state.body_q,
@@ -81,9 +76,6 @@ class RaycastSelector:
                 self.model.shape_type,
                 self.model.shape_scale,
                 self.model.shape_source_ptr,
-                self.model.shape_heightfield_index,
-                self.model.heightfield_data,
-                self.model.heightfield_elevations,
                 p,
                 d,
                 self.lock,

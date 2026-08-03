@@ -11,6 +11,11 @@ turret_110mm:
       stiffness: 500.0
       damping: 50.0
       armature: 0.01
+      # 俯仰關節物理限位：0.0 = MuJoCo 硬限位（±10° 物理上不可超越）。
+      # use_mujoco_policy_init 預設 soft-limit（limit_ke=1000）彈簧過弱，
+      # 會被炮管重力矩推過限位，故須以硬限位守護炮管俯仰角。
+      limit_ke: 0.0
+      limit_kd: 0.0
     non_rl_patterns: []
     human_control:
       keyboard: {}

@@ -32,15 +32,15 @@ class RigidBoxObject(BaseObject):
 
         size = data["size"]
         index = builder_env.add_shape_box(
-            body, 
-            hx=size[0], 
-            hy=size[1], 
-            hz=size[2], 
+            body=body,
+            hx=size[0],
+            hy=size[1],
+            hz=size[2],
             cfg=cfg,
             as_site=data["as_site"],
             color=data["color"],
             label=label,
-            )
+        )
 
         return index
 

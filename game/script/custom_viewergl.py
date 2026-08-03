@@ -103,6 +103,7 @@ class CustomViewerGL(ViewerGL):
         self.keyboard_keys = np.zeros(shape=65536, dtype=np.int32)
         self.human_input_queue = human_input_queue
         self.simulation_control = SimulationControl.from_defaults(self.viewer_controls_cfg)
+        self.health_ref = None
         self._binding_symbols: dict[str, set[int]] = {}
         self._camera_move_symbols: dict[str, set[int]] = {}
         self._build_binding_lookup()
@@ -123,6 +124,12 @@ class CustomViewerGL(ViewerGL):
         # 運行兩次是因爲一次是 ViewerGL._init_ 的時候通過 self.renderer.register_key_press(self.on_key_press) 注冊的，還有一次不知道怎麽來的反正就有兩次
         # 可能導致未知影響，只是目前測試還沒發現問題
         self.renderer._key_callbacks = []
+
+        # Newton 1.4 moved camera smoothing state off ViewerGL onto ViewerGui;
+        # keep local copies for CustomViewerGL follow / free-camera logic.
+        self._cam_vel = np.zeros(3, dtype=np.float32)
+        self._cam_damp_tau = 0.083
+        self._current_fps = 0.0
 
         self.object_inspector = ObjectInspectorPlugin()
         self._mouse_press_pos = None
@@ -606,20 +613,38 @@ class CustomViewerGL(ViewerGL):
         dt = max(0.0, min(0.1, now - self._last_time))
         self._last_time = now
         self._update_camera(dt)
-        self.wind.update(dt)
-        if self.renderer.has_exit(): return
-        self.renderer.render(self.camera, self.objects, self.lines)
-        self._update_fps()
-        if self.ui.is_available and self.show_ui:
-            self.ui.begin_frame()
-            self._render_ui()
-            self.ui.end_frame()
-            self.ui.render()
-       
+        if self.wind is not None:
+            self.wind.update(dt)
+        if self.renderer.has_exit():
+            return
+
+        self.renderer.render(
+            self.camera,
+            self.objects,
+            self.lines,
+            self.wireframe_shapes,
+            self.arrows,
+        )
+
+        if self.gui is not None:
+            self.gui.render_frame(update_fps=True)
+            self._current_fps = float(getattr(self.gui, "_current_fps", 0.0))
+
         gl.glFlush()
-        self._render_ui_overlay(self.health_ref)
+        if self.health_ref is not None:
+            self._render_ui_overlay(self.health_ref)
         self.object_inspector.tick()
         self.renderer.present()
+
+    def _ui_is_capturing_mouse(self) -> bool:
+        if self.gui is not None:
+            return self.gui.is_capturing()
+        if self.ui is not None and getattr(self.ui, "is_available", False):
+            return self.ui.is_capturing()
+        return False
+
+    def _ui_is_capturing_keyboard(self) -> bool:
+        return self._ui_is_capturing_mouse()
     
     def on_key_press(self, symbol, modifiers):
         self.keyboard_keys[symbol] = 1
@@ -771,7 +796,7 @@ class CustomViewerGL(ViewerGL):
 
         dn = float(np.linalg.norm(desired))
         if dn > 1.0e-6:
-            desired = desired / dn * self._cam_speed
+            desired = desired / dn * float(self.camera_speed)
         else:
             desired[:] = 0.0
 

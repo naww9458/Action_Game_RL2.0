@@ -5,7 +5,7 @@ XPBD/VBD solvers honor ``model.joint_enabled`` and receive a disabled revolute
 
 MuJoCo does not honor ``joint_enabled``; a disabled revolute would still couple
 bodies. MuJoCo levels therefore reserve a disabled WELD equality constraint
-instead, toggled through ``model.equality_constraint_enabled``.
+instead, toggled through ``model.mujoco.equality_constraint_enabled``.
 """
 
 from __future__ import annotations
@@ -141,6 +141,36 @@ def _joint_dof_coord_indices(builder: newton.ModelBuilder, joint_idx: int) -> tu
     return dof_idx, coord_idx
 
 
+def add_mujoco_weld_equality_constraint(
+    builder: newton.ModelBuilder,
+    *,
+    body1: int,
+    body2: int,
+    anchor: wp.vec3,
+    relpose: wp.transform,
+    enabled: bool,
+    label: str,
+) -> int:
+    """Reserve one MuJoCo WELD equality row via the ``mujoco:equality_constraint_*``
+    custom-attribute frequency (newton 1.4 API)."""
+    from newton.solvers import SolverMuJoCo
+
+    SolverMuJoCo.register_custom_attributes(builder)
+    eq_type = int(SolverMuJoCo.EqType.WELD)
+    indices = builder.add_custom_values(
+        **{
+            "mujoco:equality_constraint_type": eq_type,
+            "mujoco:equality_constraint_body1": int(body1),
+            "mujoco:equality_constraint_body2": int(body2),
+            "mujoco:equality_constraint_anchor": anchor,
+            "mujoco:equality_constraint_relpose": relpose,
+            "mujoco:equality_constraint_enabled": bool(enabled),
+            "mujoco:equality_constraint_label": label,
+        }
+    )
+    return int(indices["mujoco:equality_constraint_type"])
+
+
 def build_tool_mount_joint(
     builder: newton.ModelBuilder,
     *,
@@ -164,7 +194,8 @@ def build_tool_mount_joint(
         # relpose.q = body2 orientation relative to body1 (see tool_anchor.py).
         relpose = compute_weld_relpose_from_anchors(host_anchor_local, tool_anchor_local)
         anchor = tool_anchor_local.p if hasattr(tool_anchor_local, "p") else wp.vec3(0.0, 0.0, 0.0)
-        eq_idx = builder.add_equality_constraint_weld(
+        eq_idx = add_mujoco_weld_equality_constraint(
+            builder,
             body1=int(host_body_idx),
             body2=int(tool_root_body_idx),
             anchor=anchor,

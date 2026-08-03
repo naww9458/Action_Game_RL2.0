@@ -31,7 +31,6 @@ class MuJoCoSolverModel(BaseSolverModel):
     disable_contacts: bool = False
     update_data_interval: int = 1
     save_to_mjcf: str | None = None
-    ls_parallel: bool = False
     use_mujoco_contacts: bool = True
     include_sites: bool = True
     skip_visual_only_geoms: bool = True

@@ -174,11 +174,6 @@ class Tool_attachment(Ability):
         if dim <= 0:
             return
 
-        physics_manager = self.physics_manager
-        world = self._world_for_role_object(host_role_object_id)
-        state = physics_manager.state_0
-        body_q_np = state.body_q.numpy()
-
         record = self.mount_registry.get_attached_record(host_role_object_id)
         if record is None:
             return
@@ -189,24 +184,13 @@ class Tool_attachment(Ability):
         elif use_camera_if_no_rl:
             self.mount_registry.clear_rl_control_for_host(host_role_object_id)
 
-        self.mount_registry.apply_attached_actions(
-            state.body_q,
-            state.body_qd,
-            physics_manager.control,
-            camera_yaw=float(camera_yaw),
-            camera_pitch=float(camera_pitch),
-            world=world,
-            dt=1.0 / max(1, int(getattr(self, "_fps", 50) or 50)),
-            host_role_object_id=host_role_object_id,
-            body_q_np=body_q_np,
-            joint_q=state.joint_q,
-            joint_qd=state.joint_qd,
-            mouse_buttons=mouse_buttons,
-            body_f=state.body_f,
-        )
-
-        if record.action is not None:
-            record.action.clear_rl_control()
+        if use_camera_if_no_rl and not self._inspector_rl_override_active():
+            self.mount_registry.drive_attached_tools_frame(
+                camera_yaw=float(camera_yaw),
+                camera_pitch=float(camera_pitch),
+                mouse_buttons=mouse_buttons,
+                host_role_object_id=host_role_object_id,
+            )
 
     def _inspector_rl_override_active(self) -> bool:
         physics_manager = self.physics_manager
@@ -254,6 +238,9 @@ class Tool_attachment(Ability):
                 camera_yaw=0.0,
                 camera_pitch=0.0,
                 mouse_buttons=None,
+            )
+            self.mount_registry.drive_attached_tools_frame(
+                host_role_object_id=host_obj_idx,
             )
 
     def human_control_interface(
@@ -318,20 +305,11 @@ class Tool_attachment(Ability):
         if self._inspector_rl_override_active():
             return
 
-        self.mount_registry.apply_attached_actions(
-            state.body_q,
-            state.body_qd,
-            physics_manager.control,
+        self.mount_registry.drive_attached_tools_frame(
             camera_yaw=camera_yaw,
             camera_pitch=camera_pitch,
-            world=world,
-            dt=1.0 / max(1, int(getattr(self, "_fps", 50) or 50)),
-            host_role_object_id=human_obj_idx,
-            body_q_np=body_q_np,
-            joint_q=state.joint_q,
-            joint_qd=state.joint_qd,
             mouse_buttons=mouse_buttons,
-            body_f=state.body_f,
+            host_role_object_id=human_obj_idx,
         )
 
     def rl_action(self, actions, **kwargs):
@@ -365,22 +343,7 @@ class Tool_attachment(Ability):
                 continue
 
             self.mount_registry.apply_rl_control_for_host(host_obj_idx, slice_values)
-            self.mount_registry.apply_attached_actions(
-                state.body_q,
-                state.body_qd,
-                physics_manager.control,
-                camera_yaw=0.0,
-                camera_pitch=0.0,
-                world=world,
-                dt=1.0 / max(1, int(getattr(self, "_fps", 50) or 50)),
-                host_role_object_id=host_obj_idx,
-                body_q_np=body_q_np,
-                joint_q=state.joint_q,
-                joint_qd=state.joint_qd,
-                mouse_buttons=None,
-                body_f=state.body_f,
-            )
-            self.mount_registry.clear_rl_control_for_host(host_obj_idx)
+            self.mount_registry.drive_attached_tools_frame(host_role_object_id=host_obj_idx)
 
     def bot_action(self, **kwargs):
         pass

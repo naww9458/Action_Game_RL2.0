@@ -41,7 +41,6 @@ environment_configs:
     disable_contacts: false
     update_data_interval: 1
     save_to_mjcf: null
-    ls_parallel: true
     use_mujoco_contacts: false
     include_sites: true
     skip_visual_only_geoms: true

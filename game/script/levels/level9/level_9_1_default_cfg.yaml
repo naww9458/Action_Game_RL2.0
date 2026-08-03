@@ -41,7 +41,6 @@ environment_configs:
     disable_contacts: false
     update_data_interval: 1
     save_to_mjcf: null
-    ls_parallel: true
     use_mujoco_contacts: false
     include_sites: true
     skip_visual_only_geoms: true
@@ -368,9 +367,6 @@ tool_configs:
     - 0.0
     - 0.0
     pitch_joint_sign: -1.0
-    pitch_torque_gain: 80.0
-    pitch_damping: 8.0
-    max_pitch_torque: 40.0
   abilities:
   - Shoot
   - Articulation_body_control
