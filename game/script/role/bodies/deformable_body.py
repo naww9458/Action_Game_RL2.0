@@ -145,10 +145,19 @@ class DeformableBody(BaseBody):
                 device=self.device
             )
 
-            for obj_idx, start_idx in enumerate(offset): # 如果這裏索引報錯很可能是因爲有兩個物件有相同的 pattern 但是粒子數量不同
-                wp.copy(
-                    dest=self.template_positions_gpus[pattern][obj_idx], 
-                    src=model.particle_q[start_idx : start_idx + count_particle_per_object]
+            default_tfs_np = self.object_default_trans_gpu.numpy()
+            for obj_idx, start_idx in enumerate(offset):
+                world_rest = model.particle_q[start_idx : start_idx + count_particle_per_object]
+                local_body_idx = self.patterns_local_indices[pattern][obj_idx]
+                tf_row = default_tfs_np[local_body_idx]
+                default_tf = wp.transform(
+                    wp.vec3(float(tf_row[0]), float(tf_row[1]), float(tf_row[2])),
+                    wp.quat(float(tf_row[3]), float(tf_row[4]), float(tf_row[5]), float(tf_row[6])),
+                )
+                view.localize_template_positions(
+                    world_rest,
+                    default_tf,
+                    self.template_positions_gpus[pattern][obj_idx],
                 )
 
     def apply_controls(self, state, dt, linear_damping):
@@ -193,7 +202,7 @@ class DeformableBody(BaseBody):
             self.control_vel_gpus[pattern].zero_()
             self.control_force_gpus[pattern].zero_()
 
-    def reset_obj(self, state, reset_mask_gpu, offset_random_gpu, seed):
+    def reset_obj(self, state, reset_mask_gpu, offset_random_gpu, seed, state_alt=None):
         """
         利用 View 完美、安全且高並行地在 GPU 上進行隨機化重置
         """
@@ -229,26 +238,28 @@ class DeformableBody(BaseBody):
                 device=self.device
             )
 
-            # 委託 DeformableView 直接向底層 particle_q 直寫重置後的隨機 3D 坐標，杜絕重疊與不寫回問題 
-            view.reset_positions(
-                state=state,
-                random_transforms=self.random_transforms_gpus[pattern],
-                template_positions=self.template_positions_gpus[pattern],
-                reset_mask_gpu=reset_mask_gpu,
-                view_object_indices_gpu=self.view_object_indices_gpus[pattern],
-                num_objects_env=self.num_objects_env
-            )
+            view_reset_mask = self.view_reset_mask_gpus[pattern]
+            random_transforms = self.random_transforms_gpus[pattern]
+            template_positions = self.template_positions_gpus[pattern]
+            view_object_indices = self.view_object_indices_gpus[pattern]
 
-            # 硬編碼重置速度為 0 
-            # 獲取 View 的並行 3D 寫入位置視圖，用作 shape 參考
-            view_positions = view.get_positions(state)
-            zero_vel = wp.zeros(
-                shape=view_positions.shape, 
-                dtype=wp.vec3, 
-                device=self.device
-            )
-            # 使用我們透過隨機化 Kernel 產生的 2D 遮罩，只重置有過期/重置物件的世界與物件通道 
-            view.set_velocities(state, zero_vel, mask=self.view_reset_mask_gpus[pattern])
+            states_to_reset = [state]
+            if state_alt is not None:
+                states_to_reset.append(state_alt)
+
+            for target_state in states_to_reset:
+                view.reset_positions(
+                    state=target_state,
+                    random_transforms=random_transforms,
+                    template_positions=template_positions,
+                    reset_mask_gpu=reset_mask_gpu,
+                    view_object_indices_gpu=view_object_indices,
+                    num_objects_env=self.num_objects_env,
+                )
+                view.reset_velocities(
+                    state=target_state,
+                    view_reset_mask=view_reset_mask,
+                )
 
 
 

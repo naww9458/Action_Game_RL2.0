@@ -419,6 +419,8 @@ class InspectorWindow(QMainWindow):
                 description = binding.description
                 if binding.context == "free_camera":
                     description = f"{description} (free camera only)"
+                elif binding.context == "mouse_unlocked":
+                    description = f"{description} (when mouse lock is off)"
                 form.addRow(label, QLabel(description))
             self.controls_help_layout.addWidget(group)
 

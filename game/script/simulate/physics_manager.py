@@ -292,6 +292,9 @@ class PhysicsManager:
             # Clear forces in input state
             self.state_0.clear_forces()
 
+            if self.viewerGL is not None:
+                self.viewerGL.apply_forces(self.state_0)
+
             if self.pre_substep_callback is not None:
                 self.pre_substep_callback(substep_idx)
 
@@ -407,10 +410,23 @@ class PhysicsManager:
                 reset_mask_gpu=self.reset_mask_gpu,
                 offset_random_gpu=self.offset_random_gpu,
                 seed=GameConfig.SEED,
+                state_alt=self.state_1,
             )
+
+            # 雙緩衝剛體狀態也必須與 state_0 對齊，否則 CUDA Graph 重放時可能讀到舊 body_q。
+            if self.state_0.body_q is not None and self.state_1.body_q is not None:
+                wp.copy(self.state_1.body_q, self.state_0.body_q)
+                wp.copy(self.state_1.body_qd, self.state_0.body_qd)
 
             # 一鍵清空環境重置遮罩，防子步驟重置信號漏失
             self.reset_mask_gpu.zero_()
+
+            # state.body_q_prev 是 VBD 等求解器計算速度的回退來源；teleport 後若不同步，
+            # 下一幀會把位姿差誤當成速度，表現為剛體突然加速。
+            if self.state_0.body_q is not None and self.state_0.body_q_prev is not None:
+                wp.copy(self.state_0.body_q_prev, self.state_0.body_q)
+                if self.state_1.body_q_prev is not None:
+                    wp.copy(self.state_1.body_q_prev, self.state_0.body_q)
 
             # 物理求解器後置位姿同步與歷史快取清理
             self.solver_handler.post_teleport_sync(self.state_0)

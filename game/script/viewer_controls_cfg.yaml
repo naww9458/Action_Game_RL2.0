@@ -5,6 +5,10 @@ defaults:
   show_role_name_labels: true
   role_name_label_height: 2.0
   camera_move_speed: 4.0
+  pick_depth_scroll_sensitivity: 0.15
+  pick_depth_min: 0.2
+  camera_orbit_sensitivity: 0.1
+  camera_dolly_drag_sensitivity: 0.01
 
 debug_geometry:
   line_length: 1.0
@@ -31,6 +35,7 @@ debug_geometry:
 
 category_labels:
   camera: Camera
+  mouse: Mouse & Scene
   ui: UI
   simulation: Simulation
   follow: Follow Target
@@ -91,6 +96,42 @@ bindings:
     id: zoom_fov
     keys: [ctrl+scroll]
     description: "Adjust camera FOV (Ctrl + scroll)"
+
+  - category: mouse
+    id: rotate_camera_drag
+    keys: [left_mouse_drag]
+    context: mouse_unlocked
+    description: "Hold left button and drag to rotate camera"
+
+  - category: mouse
+    id: select_object_click
+    keys: [left_mouse_click]
+    context: mouse_unlocked
+    description: "Left click on object to select it in the inspector"
+
+  - category: mouse
+    id: move_object_drag
+    keys: [right_mouse_drag]
+    context: mouse_unlocked
+    description: "Hold right button and drag to move object in scene"
+
+  - category: mouse
+    id: pick_depth_scroll
+    keys: [scroll]
+    context: mouse_unlocked
+    description: "While dragging an object, scroll up to push away / scroll down to pull closer"
+
+  - category: mouse
+    id: camera_orbit_middle
+    keys: [middle_mouse_drag]
+    context: mouse_unlocked
+    description: "Hold middle button and drag to orbit camera"
+
+  - category: mouse
+    id: camera_pan_middle
+    keys: [shift+middle_mouse_drag]
+    context: mouse_unlocked
+    description: "Hold Shift + middle button and drag to pan camera"
 
   - category: ui
     id: toggle_newton_ui

@@ -35,6 +35,11 @@ _KEY_DISPLAY = {
     "ctrl": "Ctrl",
     "lalt": "Left Alt",
     "ralt": "Right Alt",
+    "left_mouse_click": "Left Click",
+    "left_mouse_drag": "Left Drag",
+    "right_mouse_drag": "Right Drag",
+    "middle_mouse_drag": "Middle Drag",
+    "scroll": "Scroll",
 }
 
 

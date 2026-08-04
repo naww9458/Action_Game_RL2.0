@@ -7,7 +7,7 @@
 5. (✅️fixed) 重置環境后應解除車體和炮塔的連接
 6. (✅️fixed) 無法通過 object_inspector 控制 tools (無法控制炮塔轉向，炮管升降)
 7. (✅️fixed) 應該在 object template 中添加 Ability
-8. level6-0 中 reset 環境錯誤
+8. (✅️fixed) level6-0 中 reset 環境錯誤
 9. 環境編輯界面 3D 預覽區域無法顯示 USD 模型
 
 

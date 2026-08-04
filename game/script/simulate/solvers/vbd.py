@@ -73,9 +73,19 @@ class VBDSolver(BaseSolver):
         self.solver.step(state_in, state_out, control, contacts, dt)
 
     def post_teleport_sync(self, state):
-        # 關鍵：將 teleport 後的最新位置同步到 VBD 內部維護的 body_q_prev 中
+        # Teleport 後必須同步 VBD 內部歷史緩衝，否則下一幀會用舊 prev 推算速度/慣性，
+        # 造成剛體瞬間加速、軟體位置被拉回重置前的狀態。
         if self.model.body_count > 0:
             wp.copy(self.solver.body_q_prev, state.body_q)
+
+        if self.model.particle_count > 0 and hasattr(self.solver, "particle_q_prev"):
+            wp.copy(self.solver.particle_q_prev, state.particle_q)
+
+        if self.model.particle_count > 0 and hasattr(self.solver, "pos_prev_collision_detection"):
+            wp.copy(self.solver.pos_prev_collision_detection, state.particle_q)
+
+        if self.model.particle_count > 0 and hasattr(self.solver, "particle_displacements"):
+            self.solver.particle_displacements.zero_()
 
     def reset_history(self):
         # 重置接觸歷史更新標記 [1]

@@ -10,7 +10,7 @@ import time
 from script.game_config import GameConfig
 from pyglet import gl
 from pyglet import shapes # 用於繪製背景
-from pyglet.window import key
+from pyglet.window import key, mouse
 from newton.viewer import ViewerGL
 from newton import State
 from queue import Queue, Full
@@ -124,12 +124,25 @@ class CustomViewerGL(ViewerGL):
         # 運行兩次是因爲一次是 ViewerGL._init_ 的時候通過 self.renderer.register_key_press(self.on_key_press) 注冊的，還有一次不知道怎麽來的反正就有兩次
         # 可能導致未知影響，只是目前測試還沒發現問題
         self.renderer._key_callbacks = []
+        # 使用自訂 on_mouse_drag，避免父類更新 camera.yaw/pitch 後被 look_yaw/look_pitch 覆寫
+        self.renderer._mouse_drag_callbacks = []
+        self.renderer.register_mouse_drag(self.on_mouse_drag)
 
         # Newton 1.4 moved camera smoothing state off ViewerGL onto ViewerGui;
         # keep local copies for CustomViewerGL follow / free-camera logic.
         self._cam_vel = np.zeros(3, dtype=np.float32)
         self._cam_damp_tau = 0.083
         self._cam_speed = float(viewer_defaults.get("camera_move_speed", 4.0))
+        self._pick_depth_scroll_sensitivity = float(
+            viewer_defaults.get("pick_depth_scroll_sensitivity", 0.15)
+        )
+        self._pick_depth_min = float(viewer_defaults.get("pick_depth_min", 0.2))
+        self._camera_orbit_sensitivity = float(
+            viewer_defaults.get("camera_orbit_sensitivity", 0.1)
+        )
+        self._camera_dolly_drag_sensitivity = float(
+            viewer_defaults.get("camera_dolly_drag_sensitivity", 0.01)
+        )
         self._current_fps = 0.0
 
         self.object_inspector = ObjectInspectorPlugin()
@@ -722,8 +735,80 @@ class CustomViewerGL(ViewerGL):
 
     def on_key_release(self, symbol, modifiers): self.keyboard_keys[symbol] = 0
 
+    def _is_ctrl_down(self) -> bool:
+        return self.renderer.is_key_down(key.LCTRL) or self.renderer.is_key_down(key.RCTRL)
+
+    def _to_framebuffer_coords(self, x: float, y: float) -> tuple[float, float]:
+        fb_w, fb_h = self.renderer.window.get_framebuffer_size()
+        win_w, win_h = self.renderer.window.get_size()
+        if win_w <= 0 or win_h <= 0:
+            return float(x), float(y)
+        scale_x = fb_w / win_w
+        scale_y = fb_h / win_h
+        return float(x) * scale_x, float(y) * scale_y
+
+    def _camera_pan_scale(self) -> float:
+        height = max(float(self.camera.height), 1.0)
+        if hasattr(self.renderer, "window"):
+            _, window_height = self.renderer.window.get_size()
+            height = max(float(window_height), 1.0)
+        distance = max(self.camera.pivot_distance, self.camera.MIN_PIVOT_DISTANCE)
+        visible_height = 2.0 * distance * np.tan(np.radians(self.camera.fov) * 0.5)
+        return visible_height / height
+
+    def _get_pick_world_offset(self) -> np.ndarray:
+        if self.picking is None or self.model is None:
+            return np.zeros(3, dtype=np.float64)
+        picked_body_idx = int(self.picking.pick_body.numpy()[0])
+        if picked_body_idx < 0 or self.model.body_world is None:
+            return np.zeros(3, dtype=np.float64)
+        body_world_idx = int(self.model.body_world.numpy()[picked_body_idx])
+        world_offsets = getattr(self.picking, "world_offsets", None)
+        if world_offsets is None or body_world_idx < 0 or body_world_idx >= world_offsets.shape[0]:
+            return np.zeros(3, dtype=np.float64)
+        offset = world_offsets.numpy()[body_world_idx]
+        return np.array([offset[0], offset[1], offset[2]], dtype=np.float64)
+
+    def _adjust_pick_depth_by_scroll(self, scroll_y: float, mouse_x: float, mouse_y: float) -> bool:
+        if (
+            not self.picking_enabled
+            or self.picking is None
+            or not self.picking.is_picking()
+            or abs(scroll_y) < 1e-6
+        ):
+            return False
+
+        fb_x, fb_y = self._to_framebuffer_coords(mouse_x, mouse_y)
+        ray_start, ray_dir = self.camera.get_world_ray(fb_x, fb_y)
+        ray_origin = np.array([ray_start[0], ray_start[1], ray_start[2]], dtype=np.float64)
+        ray_direction = np.array([ray_dir[0], ray_dir[1], ray_dir[2]], dtype=np.float64)
+        ray_len = float(np.linalg.norm(ray_direction))
+        if ray_len < 1e-9:
+            return False
+        ray_direction /= ray_len
+
+        pick_state_np = self.picking.pick_state.numpy()
+        target = np.array(pick_state_np[0]["picking_target_world"], dtype=np.float64)
+        world_offset = self._get_pick_world_offset()
+        target_offset = target + world_offset
+
+        depth = float(np.dot(target_offset - ray_origin, ray_direction))
+        depth = max(self._pick_depth_min, depth + scroll_y * self._pick_depth_scroll_sensitivity)
+        new_target = ray_origin + ray_direction * depth - world_offset
+
+        pick_state_np[0]["picking_target_world"] = (
+            float(new_target[0]),
+            float(new_target[1]),
+            float(new_target[2]),
+        )
+        self.picking.pick_state.assign(pick_state_np)
+        return True
+
     def on_mouse_scroll(self, x: float, y: float, scroll_x: float, scroll_y: float): 
         if self._ui_is_capturing_mouse():
+            return
+
+        if self._adjust_pick_depth_by_scroll(scroll_y, x, y):
             return
 
         if self._is_ctrl_down():
@@ -732,17 +817,67 @@ class CustomViewerGL(ViewerGL):
             self.camera.fov = max(min(self.camera.fov, 120.0), 15.0)
 
     def on_mouse_press(self, x, y, button, modifiers):
-        self.mouse_buttons[button-1] = 1
-        if button == 1 and not self.is_mouse_exclusive:
+        self.mouse_buttons[button - 1] = 1
+        if self._ui_is_capturing_mouse():
+            return
+
+        if button == mouse.LEFT and not self.is_mouse_exclusive:
             self._mouse_press_pos = (x, y)
+        elif (
+            button == mouse.RIGHT
+            and not self.is_mouse_exclusive
+            and self.picking_enabled
+            and self.picking is not None
+        ):
+            fb_x, fb_y = self._to_framebuffer_coords(x, y)
+            ray_start, ray_dir = self.camera.get_world_ray(fb_x, fb_y)
+            if self._last_state is not None:
+                self.picking.pick(self._last_state, ray_start, ray_dir)
 
     def on_mouse_release(self, x, y, button, modifiers):
-        self.mouse_buttons[button-1] = 0
-        if button == 1 and self._mouse_press_pos is not None and not self.is_mouse_exclusive:
+        self.mouse_buttons[button - 1] = 0
+        if button == mouse.LEFT and self._mouse_press_pos is not None and not self.is_mouse_exclusive:
             px, py = self._mouse_press_pos
             if abs(x - px) <= 4 and abs(y - py) <= 4:
                 self.object_inspector.select_from_ray(x, y)
         self._mouse_press_pos = None
+        if self.picking is not None:
+            self.picking.release()
+
+    def on_mouse_drag(self, x, y, dx, dy, buttons, modifiers):
+        if self._ui_is_capturing_mouse():
+            return
+
+        if self.is_mouse_exclusive:
+            return
+
+        if buttons & mouse.MIDDLE:
+            if modifiers & key.MOD_CTRL:
+                self.camera.dolly(dy * self._camera_dolly_drag_sensitivity)
+            elif modifiers & key.MOD_SHIFT:
+                pan_scale = self._camera_pan_scale()
+                self.camera.pan(-dx * pan_scale, -dy * pan_scale)
+            else:
+                sensitivity = self._camera_orbit_sensitivity
+                self.camera.orbit(delta_yaw=-dx * sensitivity, delta_pitch=dy * sensitivity)
+            self.look_yaw = float(self.camera.yaw)
+            self.look_pitch = float(self.camera.pitch)
+            return
+
+        if buttons & mouse.LEFT:
+            self.look_yaw -= dx * self.mouse_sensitivity
+            self.look_pitch += dy * self.mouse_sensitivity
+            self.look_pitch = max(-89.0, min(89.0, self.look_pitch))
+            if self._mouse_press_pos is not None:
+                px, py = self._mouse_press_pos
+                if abs(x - px) > 4 or abs(y - py) > 4:
+                    self._mouse_press_pos = None
+
+        if buttons & mouse.RIGHT and self.picking_enabled:
+            fb_x, fb_y = self._to_framebuffer_coords(x, y)
+            ray_start, ray_dir = self.camera.get_world_ray(fb_x, fb_y)
+            if self.picking is not None and self.picking.is_picking():
+                self.picking.update(ray_start, ray_dir)
 
     def on_mouse_motion(self, x, y, dx, dy):
         if self.is_mouse_exclusive:

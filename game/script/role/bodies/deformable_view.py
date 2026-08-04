@@ -50,6 +50,33 @@ def scatter_deformable_attribute_kernel(
         flat_attrib[global_idx] = values[world, obj_idx, particle_idx]
 
 @wp.kernel
+def localize_template_positions_kernel(
+    world_positions: wp.array(dtype=wp.vec3),
+    default_transform: wp.transform,
+    local_positions: wp.array(dtype=wp.vec3),
+):
+    tid = wp.tid()
+    inv_tf = wp.transform_inverse(default_transform)
+    local_positions[tid] = wp.transform_point(inv_tf, world_positions[tid])
+
+
+@wp.kernel
+def reset_deformable_velocities_direct_kernel(
+    view_mask: wp.array2d(dtype=wp.bool),
+    offsets_gpu: wp.array(dtype=int),
+    stride_between_worlds: int,
+    flat_particle_qd: wp.array(dtype=wp.vec3),
+    flat_particle_f: wp.array(dtype=wp.vec3),
+):
+    world, obj_idx, particle_idx = wp.tid()
+
+    if view_mask[world, obj_idx]:
+        global_idx = offsets_gpu[obj_idx] + world * stride_between_worlds + particle_idx
+        flat_particle_qd[global_idx] = wp.vec3(0.0, 0.0, 0.0)
+        flat_particle_f[global_idx] = wp.vec3(0.0, 0.0, 0.0)
+
+
+@wp.kernel
 def reset_deformable_direct_kernel(
     reset_mask: wp.array(dtype=wp.int32),               # 全域一維剛體重置遮罩 (body_count,)
     view_object_indices_gpu: wp.array(dtype=int),       # 本 View 的物件在單世界中的局部索引 (count_per_world,)
@@ -392,9 +419,32 @@ class DeformableView:
                 self.stride_between_worlds,
                 template_positions,
                 random_transforms,
-                state.particle_q  # 直接將物理狀態作為寫入目標！
+                state.particle_q,
             ],
             device=self.device
+        )
+
+    def reset_velocities(self, state, view_reset_mask):
+        """直接清零被重置物件的粒子速度與殘留外力，與 reset_positions 走同一套索引邏輯。"""
+        wp.launch(
+            reset_deformable_velocities_direct_kernel,
+            dim=(self.world_count, self.count_per_world, self.count_particle_per_object),
+            inputs=[
+                view_reset_mask,
+                self._offsets_gpu,
+                self.stride_between_worlds,
+                state.particle_qd,
+                state.particle_f,
+            ],
+            device=self.device,
+        )
+
+    def localize_template_positions(self, world_positions, default_transform, local_positions):
+        wp.launch(
+            localize_template_positions_kernel,
+            dim=world_positions.shape[0],
+            inputs=[world_positions, default_transform, local_positions],
+            device=self.device,
         )
 
     def get_velocities(self, source: Model | State):
