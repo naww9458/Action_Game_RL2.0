@@ -13,6 +13,11 @@ calc_reward_path: 'Reward Path (Auto):'
 calc_shape_path: 'Shape Path (Auto):'
 cancel: Cancel
 cancel_no_save: Discard and Back
+coupled_params_section: 'Coupling Parameters'
+coupled_rigid_solver: 'Rigid Solver:'
+coupled_soft_solver: 'Soft Solver:'
+solver_params_section: 'Solver Parameters'
+solver_params_title: '{solver} Parameters'
 capture_per_second: 'Capture Per Second (capture_per_second):'
 checkpoint_select: Checkpoint
 config_dir: 'Config Save Dir:'

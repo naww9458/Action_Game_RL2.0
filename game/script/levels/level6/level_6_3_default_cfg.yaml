@@ -1,0 +1,304 @@
+environment_configs:
+  space_xyz:
+  - 20
+  - 20
+  - 20
+  interval_distance: 5.0
+  gravity:
+  - 0
+  - 0
+  - -9.8
+  damping:
+  - 0.1
+  - 0.1
+  fps_action: 60
+  sub_steps: 1
+  ground_shape_friction: 0.5
+  solver_config:
+    type: mpm
+    max_iterations: 250
+    tolerance: 1.0e-06
+    solver: auto
+    warmstart_mode: auto
+    collider_velocity_mode: forward
+    voxel_size: 0.05
+    grid_type: sparse
+    grid_padding: 0
+    max_active_cell_count: -1
+    transfer_scheme: apic
+    integration_scheme: pic
+    critical_fraction: 0.0
+    air_drag: 1.0
+    collider_normal_from_sdf_gradient: false
+    collider_basis: S2
+    strain_basis: P0
+    velocity_basis: Q1
+platform_configs:
+- type: platform
+  id: platform_0
+  name: New_Platform
+  color:
+  - 200
+  - 200
+  - 200
+  default_position:
+  - 0.0
+  - 0.0
+  - 1.1
+  default_rotation:
+  - 0.0
+  - 0.0
+  default_velocity:
+  - 0.0
+  - 0.0
+  - 0.0
+  default_angular_velocity:
+  - 0.0
+  - 0.0
+  - 0.0
+  possess_offset:
+  - 0.0
+  - 0.0
+  - 0.0
+  abilities: []
+  object:
+    type: rigid_box
+    pattern: default
+    object_friction: 0.5
+    object_elasticity: 0.5
+    size:
+    - 1.0
+    - 1.0
+    - 0.1
+    object_mass: 0.0
+    lock_inertia: false
+    is_kinematic: true
+    as_site: false
+    color: null
+- type: platform
+  id: platform_1
+  name: New_Platform
+  color:
+  - 200
+  - 200
+  - 200
+  default_position:
+  - 1.1
+  - 0.0
+  - 2.0
+  default_rotation:
+  - 0.0
+  - 0.0
+  default_velocity:
+  - 0.0
+  - 0.0
+  - 0.0
+  default_angular_velocity:
+  - 0.0
+  - 0.0
+  - 0.0
+  possess_offset:
+  - 0.0
+  - 0.0
+  - 0.0
+  abilities: []
+  object:
+    type: rigid_box
+    pattern: default
+    object_friction: 0.5
+    object_elasticity: 0.5
+    size:
+    - 0.1
+    - 1.2
+    - 1.0
+    object_mass: 0.0
+    lock_inertia: false
+    is_kinematic: true
+    as_site: false
+    color: null
+- type: platform
+  id: platform_2
+  name: New_Platform
+  color:
+  - 200
+  - 200
+  - 200
+  default_position:
+  - -1.1
+  - 0.0
+  - 2.0
+  default_rotation:
+  - 0.0
+  - 0.0
+  default_velocity:
+  - 0.0
+  - 0.0
+  - 0.0
+  default_angular_velocity:
+  - 0.0
+  - 0.0
+  - 0.0
+  possess_offset:
+  - 0.0
+  - 0.0
+  - 0.0
+  abilities: []
+  object:
+    type: rigid_box
+    pattern: default
+    object_friction: 0.5
+    object_elasticity: 0.5
+    size:
+    - 0.1
+    - 1.2
+    - 1.0
+    object_mass: 0.0
+    lock_inertia: false
+    is_kinematic: true
+    as_site: false
+    color: null
+- type: platform
+  id: platform_3
+  name: New_Platform
+  color:
+  - 200
+  - 200
+  - 200
+  default_position:
+  - 0.0
+  - 1.1
+  - 2.0
+  default_rotation:
+  - 0.0
+  - 0.0
+  default_velocity:
+  - 0.0
+  - 0.0
+  - 0.0
+  default_angular_velocity:
+  - 0.0
+  - 0.0
+  - 0.0
+  possess_offset:
+  - 0.0
+  - 0.0
+  - 0.0
+  abilities: []
+  object:
+    type: rigid_box
+    pattern: default
+    object_friction: 0.5
+    object_elasticity: 0.5
+    size:
+    - 1.0
+    - 0.1
+    - 1.0
+    object_mass: 0.0
+    lock_inertia: false
+    is_kinematic: true
+    as_site: false
+    color: null
+- type: platform
+  id: platform_4
+  name: New_Platform
+  color:
+  - 200
+  - 200
+  - 200
+  default_position:
+  - 0.0
+  - -1.1
+  - 2.0
+  default_rotation:
+  - 0.0
+  - 0.0
+  default_velocity:
+  - 0.0
+  - 0.0
+  - 0.0
+  default_angular_velocity:
+  - 0.0
+  - 0.0
+  - 0.0
+  possess_offset:
+  - 0.0
+  - 0.0
+  - 0.0
+  abilities: []
+  object:
+    type: rigid_box
+    pattern: default
+    object_friction: 0.5
+    object_elasticity: 0.5
+    size:
+    - 1.0
+    - 0.1
+    - 1.0
+    object_mass: 0.0
+    lock_inertia: false
+    is_kinematic: true
+    as_site: false
+    color: null
+player_configs: []
+entity_configs:
+  mpm_mud:
+    type: entity
+    id: mpm_mud
+    name: MPM_Mud
+    color:
+    - 102
+    - 64
+    - 64
+    default_position:
+    - 0.0
+    - 0.0
+    - 1.2
+    default_rotation:
+    - 0.0
+    - 0.0
+    default_velocity:
+    - 0.0
+    - 0.0
+    - 0.0
+    default_angular_velocity:
+    - 0.0
+    - 0.0
+    - 0.0
+    possess_offset:
+    - 0.0
+    - 0.0
+    - 0.0
+    separation:
+    - 1
+    - 1
+    - 1
+    abilities: []
+    object:
+      type: mpm_particles
+      pattern: mpm_mud
+      object_friction: 0.5
+      object_elasticity: 0.5
+      bounds_lo:
+      - -0.5
+      - -0.5
+      - 0.0
+      bounds_hi:
+      - 0.5
+      - 0.5
+      - 0.6
+      voxel_size: 0.05
+      particles_per_cell: 3
+      density: 1000.0
+      radius_mean: null
+      young_modulus: 1000000.0
+      poisson_ratio: 0.3
+      damping: 0.0
+      friction: 0.0
+      yield_pressure: 10000000000.0
+      tensile_yield_ratio: 1.0
+      yield_stress: 300.0
+      hardening: 0.0
+      hardening_rate: 1.0
+      softening_rate: 1.0
+      dilatancy: 0.0
+      viscosity: 100.0

@@ -1,0 +1,33 @@
+id: mpm_mud
+display_name: MPM Mud
+object_type: mpm_particles
+# 材質參數對應 NVIDIA example_mpm_multi_material.py 中的 mud 設定
+object:
+  pattern: mpm_mud
+  type: mpm_particles
+  object_friction: 0.5
+  object_elasticity: 0.5
+  bounds_lo:
+  - -0.5
+  - -0.5
+  - 0.0
+  bounds_hi:
+  - 0.5
+  - 0.5
+  - 0.6
+  voxel_size: 0.05
+  particles_per_cell: 3
+  density: 1000.0
+  radius_mean: null
+  young_modulus: 1000000.0
+  poisson_ratio: 0.3
+  damping: 0.0
+  friction: 0.0
+  yield_pressure: 10000000000.0
+  tensile_yield_ratio: 1.0
+  yield_stress: 300.0
+  hardening: 0.0
+  hardening_rate: 1.0
+  softening_rate: 1.0
+  dilatancy: 0.0
+  viscosity: 100.0

@@ -13,6 +13,11 @@ calc_reward_path: '獎勵函數路徑 (自動):'
 calc_shape_path: '形狀讀取路徑 (自動):'
 cancel: 取消
 cancel_no_save: 放棄保存並返回
+coupled_params_section: '耦合參數'
+coupled_rigid_solver: '剛體求解器:'
+coupled_soft_solver: '軟體求解器:'
+solver_params_section: '求解器參數'
+solver_params_title: '{solver} 參數'
 capture_per_second: '每秒截圖 (capture_per_second):'
 checkpoint_select: 檢查點
 config_dir: '設置文件儲存目錄:'

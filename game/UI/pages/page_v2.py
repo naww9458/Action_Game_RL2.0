@@ -21,6 +21,14 @@ from pydantic import BaseModel
 from script.levels.level_cfg import EnvironmentConfig
 
 from script.simulate.solvers.base_solver import SolverRegistry
+from script.simulate.solvers.coupled import (
+    CoupledSolverModel,
+    RIGID_CAPABLE_SOLVERS,
+    SOFT_CAPABLE_SOLVERS,
+    coupled_solvers_list,
+    prune_coupled_solver_configs,
+    resolve_coupled_domains,
+)
 from script.role.objects.base_object import ObjectRegistry
 from script.role.objects.object_template.loader import load_object_templates
 from script.role.base_role import RoleRegistry
@@ -231,6 +239,61 @@ class MultiSelectComboBox(QComboBox):
             if it.checkState() == Qt.CheckState.Checked:
                 res.append(it.text())
         return res
+
+
+class CollapsibleSection(QWidget):
+    """可摺疊的表單區塊：點擊標題列展開/收起內容。"""
+
+    def __init__(
+        self,
+        title: str,
+        accent_color: str = "#90caf9",
+        expanded: bool = True,
+        parent=None,
+    ):
+        super().__init__(parent)
+        layout = QVBoxLayout(self)
+        layout.setContentsMargins(0, 0, 0, 0)
+        layout.setSpacing(0)
+
+        self._toggle = QToolButton()
+        self._toggle.setText(title)
+        self._toggle.setCheckable(True)
+        self._toggle.setChecked(expanded)
+        self._toggle.setToolButtonStyle(Qt.ToolButtonStyle.ToolButtonTextBesideIcon)
+        self._toggle.setArrowType(
+            Qt.ArrowType.DownArrow if expanded else Qt.ArrowType.RightArrow
+        )
+        self._toggle.setStyleSheet(
+            "QToolButton {"
+            " border: none;"
+            " font-weight: bold;"
+            " text-align: left;"
+            " padding: 4px 2px;"
+            " color: #ddd;"
+            "}"
+            "QToolButton:hover { background-color: #3a3a3a; }"
+        )
+        self._toggle.toggled.connect(self._on_toggled)
+        layout.addWidget(self._toggle)
+
+        self._content = QFrame()
+        self._content.setFrameShape(QFrame.Shape.StyledPanel)
+        self._content.setStyleSheet(
+            f"QFrame {{ border-left: 3px solid {accent_color};"
+            f" background-color: #262626; margin: 0 0 4px 0; padding: 4px; }}"
+        )
+        self.form_layout = QFormLayout(self._content)
+        self.form_layout.setContentsMargins(8, 4, 8, 4)
+        layout.addWidget(self._content)
+
+        self._content.setVisible(expanded)
+
+    def _on_toggled(self, expanded: bool) -> None:
+        self._content.setVisible(expanded)
+        self._toggle.setArrowType(
+            Qt.ArrowType.DownArrow if expanded else Qt.ArrowType.RightArrow
+        )
 
 
 class AbilityConfigEditor(QWidget):
@@ -1104,11 +1167,18 @@ class EditPage(BasePage):
         combo.currentTextChanged.connect(on_type_changed)
         self.attr_form.addRow(f"    Select {key.capitalize()}:", combo)
 
-        # 彩色標記區域 (QFrame)
-        frame = QFrame()
-        frame.setFrameShape(QFrame.Shape.StyledPanel)
-        frame.setStyleSheet(f"QFrame {{ border-left: 4px solid {border_color}; background-color: #2b2b2b; margin: 5px 10px; padding: 5px; }}")
-        frame_layout = QFormLayout(frame)
+        current_type_name = current_val.get("type")
+        if current_type_name == "coupled":
+            self._render_coupled_solver_config(current_val, border_color)
+            return
+
+        # 彩色標記區域 — 求解器參數可摺疊
+        params_section = CollapsibleSection(
+            TR.get("solver_params_section"),
+            accent_color=border_color,
+            expanded=True,
+        )
+        frame_layout = params_section.form_layout
 
         # 暫時替換渲染目標
         original_form = self.attr_form
@@ -1131,6 +1201,166 @@ class EditPage(BasePage):
 
         self.attr_form = original_form
         self.row_counter = original_zebra 
+        self.attr_form.addRow(params_section)
+
+    def _ensure_coupled_solver_config_entry(self, coupled_val: dict, solver_name: str) -> dict:
+        """確保 solver_configs 中存在指定求解器的配置字典（不含 type 欄位）。"""
+        if coupled_val.get("solver_configs") is None:
+            coupled_val["solver_configs"] = {}
+        solver_configs = coupled_val["solver_configs"]
+        if not isinstance(solver_configs, dict):
+            solver_configs = {}
+            coupled_val["solver_configs"] = solver_configs
+
+        if solver_name not in solver_configs or not isinstance(solver_configs.get(solver_name), dict):
+            handler = SolverRegistry.get_handler(solver_name)
+            if handler is None:
+                solver_configs[solver_name] = {}
+            else:
+                entry = copy.deepcopy(get_pydantic_default(handler.model_cls))
+                entry.pop("type", None)
+                solver_configs[solver_name] = entry
+        return solver_configs[solver_name]
+
+    def _sync_coupled_domain_fields(self, coupled_val: dict) -> tuple[str, str]:
+        """同步 rigid_solver / soft_solver / solvers 三個欄位。"""
+        rigid, soft = resolve_coupled_domains(coupled_val)
+        coupled_val["rigid_solver"] = rigid
+        coupled_val["soft_solver"] = soft
+        coupled_val["solvers"] = coupled_solvers_list(rigid, soft)
+        prune_coupled_solver_configs(coupled_val)
+        return rigid, soft
+
+    def _render_sub_solver_config_block(
+        self,
+        parent_layout: QFormLayout,
+        coupled_val: dict,
+        solver_name: str,
+        accent_color: str,
+    ) -> None:
+        """在 Coupled 區塊內渲染單一子求解器的屬性表單。"""
+        cfg = self._ensure_coupled_solver_config_entry(coupled_val, solver_name)
+        handler = SolverRegistry.get_handler(solver_name)
+        if handler is None:
+            return
+
+        model_cls = handler.model_cls
+        defaults = get_pydantic_default(model_cls)
+        defaults.pop("type", None)
+        for field_name, default_val in defaults.items():
+            if field_name not in cfg and default_val is not None:
+                cfg[field_name] = default_val
+
+        section_title = TR.get("solver_params_title").format(solver=solver_name.upper())
+        params_section = CollapsibleSection(
+            section_title,
+            accent_color=accent_color,
+            expanded=False,
+        )
+        sub_form = params_section.form_layout
+
+        original_form = self.attr_form
+        self.attr_form = sub_form
+        for field_name, field_info in model_cls.model_fields.items():
+            if field_name == "type":
+                continue
+            field_val = cfg.get(field_name)
+            if field_val is None:
+                default_value = get_editor_field_default(field_info)
+                if default_value is not _MISSING_FIELD_DEFAULT:
+                    field_val = default_value
+                    cfg[field_name] = field_val
+            self.add_editable_row(
+                field_name,
+                field_val,
+                cfg,
+                use_zebra=False,
+                field_type=field_info.annotation,
+            )
+        self.attr_form = original_form
+        parent_layout.addRow(params_section)
+
+    def _render_coupled_solver_config(self, coupled_val: dict, border_color: str) -> None:
+        """Coupled 求解器專用 UI：剛體/軟體下拉選單 + 各自屬性 + 耦合參數。"""
+        rigid_name, soft_name = self._sync_coupled_domain_fields(coupled_val)
+        if coupled_val.get("solver_configs") is None:
+            coupled_val["solver_configs"] = {}
+        solver_configs = coupled_val["solver_configs"]
+        if not isinstance(solver_configs, dict):
+            solver_configs = {}
+            coupled_val["solver_configs"] = solver_configs
+
+        self._ensure_coupled_solver_config_entry(coupled_val, rigid_name)
+        self._ensure_coupled_solver_config_entry(coupled_val, soft_name)
+
+        frame = QFrame()
+        frame.setFrameShape(QFrame.Shape.StyledPanel)
+        frame.setStyleSheet(
+            f"QFrame {{ border-left: 4px solid {border_color};"
+            f" background-color: #2b2b2b; margin: 5px 10px; padding: 5px; }}"
+        )
+        frame_layout = QFormLayout(frame)
+
+        def on_rigid_changed(new_name: str) -> None:
+            coupled_val["rigid_solver"] = new_name
+            self._sync_coupled_domain_fields(coupled_val)
+            self._ensure_coupled_solver_config_entry(coupled_val, new_name)
+            if self._current_temp_id:
+                self.refresh_editor_by_temp_id(self._current_temp_id)
+
+        rigid_combo = QComboBox()
+        rigid_combo.addItems(list(RIGID_CAPABLE_SOLVERS))
+        if rigid_name in RIGID_CAPABLE_SOLVERS:
+            rigid_combo.setCurrentText(rigid_name)
+        rigid_combo.currentTextChanged.connect(on_rigid_changed)
+        frame_layout.addRow(TR.get("coupled_rigid_solver"), rigid_combo)
+        self._render_sub_solver_config_block(
+            frame_layout, coupled_val, rigid_name, "#81c784"
+        )
+
+        def on_soft_changed(new_name: str) -> None:
+            coupled_val["soft_solver"] = new_name
+            self._sync_coupled_domain_fields(coupled_val)
+            self._ensure_coupled_solver_config_entry(coupled_val, new_name)
+            if self._current_temp_id:
+                self.refresh_editor_by_temp_id(self._current_temp_id)
+
+        soft_combo = QComboBox()
+        soft_combo.addItems(list(SOFT_CAPABLE_SOLVERS))
+        if soft_name in SOFT_CAPABLE_SOLVERS:
+            soft_combo.setCurrentText(soft_name)
+        soft_combo.currentTextChanged.connect(on_soft_changed)
+        frame_layout.addRow(TR.get("coupled_soft_solver"), soft_combo)
+        self._render_sub_solver_config_block(
+            frame_layout, coupled_val, soft_name, "#ffb74d"
+        )
+
+        coupling_section = CollapsibleSection(
+            TR.get("coupled_params_section"),
+            accent_color="#90caf9",
+            expanded=True,
+        )
+
+        original_form = self.attr_form
+        self.attr_form = coupling_section.form_layout
+
+        for field_name in ("coupling_mode", "mass_scale", "proxy_iterations"):
+            field_info = CoupledSolverModel.model_fields[field_name]
+            field_val = coupled_val.get(field_name)
+            if field_val is None:
+                default_value = get_editor_field_default(field_info)
+                if default_value is not _MISSING_FIELD_DEFAULT:
+                    field_val = default_value
+                    coupled_val[field_name] = field_val
+            self.add_editable_row(
+                field_name,
+                field_val,
+                coupled_val,
+                use_zebra=False,
+                field_type=field_info.annotation,
+            )
+        self.attr_form = original_form
+        frame_layout.addRow(coupling_section)
         self.attr_form.addRow(frame)
 
     def add_object_from_registry(self, info: dict, role_name: str = ""):
@@ -1429,7 +1659,15 @@ class EditPage(BasePage):
             if isinstance(new_val, list): data_source[key] = new_val
         except: pass
 
+    def _prune_coupled_solver_config_in_yaml(self) -> None:
+        """保存前清理 coupled 配置中未使用的 solver_configs 條目。"""
+        env = self.current_yaml_data.get("environment_configs", {})
+        solver_config = env.get("solver_config")
+        if isinstance(solver_config, dict):
+            prune_coupled_solver_configs(solver_config)
+
     def save_and_exit(self):
+        self._prune_coupled_solver_config_in_yaml()
         self.window().save_ui_settings(self.main_splitter.sizes(), self.right_splitter.sizes())
         if self.current_file_path:
             with open(self.current_file_path, 'w', encoding='utf-8') as f:

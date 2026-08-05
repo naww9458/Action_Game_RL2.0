@@ -162,7 +162,9 @@
             a. (✅️finished) Unitree G1 (無手部控制，代表機器人角色分類)
             b. (✅️finished) 輪式裝甲車 (代表模塊化改裝設計，局内切換模塊，基礎功能完成)
 
-   50. 多求解器協同模擬（MuJoCo 用於機器人，VBD/XPBD 用於剛體/軟體，MPM 用於流體）
+   50. (✅️finished) 多求解器協同模擬（MuJoCo 用於機器人，VBD/XPBD 用於剛體/軟體，MPM 用於流體）
+            目前情況：MPM 求解器模擬速度過慢 ( 不確定具體原因但 Nvidia 官方 Example 幀率也不高 )，因此暫時不做相關應用等待後續發展
+                     軟體球 ( VBD ) 和 Unitree G1 ( MuJoCo ) 能在同一環境中模擬但還沒想到實際可行的應用方案
 
    51. (✅️finished) 移除基於 nvdiffrast 的 Renderer（暫時）。
        原因：為保持本專案 Apache-2.0 授權的一致性，暫時移除依賴 NVIDIA Source Code License (1-Way Commercial) 的實作。

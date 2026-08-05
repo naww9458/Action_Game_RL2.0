@@ -279,7 +279,7 @@ class BaseRole(ABC):
         if object["type"].startswith("rigid_"):
             self._articulation_body.add_object(label=label, index=index, default_position=default_position_tuple, default_rotation=default_rotation_tuple)
 
-        elif object["type"].startswith("soft_"):
+        elif object["type"].startswith("soft_") or object["type"].startswith("mpm_"):
             self._deformable_body.add_object(label=label, index=index, particle_index=data, default_position=default_position_tuple, default_rotation=default_rotation_tuple)
 
         else: # TODO

@@ -9,6 +9,7 @@ from script.simulate.solvers.base_solver import SolverRegistry
 from script.game_config import GameConfig
 from script.exceptions import GameClosedException
 from script.sensors.contact_sensor import ContactSensor, build_shape_to_role_map
+from script.simulate.coupling_index_builder import CouplingIndexBuilder
 
 from script.role.bodies.articulation_body import ArticulationBody
 from script.role.bodies.deformable_body import DeformableBody
@@ -67,6 +68,9 @@ class PhysicsManager:
         self.shape_to_role_np: np.ndarray | None = None
         self.num_objects_env: int = 0
 
+        # 耦合求解器索引收集器（僅在 solver 為 "coupled" 時使用）
+        self._coupling_builder = CouplingIndexBuilder()
+
     def add_shape(self, label: str, object_config: dict, collision_group, pos = None, rot = None, vel = None, role_object_id: int = -1):
         """
         現在傳入的 object_config 是一個 Pydantic 對象 
@@ -82,10 +86,26 @@ class PhysicsManager:
         cfg = self.builder_env.ShapeConfig()
         cfg.collision_group = collision_group
 
+        # 耦合索引收集：記錄 add_physics 前的 builder_env 狀態
+        body_before = self.builder_env.body_count
+        joint_before = self.builder_env.joint_count
+        particle_before = self.builder_env.particle_count
+
         shape_begin = self.builder_env.shape_count
         # 調用形狀專屬邏輯 (多型調用)
         add_result = object_handler.add_physics(builder_env=self.builder_env, label=label, data=object_config, cfg=cfg, pos=pos, rot=rot, vel=vel)
         shape_end = self.builder_env.shape_count
+
+        # 耦合索引收集：記錄 add_physics 後的 builder_env 狀態
+        self._coupling_builder.record_object(
+            label=label,
+            body_start=body_before,
+            body_end=self.builder_env.body_count,
+            joint_start=joint_before,
+            joint_end=self.builder_env.joint_count,
+            particle_start=particle_before,
+            particle_end=self.builder_env.particle_count,
+        )
 
         if isinstance(add_result, dict):
             meta = {
@@ -143,11 +163,41 @@ class PhysicsManager:
         if not solver_handler_cls:
             raise ValueError(f"Solver key '{solver_key}' not registered!")
 
+        # MPM 求解器需要額外的 per-particle 材質/狀態自訂屬性 (mpm: namespace)。
+        # 必須在 add_world / finalize 之前註冊，屬性會隨 builder 合併傳播。
+        from script.simulate.solvers.mpm import (
+            filter_mpm_collider_shapes,
+            solver_requires_mpm_attributes,
+        )
+        from newton.solvers import SolverImplicitMPM
+
+        if solver_requires_mpm_attributes(solver_config):
+            SolverImplicitMPM.register_custom_attributes(self.builder_env)
+            # MPM collider mesh 建構僅支援特定 GeoType；對其餘形狀（如 USD 匯入的
+            # CONVEX_MESH）關閉 COLLIDE_PARTICLES，避免建立求解器時拋出 NotImplementedError。
+            filter_mpm_collider_shapes(self.builder_env)
+            # MPM 求解器每個 step 都會依粒子位置動態分配稀疏網格 (allocate_by_voxels)，
+            # CUDA Graph 捕獲期間禁止動態記憶體分配，故含 MPM 的環境停用圖形捕獲，
+            # step_CUDA_Graph 退化成直接逐幀模擬。
+            self.capture_graph_after_step = 2**31 - 1
+
         for n in range(num_env):
             self.builder.add_world(self.builder_env)
 
+        # 耦合求解器索引結構鎖定（在 add_world 之後、solver 創建之前）
+        self._coupling_builder.finalize_structure(
+            env_body_count=self.builder_env.body_count,
+            env_joint_count=self.builder_env.joint_count,
+            env_particle_count=self.builder_env.particle_count,
+            num_env=num_env,
+        )
+
         # Finalize the model - this creates the simulation-ready Model object
-        self.solver_handler = solver_handler_cls(config=solver_config, builder=self.builder)
+        self.solver_handler = solver_handler_cls(
+            config=solver_config,
+            builder=self.builder,
+            coupling_builder=self._coupling_builder,
+        )
         self.model = self.builder.finalize(device=self.device)
 
         self.mesh = self.mesh_builder.finalize(device=self.device)
@@ -417,6 +467,12 @@ class PhysicsManager:
             if self.state_0.body_q is not None and self.state_1.body_q is not None:
                 wp.copy(self.state_1.body_q, self.state_0.body_q)
                 wp.copy(self.state_1.body_qd, self.state_0.body_qd)
+
+            # 關節體（如 free-joint 剛體）的位姿存放在 joint_q，同樣需要雙緩衝對齊
+            if self.state_0.joint_q is not None and self.state_1.joint_q is not None:
+                wp.copy(self.state_1.joint_q, self.state_0.joint_q)
+                if self.state_1.joint_qd is not None:
+                    wp.copy(self.state_1.joint_qd, self.state_0.joint_qd)
 
             # 一鍵清空環境重置遮罩，防子步驟重置信號漏失
             self.reset_mask_gpu.zero_()
