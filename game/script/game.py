@@ -199,6 +199,26 @@ class Game:
 
         self.default_action = wp.zeros(shape=[self.players.num_rl_players, GameConfig.ACTION_SHAPE_OFFSET], dtype=wp.float32, device=self.physics_manager.device, requires_grad=GameConfig.requires_grad) # TODO Hard code
 
+        # Persistent RL action buffer for CUDA Graph replay: captured kernels must read
+        # a stable GPU address; wp.from_torch() each step would leave stale pointers.
+        self._step_actions_torch = torch.zeros(
+            (self.players.num_rl_players, GameConfig.ACTION_SHAPE_OFFSET),
+            device=self.torch_device,
+            dtype=torch.float32,
+        )
+        self._step_actions_wp = wp.from_torch(self._step_actions_torch, dtype=wp.float32)
+
+    def _prepare_step_actions(self, actions: torch.Tensor | None) -> wp.array2d:
+        """Copy incoming policy actions into the persistent Warp buffer used by CUDA Graph."""
+        if actions is None:
+            return self.default_action
+        if actions.shape != self._step_actions_torch.shape:
+            raise ValueError(
+                f"Action shape mismatch: expected {tuple(self._step_actions_torch.shape)}, "
+                f"got {tuple(actions.shape)}"
+            )
+        self._step_actions_torch.copy_(actions)
+        return self._step_actions_wp
 
     def setup_render(self):
         """Set up renderer and window"""
@@ -345,16 +365,7 @@ class Game:
             info: Additional information
         """
 
-        # print("actions: ", actions)
-        # step_total_rewards, terminated = self.level.action()
-
-        # Step the physics simulation
-
-        # # TODO may cause body_qd turn nan when rl action run in CUDA Graph
-        if actions is not None:
-            actions_wp = wp.from_torch(actions, dtype=wp.float32)
-        else:
-            actions_wp = self.default_action
+        actions_wp = self._prepare_step_actions(actions)
 
         self._apply_inspector_rl_actions(actions_wp)
         self.players.rl_action(actions=actions_wp)
@@ -382,12 +393,12 @@ class Game:
             
             self.reward_calculator.calculate_rewards(
                 current_step=self.current_step, 
-                actions=actions_wp, 
+                actions=self._step_actions_wp, 
                 max_episode_step=self.max_episode_step, 
                 command_vel=self.level.commands
             )
             if hasattr(self.level, "on_step_actions"):
-                self.level.on_step_actions(actions_wp)
+                self.level.on_step_actions(self._step_actions_wp)
             self.step_total_rewards = self.reward_calculator.step_total_rewards_rl
             self.handle_update_sub_step()
 

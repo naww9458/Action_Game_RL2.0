@@ -288,10 +288,9 @@ class G1LocomotionTerminator(RewardComponent):
         
         self.winner = wp.zeros(shape=GameConfig.NUM_OBJECTS_TOTAL, dtype=wp.int32, device=self.device)
 
-        self.articulation_body = kwargs.get("articulation_body")
-        self.pattern = "player_unitree_g1"
-        self.view_idx = next((i for i, p in enumerate(self.articulation_body.patterns) if p == self.pattern), -1)
-        self.view = self.articulation_body.views[self.view_idx]
+        self.pattern = kwargs.get("pattern")
+        self.view_idx = -1
+        self.view = None
 
         # 🌟 從配置參數讀取跌倒判定閾值 (提供默認值)
         # 骨盆高度低於此值視為摔倒 (G1 預設站立高度約為 0.74m)
@@ -304,6 +303,33 @@ class G1LocomotionTerminator(RewardComponent):
         self.max_ang_speed_sq = cfg.get("max_ang_speed_sq", 10000.0)   # ~100 rad/s
         self.max_height = cfg.get("max_height", 5.0)
         self.min_height = cfg.get("min_height", -1.0)
+
+        if self.pattern is not None:
+            self._resolve_view()
+
+    def bind_level(self, level):
+        if self.pattern is None and hasattr(level, "resolve_player_pattern"):
+            self.pattern = level.resolve_player_pattern()
+        if self.pattern is None:
+            raise ValueError(
+                "G1LocomotionTerminator requires `pattern` via constructor kwargs "
+                "or level.resolve_player_pattern()."
+            )
+        self._resolve_view()
+
+    def _resolve_view(self):
+        view_idx = next(
+            (i for i, p in enumerate(self.articulation_body.patterns) if p == self.pattern),
+            -1,
+        )
+        if view_idx < 0:
+            available = list(self.articulation_body.patterns.keys())
+            raise RuntimeError(
+                f"G1LocomotionTerminator: articulation pattern '{self.pattern}' not found. "
+                f"Available patterns: {available}"
+            )
+        self.view_idx = view_idx
+        self.view = self.articulation_body.views[view_idx]
 
     def calculate(self, 
                   num_env, 

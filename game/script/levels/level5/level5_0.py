@@ -137,6 +137,7 @@ class Level5_0(Levels):
             articulation_body=self.articulation_body,
             deformable_body=self.deformable_body,
             reward_parameters=GameConfig.reward_parameters,
+            pattern=pattern,
         )
         self.reward_calculator = RewardCalculator(
             level=self,
