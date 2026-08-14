@@ -204,11 +204,26 @@ class BaseRole(ABC):
             runtime_pattern = compose_runtime_pattern(controller, type, job_pattern)
         label = runtime_pattern
         role_object_id = BaseRole._num_objects_env
+
+        # ==========================================================================================================================================================
+        # Position
+        # 支持 [min, max] 列表或單個數值
+        # 先解析為「具體初始點」(供建構器使用) 與「範圍 tuple」(供每 reset 隨機取樣使用)
+        position = [0.0, 0.0, 0.0]
+        default_position_tuple = [None, None, None]
+        for i, pos in enumerate(default_position):
+            if isinstance(pos, (tuple, list)):
+                default_position_tuple[i] = (float(pos[0]), float(pos[1]))
+                position[i] = random.uniform(pos[0], pos[1])
+            elif isinstance(pos, (int, float)):
+                default_position_tuple[i] = (float(pos), float(pos))
+                position[i] = float(pos)
+
         data, size = self._physics_manager.add_shape(
             label=label,
             object_config=object,
             collision_group=collision_group,
-            pos=default_position,
+            pos=position,
             role_object_id=role_object_id,
         )
         if isinstance(data, dict):
@@ -242,25 +257,17 @@ class BaseRole(ABC):
             main_dim = size[0]
             offset_X = ((main_dim * 2.0) * (self.num_object_created_for_setup * 1.1))
 
-            # 更新 X 座標範圍
-            pos_x = default_position[0]
-            if isinstance(pos_x, tuple):
-                default_position[0] = (pos_x[0] + self.ability_generated_object_offset_X + offset_X, 
+            # 更新 X 座標範圍與取樣點 (保留 [min, max] 區間語意)
+            pos_x = default_position_tuple[0]
+            if pos_x is not None:
+                default_position_tuple[0] = (pos_x[0] + self.ability_generated_object_offset_X + offset_X,
                                               pos_x[1] + self.ability_generated_object_offset_X + offset_X)
             else:
-                default_position[0] = pos_x + self.ability_generated_object_offset_X + offset_X
+                default_position_tuple[0] = (self.ability_generated_object_offset_X + offset_X,
+                                              self.ability_generated_object_offset_X + offset_X)
+            position[0] = random.uniform(*default_position_tuple[0])
 
             self.ability_generated_object_offset_X_prev = offset_X + (main_dim * 2.0)
-
-        position = [0.0, 0.0, 0.0]
-        default_position_tuple = [None, None, None]
-        for i, pos in enumerate(default_position):
-            if isinstance(pos, (tuple, list)):
-                default_position_tuple[i] = pos
-                position[i] = random.uniform(pos[0], pos[1])
-            elif isinstance(pos, (int, float)):
-                default_position_tuple[i] = (float(pos), float(pos))
-                position[i] = float(pos)
 
         # ==========================================================================================================================================================
         # Rotation

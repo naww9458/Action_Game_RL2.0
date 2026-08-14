@@ -11,7 +11,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Any, Dict, List, Optional, Sequence, Tuple
+from typing import Dict, List, Optional, Tuple
 
 import yaml
 from newton import JointTargetMode
@@ -27,7 +27,6 @@ from .g1_actuator_model import (
     normalize_joint_label,
     resolve_joint_nominal,
     resolve_joint_physics,
-    resolve_joint_scale,
 )
 
 G1_CONTROL_CONFIG_PATH = Path(__file__).resolve().parent / "control_configs.yaml"
@@ -207,9 +206,3 @@ class G1TaskConfig:
 
 def get_g1_task_config(task_name: str = G1_DEFAULT_TASK) -> G1TaskConfig:
     return G1TaskConfig.from_yaml(task_name=task_name)
-
-
-def load_unitree_g1_config() -> Dict[str, Any]:
-    """Legacy helper for callers expecting raw yaml dict."""
-    with G1_CONTROL_CONFIG_PATH.open("r", encoding="utf-8") as fh:
-        return yaml.safe_load(fh) or {}

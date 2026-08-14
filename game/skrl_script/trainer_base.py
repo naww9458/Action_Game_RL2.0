@@ -83,6 +83,7 @@ class Trainer_base:
                 policy_module=meta.policy_module,
                 trainer_module=meta.trainer_module,
                 algorithm=meta.algorithm,
+                framework=meta.framework,
                 num_envs=self.env.num_envs,
                 level=meta.level,
                 sub_level=meta.sub_level,

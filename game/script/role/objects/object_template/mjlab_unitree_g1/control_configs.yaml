@@ -9,7 +9,22 @@
 # Stiffness/damping/armature/scale are computed at runtime from g1_actuator_model.py.
 
 unitree_g1:
+  # Foot contact sensor for gait rewards / asymmetric critic (flat terrain).
+  # Body name suffixes are matched against Newton body labels.
+  foot_sensor:
+    bodies:
+      - left_ankle_roll_link
+      - right_ankle_roll_link
+    ground_geom_id: 0
+    ground_height: 0.0
+    # mjlab measures foot height at the ``left_foot``/``right_foot`` sites
+    # (pos="0.04 0 -0.037" inside the ankle_roll_link bodies). Rotate this
+    # body-local offset into world so pitch/roll still match mjlab.
+    foot_height_site_offset: [0.04, 0.0, -0.037]
+
   velocity_locomotion:
+    # Pelvis IMU site offset [m] (mjlab g1.xml ``imu_in_pelvis``).
+    imu_site_offset: [0.04525, 0.0, -0.08339]
     soft_limit_factor: 0.9
 
     init_state:

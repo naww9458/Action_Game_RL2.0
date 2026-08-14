@@ -49,13 +49,21 @@ def _matching_preset_ids(
     sub_level: int,
     algorithm: str | None = None,
     obs_type: str | None = None,
+    framework: str | None = None,
 ) -> list[str]:
     matches = []
     for preset_id in _iter_preset_ids():
         meta, path = _load_preset_meta(preset_id)
         if meta.get("level") != level or meta.get("sub_level") != sub_level:
             continue
-        if algorithm is not None and str(meta.get("algorithm", "")).upper() != algorithm.upper():
+        from training.schema import coerce_framework_algorithm
+
+        coerced = coerce_framework_algorithm(meta)
+        meta_fw = str(coerced.get("framework", "SKRL")).upper()
+        meta_algo = str(coerced.get("algorithm", "")).upper()
+        if algorithm is not None and meta_algo != algorithm.upper():
+            continue
+        if framework is not None and meta_fw != framework.upper():
             continue
         if obs_type is not None and meta.get("obs_type") != obs_type:
             continue
@@ -81,13 +89,22 @@ def get_default_train_cfg(level: int, sub_level: int):
     return TrainingPresetLoader.load(preset_id).train_cfg
 
 
-def resolve_preset_id(algorithm: str, level: int, sub_level: int, obs_type: str) -> str:
+def resolve_preset_id(
+    algorithm: str,
+    level: int,
+    sub_level: int,
+    obs_type: str,
+    *,
+    framework: str | None = None,
+) -> str:
     return _expect_single_preset(
         _matching_preset_ids(
             algorithm=algorithm,
             level=level,
             sub_level=sub_level,
             obs_type=obs_type,
+            framework=framework,
         ),
-        f"algorithm={algorithm}, level={level}_{sub_level}, obs_type={obs_type}",
+        f"framework={framework or '*'}, algorithm={algorithm}, "
+        f"level={level}_{sub_level}, obs_type={obs_type}",
     )

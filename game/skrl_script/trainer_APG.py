@@ -21,6 +21,7 @@ from skrl_script.algorithm.apg import APG
 from skrl_script.trainer_base import Trainer_base
 from skrl_script.wrapperSKRL import WarpEnv
 from training.runtime_env import ensure_runtime_env, make_experiment_name
+from training.rollout_dump import RolloutDumper
 
 
 class Trainer(Trainer_base):
@@ -38,6 +39,9 @@ class Trainer(Trainer_base):
         loaded_config=None,
         preset_path=None,
         preset_id=None,
+        dump_rollouts=False,
+        dump_actions_steps=0,
+        dump_obs_steps=0,
     ):
         ensure_runtime_env()
 
@@ -48,6 +52,9 @@ class Trainer(Trainer_base):
         self.Policy = None
         self.Value = None
         self._resume_from = checkpoint_path
+        self.dump_rollouts = bool(dump_rollouts)
+        self.dump_actions_steps = int(dump_actions_steps or 0)
+        self.dump_obs_steps = int(dump_obs_steps or 0)
 
         if loaded_config is None and preset_id is not None:
             from training.loader import TrainingPresetLoader
@@ -57,7 +64,7 @@ class Trainer(Trainer_base):
             from training.level_defaults import resolve_preset_id
             from training.loader import TrainingPresetLoader
 
-            preset_key = resolve_preset_id("APG", level, sub_level, obs_type)
+            preset_key = resolve_preset_id("APG", level, sub_level, obs_type, framework="SKRL")
             loaded_config = TrainingPresetLoader.load(preset_key)
 
         if checkpoint_path is not None:
@@ -105,7 +112,7 @@ class Trainer(Trainer_base):
             meta = loaded_config.meta
             self.model_cfg.cfg.setdefault("experiment", {})
             self.model_cfg.cfg["experiment"]["experiment_name"] = make_experiment_name(
-                meta.level, meta.sub_level, meta.algorithm
+                meta.level, meta.sub_level, meta.algorithm, framework=meta.framework
             )
         
         # 獲取策略模型 (Actor)
@@ -138,6 +145,13 @@ class Trainer(Trainer_base):
         os.makedirs(config_path, exist_ok=True)
         self.save_run_config(config_path, self.env.game.level.level_configs)
 
+        dumper = RolloutDumper(
+            self.agent.experiment_dir,
+            enabled=self.dump_rollouts,
+            actions_steps=self.dump_actions_steps,
+            obs_steps=self.dump_obs_steps,
+        )
+
         self.agent.set_mode("train")
         obs, _ = self.env.reset() 
 
@@ -153,6 +167,7 @@ class Trainer(Trainer_base):
                         # 1. PyTorch 計算動作 (PyTorch 端會自動追蹤 Policy 權重到 actions_pt 的梯度)
                         actions_pt = self.agent.act(obs, timestep=self.timestep, timesteps=self.timesteps)[0]
                         actions_pt.retain_grad()
+                        dumper.record(obs, actions_pt)
 
                         # 2. 執行物理步進 (將 actions_pt 轉給 Warp，並記錄在 global tape)
                         next_obs, rewards_pt, terminated, truncated, info = self.env.step_Diff(actions_pt)
@@ -182,6 +197,7 @@ class Trainer(Trainer_base):
             import traceback
             traceback.print_exc()
         finally:
+            dumper.finalize()
             self.env.close()
 
 

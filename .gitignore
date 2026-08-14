@@ -3,7 +3,8 @@ __pycache__
 compare*
 game_history/
 runs/
-fps_testing/
+logs/
+tests/
 assets/
 .cursor/
 

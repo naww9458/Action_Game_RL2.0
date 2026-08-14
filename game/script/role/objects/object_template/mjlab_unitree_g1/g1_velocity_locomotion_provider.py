@@ -14,16 +14,94 @@ from typing import Optional, TYPE_CHECKING
 import numpy as np
 import torch
 import warp as wp
+import yaml
 
 from script.game_config import GameConfig
 from script.role.objects.object_template.mjlab_unitree_g1.g1_actuator_model import ACTION_DIM
+from script.role.objects.object_template.mjlab_unitree_g1.g1_control_config import (
+    G1_CONTROL_CONFIG_PATH,
+    G1_DEFAULT_TASK,
+    G1_ROBOT_NAME,
+)
 
 if TYPE_CHECKING:
     from script.role.bodies.articulation_body import ArticulationBody
     from script.simulate.physics_manager import PhysicsManager
 
-# Pelvis IMU site offset [m] (mjlab unitree_g1 g1.xml ``imu_in_pelvis``).
-_IMU_SITE_OFFSET_B = wp.vec3(0.04525, 0.0, -0.08339)
+# Default velocity-command sampling ranges, matching mjlab's initial
+# ``command_vel`` curriculum stage. The provider keeps instance state plus a
+# device buffer so ``set_command_velocity_ranges`` can schedule the curriculum.
+_DEFAULT_COMMAND_VELOCITY_RANGES: dict[str, tuple[float, float]] = {
+    "lin_vel_x": (-1.0, 1.0),
+    "lin_vel_y": (-1.0, 1.0),
+    "ang_vel_z": (-0.5, 0.5),
+}
+
+
+def _load_imu_site_offset_b(*, task_name: str = G1_DEFAULT_TASK) -> wp.vec3:
+    """Read ``<task>.imu_site_offset`` from G1 ``control_configs.yaml``."""
+    with G1_CONTROL_CONFIG_PATH.open("r", encoding="utf-8") as fh:
+        raw = yaml.safe_load(fh) or {}
+    task_cfg = ((raw.get(G1_ROBOT_NAME) or {}).get(task_name) or {})
+    offset = task_cfg.get("imu_site_offset")
+    if not isinstance(offset, (list, tuple)) or len(offset) != 3:
+        raise ValueError(
+            f"{G1_CONTROL_CONFIG_PATH}: {G1_ROBOT_NAME}.{task_name}.imu_site_offset "
+            "must be a 3-element [x, y, z] list (mjlab imu_in_pelvis)."
+        )
+    return wp.vec3(float(offset[0]), float(offset[1]), float(offset[2]))
+
+
+@wp.kernel
+def init_encoder_bias_kernel(
+    encoder_bias: wp.array2d(dtype=float),
+    seeds: wp.array(dtype=wp.int32),
+    seed_offsets: wp.array(dtype=wp.int32),
+    bias_min: float,
+    bias_max: float,
+    rl_action_dim: int,
+):
+    """Sample per-(env, joint) encoder bias once at startup (mjlab startup event)."""
+    tid = wp.tid()
+    rng = wp.rand_init(seeds[tid], seed_offsets[tid])
+    seed_offsets[tid] = seed_offsets[tid] + 1
+    for i in range(rl_action_dim):
+        encoder_bias[tid, i] = wp.randf(rng, bias_min, bias_max)
+
+
+@wp.kernel
+def init_base_com_offset_kernel(
+    base_com_offset: wp.array2d(dtype=float),
+    seeds: wp.array(dtype=wp.int32),
+    seed_offsets: wp.array(dtype=wp.int32),
+    x_min: float, x_max: float,
+    y_min: float, y_max: float,
+    z_min: float, z_max: float,
+):
+    """Sample per-env torso COM offset once at startup (mjlab startup event)."""
+    tid = wp.tid()
+    rng = wp.rand_init(seeds[tid], seed_offsets[tid])
+    seed_offsets[tid] = seed_offsets[tid] + 1
+    base_com_offset[tid, 0] = wp.randf(rng, x_min, x_max)
+    base_com_offset[tid, 1] = wp.randf(rng, y_min, y_max)
+    base_com_offset[tid, 2] = wp.randf(rng, z_min, z_max)
+
+
+@wp.kernel
+def apply_encoder_bias_kernel(
+    noisy_obs: wp.array2d(dtype=float),
+    encoder_bias: wp.array2d(dtype=float),
+    rl_action_dim: int,
+):
+    """Corrupt the actor joint-pos segment with the per-env encoder bias.
+
+    Only the actor frame (``single_obs_wp``) gets the bias; the asymmetric
+    critic's noiseless frame stays clean (mjlab ``enable_corruption`` applies to
+    the actor observation group only).
+    """
+    tid = wp.tid()
+    for i in range(rl_action_dim):
+        noisy_obs[tid, 9 + i] = noisy_obs[tid, 9 + i] - encoder_bias[tid, i]
 
 
 @wp.kernel
@@ -39,6 +117,49 @@ def shift_and_append_history_kernel(
         obs_history[tid, i] = obs_history[tid, i + obs_dim]
     for i in range(obs_dim):
         obs_history[tid, shift_range + i] = new_obs[tid, i]
+
+
+@wp.kernel
+def apply_obs_noise_kernel(
+    clean_obs: wp.array2d(dtype=float),
+    noisy_obs: wp.array2d(dtype=float),
+    seeds: wp.array(dtype=wp.int32),
+    seed_offsets: wp.array(dtype=wp.int32),
+    lin_vel_noise: float,
+    ang_vel_noise: float,
+    gravity_noise: float,
+    joint_pos_noise: float,
+    joint_vel_noise: float,
+    rl_action_dim: int,
+):
+    """Add per-segment uniform noise (mjlab ``enable_corruption`` semantics).
+
+    Layout matches ``compute_obs_locomotion_kernel``:
+      [0:3] base_lin_vel, [3:6] base_ang_vel, [6:9] projected_gravity,
+      [9:9+D] joint_pos, [9+D:9+2D] joint_vel, [9+2D:9+3D] actions,
+      [9+3D:9+3D+3] command.
+    Only proprioceptive segments get noise (actions/command stay clean),
+    mirroring mjlab's actor obs corruption config.
+    """
+    tid = wp.tid()
+    rng = wp.rand_init(seeds[tid], seed_offsets[tid])
+    seed_offsets[tid] = seed_offsets[tid] + 1
+
+    for i in range(3):
+        noisy_obs[tid, i] = clean_obs[tid, i] + wp.randf(rng, -lin_vel_noise, lin_vel_noise)
+    for i in range(3):
+        noisy_obs[tid, 3 + i] = clean_obs[tid, 3 + i] + wp.randf(rng, -ang_vel_noise, ang_vel_noise)
+    for i in range(3):
+        noisy_obs[tid, 6 + i] = clean_obs[tid, 6 + i] + wp.randf(rng, -gravity_noise, gravity_noise)
+    for i in range(rl_action_dim):
+        noisy_obs[tid, 9 + i] = clean_obs[tid, 9 + i] + wp.randf(rng, -joint_pos_noise, joint_pos_noise)
+    for i in range(rl_action_dim):
+        noisy_obs[tid, 9 + rl_action_dim + i] = clean_obs[tid, 9 + rl_action_dim + i] + wp.randf(rng, -joint_vel_noise, joint_vel_noise)
+    # actions and command segments carry no noise.
+    for i in range(9 + 2 * rl_action_dim, 9 + 3 * rl_action_dim):
+        noisy_obs[tid, i] = clean_obs[tid, i]
+    for i in range(9 + 3 * rl_action_dim, 9 + 3 * rl_action_dim + 3):
+        noisy_obs[tid, i] = clean_obs[tid, i]
 
 
 @wp.kernel
@@ -76,6 +197,7 @@ def compute_obs_locomotion_kernel(
     joint_dof_count: int,
     gravity_vector: wp.vec3,
     imu_site_offset_b: wp.vec3,
+    base_com_offsets: wp.array2d(dtype=float),
 ):
     tid = wp.tid()
     world_idx = instance_world_indices[tid]
@@ -91,7 +213,11 @@ def compute_obs_locomotion_kernel(
     local_ang_vel = wp.quat_rotate(inv_base_rot, world_ang_vel)
     local_gravity = wp.quat_rotate(inv_base_rot, gravity_vector)
 
-    imu_lin_vel = local_lin_vel + wp.cross(local_ang_vel, imu_site_offset_b)
+    # Obs-domain approximation of mjlab dr.body_com_offset: the torso COM is
+    # shifted per env, changing the IMU lever arm. Zero offsets when disabled.
+    com_offset = wp.vec3(base_com_offsets[tid, 0], base_com_offsets[tid, 1], base_com_offsets[tid, 2])
+    local_com_offset = imu_site_offset_b + com_offset
+    imu_lin_vel = local_lin_vel + wp.cross(local_ang_vel, local_com_offset)
 
     idx = 0
     obs[tid, idx] = imu_lin_vel[0]; idx += 1
@@ -148,6 +274,7 @@ def resample_velocity_commands_kernel(
     rel_standing: float,
     rel_heading: float,
     rel_forward: float,
+    command_ranges: wp.array(dtype=wp.float32),
 ):
     tid = wp.tid()
     resample_timer[tid] = resample_timer[tid] - dt
@@ -157,10 +284,17 @@ def resample_velocity_commands_kernel(
     rng = wp.rand_init(seeds[tid], seed_offsets[tid])
     seed_offsets[tid] = seed_offsets[tid] + 1
 
+    lin_vel_x_min = command_ranges[0]
+    lin_vel_x_max = command_ranges[1]
+    lin_vel_y_min = command_ranges[2]
+    lin_vel_y_max = command_ranges[3]
+    ang_vel_z_min = command_ranges[4]
+    ang_vel_z_max = command_ranges[5]
+
     resample_timer[tid] = wp.randf(rng, 3.0, 8.0)
-    commands[tid, 0] = wp.randf(rng, -1.0, 1.0)
-    commands[tid, 1] = wp.randf(rng, -1.0, 1.0)
-    commands[tid, 2] = wp.randf(rng, -0.5, 0.5)
+    commands[tid, 0] = wp.randf(rng, lin_vel_x_min, lin_vel_x_max)
+    commands[tid, 1] = wp.randf(rng, lin_vel_y_min, lin_vel_y_max)
+    commands[tid, 2] = wp.randf(rng, ang_vel_z_min, ang_vel_z_max)
 
     is_heading_env[tid] = 1 if wp.randf(rng, 0.0, 1.0) <= rel_heading else 0
     is_standing_env[tid] = 1 if wp.randf(rng, 0.0, 1.0) <= rel_standing else 0
@@ -232,6 +366,7 @@ def reset_velocity_command_on_env_kernel(
     rel_standing: float,
     rel_heading: float,
     rel_forward: float,
+    command_ranges: wp.array(dtype=wp.float32),
 ):
     tid = wp.tid()
     if reset_mask[instance_world_indices[tid]] != 1:
@@ -239,9 +374,9 @@ def reset_velocity_command_on_env_kernel(
     rng = wp.rand_init(seeds[tid], seed_offsets[tid])
     seed_offsets[tid] = seed_offsets[tid] + 1
     resample_timer[tid] = 0.0
-    commands[tid, 0] = wp.randf(rng, -1.0, 1.0)
-    commands[tid, 1] = wp.randf(rng, -1.0, 1.0)
-    commands[tid, 2] = wp.randf(rng, -0.5, 0.5)
+    commands[tid, 0] = wp.randf(rng, command_ranges[0], command_ranges[1])
+    commands[tid, 1] = wp.randf(rng, command_ranges[2], command_ranges[3])
+    commands[tid, 2] = wp.randf(rng, command_ranges[4], command_ranges[5])
     is_heading_env[tid] = 1 if wp.randf(rng, 0.0, 1.0) <= rel_heading else 0
     is_standing_env[tid] = 1 if wp.randf(rng, 0.0, 1.0) <= rel_standing else 0
     is_forward_env[tid] = 1 if wp.randf(rng, 0.0, 1.0) <= rel_forward else 0
@@ -279,6 +414,10 @@ class G1VelocityLocomotionProvider:
         history_len: int = 1,
         instance_world_indices: Optional[list[int]] = None,
         instance_view_indices: Optional[list[int]] = None,
+        enable_obs_noise: bool = False,
+        obs_noise_cfg: Optional[dict] = None,
+        encoder_bias_range: Optional[tuple[float, float]] = None,
+        base_com_offset_range: Optional[dict[str, tuple[float, float]]] = None,
     ) -> None:
         self.num_env = num_env
         self.device = device
@@ -291,6 +430,35 @@ class G1VelocityLocomotionProvider:
             raise ValueError("G1 provider instance world and view index counts must match.")
         self.num_instances = len(self.instance_world_indices)
 
+        self.enable_obs_noise = bool(enable_obs_noise)
+        noise = obs_noise_cfg or {}
+        # Per-segment uniform noise amplitudes, matching mjlab's actor-obs
+        # corruption config (obs terms: base_lin_vel ±0.5, base_ang_vel ±0.2,
+        # projected_gravity ±0.05, joint_pos ±0.01, joint_vel ±1.5).
+        self.lin_vel_noise = float(noise.get("base_lin_vel", 0.5))
+        self.ang_vel_noise = float(noise.get("base_ang_vel", 0.2))
+        self.gravity_noise = float(noise.get("projected_gravity", 0.05))
+        self.joint_pos_noise = float(noise.get("joint_pos", 0.01))
+        self.joint_vel_noise = float(noise.get("joint_vel", 1.5))
+
+        # C4 DR (mjlab startup events): encoder_bias corrupts only the actor
+        # obs; base_com_offset approximates the torso COM shift in obs space.
+        self.encoder_bias_range: Optional[tuple[float, float]] = encoder_bias_range
+        self.base_com_offset_range: Optional[dict[str, tuple[float, float]]] = base_com_offset_range
+        self.enable_encoder_bias = encoder_bias_range is not None
+        self.enable_base_com = base_com_offset_range is not None
+        self.encoder_bias_wp: Optional[wp.array2d] = None
+        self.base_com_offset_wp: Optional[wp.array2d] = None
+
+        # C3 curriculum: host-side current ranges + device buffer read by the
+        # command-resample kernels (updated by ``set_command_velocity_ranges``).
+        self._command_velocity_ranges: dict[str, tuple[float, float]] = {
+            k: (float(v[0]), float(v[1]))
+            for k, v in _DEFAULT_COMMAND_VELOCITY_RANGES.items()
+        }
+        self.cmd_ranges_wp: Optional[wp.array] = None
+        self.imu_site_offset_b = _load_imu_site_offset_b()
+
         self.view = None
         self.rl_action_dim = ACTION_DIM
         self.obs_dim = 0
@@ -302,6 +470,10 @@ class G1VelocityLocomotionProvider:
         self.obs_wp: Optional[wp.array2d] = None
         self.obs_torch: Optional[torch.Tensor] = None
         self.single_obs_wp: Optional[wp.array2d] = None
+        self.single_obs_clean_wp: Optional[wp.array2d] = None
+        self.noiseless_obs_wp: Optional[wp.array2d] = None
+        self.obs_noise_seeds: Optional[wp.array] = None
+        self.obs_noise_seed_offsets: Optional[wp.array] = None
 
         self.heading_target = None
         self.is_heading_env = None
@@ -354,9 +526,69 @@ class G1VelocityLocomotionProvider:
         self.obs_wp = wp.zeros(
             shape=(self.num_instances, self.flat_obs_dim), dtype=float, device=self.device
         )
-        self.torch_device = wp.device_to_torch(self.device)
-        self.obs_torch = wp.to_torch(self.obs_wp)
+        self.noiseless_obs_wp = wp.zeros(
+            shape=(self.num_instances, self.flat_obs_dim), dtype=float, device=self.device
+        )
         self.single_obs_wp = wp.zeros((self.num_instances, self.obs_dim), dtype=float, device=self.device)
+        self.single_obs_clean_wp = wp.zeros((self.num_instances, self.obs_dim), dtype=float, device=self.device)
+
+        noise_seed_base = getattr(GameConfig, "SEED", 31415926) + 70000
+        self.obs_noise_seeds = wp.array(
+            np.arange(noise_seed_base, noise_seed_base + self.num_instances, dtype=np.int32),
+            dtype=wp.int32,
+            device=self.device,
+        )
+        self.obs_noise_seed_offsets = wp.zeros(self.num_instances, dtype=wp.int32, device=self.device)
+
+        self.torch_device = wp.device_to_torch(self.device)
+
+        # C3: command-range device buffer, seeded from the default ranges.
+        self.cmd_ranges_wp = wp.zeros(6, dtype=wp.float32, device=self.device)
+        self.set_command_velocity_ranges(self._command_velocity_ranges)
+
+        # C4: encoder bias (per-env, per-RL-joint) and base-COM offset buffers.
+        # Zero buffers keep kernel signatures stable when a term is disabled.
+        self.encoder_bias_wp = wp.zeros(
+            (self.num_instances, self.rl_action_dim), dtype=float, device=self.device
+        )
+        self.base_com_offset_wp = wp.zeros(
+            (self.num_instances, 3), dtype=float, device=self.device
+        )
+        dr_seed_base = getattr(GameConfig, "SEED", 31415926) + 90000
+        dr_seeds = wp.array(
+            np.arange(dr_seed_base, dr_seed_base + self.num_instances, dtype=np.int32),
+            dtype=wp.int32,
+            device=self.device,
+        )
+        dr_seed_offsets = wp.zeros(self.num_instances, dtype=wp.int32, device=self.device)
+        if self.enable_encoder_bias:
+            bmin, bmax = self.encoder_bias_range
+            wp.launch(
+                init_encoder_bias_kernel,
+                dim=self.num_instances,
+                inputs=[
+                    self.encoder_bias_wp, dr_seeds, dr_seed_offsets,
+                    float(bmin), float(bmax), self.rl_action_dim,
+                ],
+                device=self.device,
+            )
+        if self.enable_base_com:
+            ox = self.base_com_offset_range["x"]
+            oy = self.base_com_offset_range["y"]
+            oz = self.base_com_offset_range["z"]
+            wp.launch(
+                init_base_com_offset_kernel,
+                dim=self.num_instances,
+                inputs=[
+                    self.base_com_offset_wp, dr_seeds, dr_seed_offsets,
+                    float(ox[0]), float(ox[1]),
+                    float(oy[0]), float(oy[1]),
+                    float(oz[0]), float(oz[1]),
+                ],
+                device=self.device,
+            )
+
+        self.obs_torch = wp.to_torch(self.obs_wp)
 
     def validate_dims(self, *, expected_low_level_action_dim: Optional[int] = None) -> None:
         if expected_low_level_action_dim is not None and self.rl_action_dim != expected_low_level_action_dim:
@@ -383,10 +615,40 @@ class G1VelocityLocomotionProvider:
             device=self.device,
         )
 
-    def set_commands_torch(self, commands: torch.Tensor) -> None:
-        if commands.shape != (self.num_instances, 3):
-            raise ValueError(f"Expected commands shape {(self.num_instances, 3)}, got {tuple(commands.shape)}")
-        wp.copy(self.commands, wp.from_torch(commands.contiguous()))
+    def get_command_velocity_ranges(self) -> dict[str, tuple[float, float]]:
+        """Return the current velocity-command sampling ranges.
+
+        Mirrors mjlab's ``Curriculum/command_vel`` so iteration logs can emit
+        ``Curriculum/command_vel/<axis>_{min,max}`` matching the reference. A
+        copy is returned so callers cannot mutate the shared state.
+        """
+        return {k: (float(v[0]), float(v[1])) for k, v in self._command_velocity_ranges.items()}
+
+    def set_command_velocity_ranges(self, ranges: dict[str, tuple[float, float]]) -> None:
+        """Update velocity-command sampling ranges on host and device.
+
+        Writes the 6-float device buffer in-place; the captured CUDA graph's
+        command-resample kernels read it by address, so the next graph replay
+        picks up the new ranges immediately.
+        """
+        self._command_velocity_ranges = {
+            k: (float(v[0]), float(v[1])) for k, v in ranges.items()
+        }
+        if self.cmd_ranges_wp is None:
+            return
+        vals = torch.tensor(
+            [
+                self._command_velocity_ranges["lin_vel_x"][0],
+                self._command_velocity_ranges["lin_vel_x"][1],
+                self._command_velocity_ranges["lin_vel_y"][0],
+                self._command_velocity_ranges["lin_vel_y"][1],
+                self._command_velocity_ranges["ang_vel_z"][0],
+                self._command_velocity_ranges["ang_vel_z"][1],
+            ],
+            dtype=torch.float32,
+            device=self.torch_device,
+        )
+        wp.to_torch(self.cmd_ranges_wp).copy_(vals)
 
     def update_velocity_commands(self, physics_manager: "PhysicsManager", dt: float) -> None:
         root_tfs = self.view.get_root_transforms(physics_manager.state_0)
@@ -407,6 +669,7 @@ class G1VelocityLocomotionProvider:
                 0.1,
                 0.3,
                 0.2,
+                self.cmd_ranges_wp,
             ],
             device=self.device,
         )
@@ -444,6 +707,7 @@ class G1VelocityLocomotionProvider:
                 0.1,
                 0.3,
                 0.2,
+                self.cmd_ranges_wp,
             ],
             device=self.device,
         )
@@ -468,7 +732,7 @@ class G1VelocityLocomotionProvider:
             compute_obs_locomotion_kernel,
             dim=self.num_instances,
             inputs=[
-                self.single_obs_wp if self.history_len > 1 else self.obs_wp,
+                self.single_obs_clean_wp,
                 view_link_q,
                 view_link_qd,
                 view_joint_q,
@@ -483,13 +747,55 @@ class G1VelocityLocomotionProvider:
                 self.rl_action_dim,
                 self.view.joint_dof_count,
                 wp.vec3(0.0, 0.0, -1.0),
-                _IMU_SITE_OFFSET_B,
+                self.imu_site_offset_b,
+                self.base_com_offset_wp,
             ],
             device=self.device,
         )
 
+    def apply_obs_noise(self) -> None:
+        """Copy the clean frame into the noisy single-frame buffer with per-segment noise."""
+        wp.launch(
+            apply_obs_noise_kernel,
+            dim=self.num_instances,
+            inputs=[
+                self.single_obs_clean_wp,
+                self.single_obs_wp,
+                self.obs_noise_seeds,
+                self.obs_noise_seed_offsets,
+                self.lin_vel_noise,
+                self.ang_vel_noise,
+                self.gravity_noise,
+                self.joint_pos_noise,
+                self.joint_vel_noise,
+                self.rl_action_dim,
+            ],
+            device=self.device,
+        )
+
+    def _sync_single_frame(self) -> None:
+        """Fill ``single_obs_wp`` from the clean frame, adding noise when enabled."""
+        if self.enable_obs_noise:
+            self.apply_obs_noise()
+        else:
+            wp.copy(self.single_obs_wp, self.single_obs_clean_wp)
+        # C4 encoder bias: corrupt only the actor frame (critic stays clean).
+        if self.enable_encoder_bias and self.encoder_bias_wp is not None:
+            wp.launch(
+                apply_encoder_bias_kernel,
+                dim=self.num_instances,
+                inputs=[
+                    self.single_obs_wp,
+                    self.encoder_bias_wp,
+                    self.rl_action_dim,
+                ],
+                device=self.device,
+            )
+
     def append_history(self) -> None:
         if self.history_len <= 1:
+            wp.copy(self.obs_wp, self.single_obs_wp)
+            wp.copy(self.noiseless_obs_wp, self.single_obs_clean_wp)
             return
         wp.launch(
             shift_and_append_history_kernel,
@@ -497,11 +803,18 @@ class G1VelocityLocomotionProvider:
             inputs=[self.obs_wp, self.single_obs_wp, self.obs_dim, self.history_len],
             device=self.device,
         )
+        wp.launch(
+            shift_and_append_history_kernel,
+            dim=self.num_instances,
+            inputs=[self.noiseless_obs_wp, self.single_obs_clean_wp, self.obs_dim, self.history_len],
+            device=self.device,
+        )
 
     def reset_history(self, reset_mask: wp.array, physics_manager: "PhysicsManager") -> None:
         if self.obs_wp is None:
             return
         self.compute_single_frame_obs(physics_manager)
+        self._sync_single_frame()
         wp.launch(
             reset_history_kernel,
             dim=self.num_instances,
@@ -515,9 +828,23 @@ class G1VelocityLocomotionProvider:
             ],
             device=self.device,
         )
+        wp.launch(
+            reset_history_kernel,
+            dim=self.num_instances,
+            inputs=[
+                self.noiseless_obs_wp,
+                self.single_obs_clean_wp,
+                reset_mask,
+                self.instance_world_indices_wp,
+                self.obs_dim,
+                self.history_len,
+            ],
+            device=self.device,
+        )
 
     def get_observation(self, physics_manager: "PhysicsManager") -> torch.Tensor:
         self.compute_single_frame_obs(physics_manager)
+        self._sync_single_frame()
         self.append_history()
         obs = wp.to_torch(self.obs_wp)
         if obs.device != self.torch_device:
@@ -545,6 +872,10 @@ def create_g1_velocity_locomotion_provider(
     history_len: int = 1,
     instance_world_indices: Optional[list[int]] = None,
     instance_view_indices: Optional[list[int]] = None,
+    enable_obs_noise: bool = False,
+    obs_noise_cfg: Optional[dict] = None,
+    encoder_bias_range: Optional[tuple[float, float]] = None,
+    base_com_offset_range: Optional[dict[str, tuple[float, float]]] = None,
 ) -> G1VelocityLocomotionProvider:
     provider = G1VelocityLocomotionProvider(
         num_env=num_env,
@@ -554,6 +885,10 @@ def create_g1_velocity_locomotion_provider(
         history_len=history_len,
         instance_world_indices=instance_world_indices,
         instance_view_indices=instance_view_indices,
+        enable_obs_noise=enable_obs_noise,
+        obs_noise_cfg=obs_noise_cfg,
+        encoder_bias_range=encoder_bias_range,
+        base_com_offset_range=base_com_offset_range,
     )
     provider.setup()
     return provider

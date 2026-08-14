@@ -50,13 +50,21 @@ sections:
         description_zh: "觀察空間類型"
         description_en: "Observation space type"
 
+      - key: framework
+        type: enum
+        required: true
+        nullable: false
+        options: [SKRL, RSL_RL]
+        description_zh: "訓練框架（SKRL 支援 PPO/APG，RSL_RL 目前僅 PPO）"
+        description_en: "Training framework (peer to algorithm: SKRL supports PPO/APG, RSL_RL currently PPO only)"
+
       - key: algorithm
         type: enum
         required: true
         nullable: false
         options: [PPO, APG]
-        description_zh: "強化學習算法"
-        description_en: "RL algorithm"
+        description_zh: "強化學習算法（SKRL：PPO 或 APG；RSL_RL：目前僅 PPO）"
+        description_en: "RL algorithm (SKRL: PPO or APG; RSL_RL: PPO only)"
 
       - key: policy_module
         type: enum
@@ -69,6 +77,7 @@ sections:
           - skrl_script.policy_PPO3_mixed
           - skrl_script.policy_PPO_g1_velocity
           - skrl_script.policy_APG1_state_based
+          - rsl_rl_script.policy
         description_zh: "策略網路模組路徑"
         description_en: "Policy module import path"
 
@@ -80,6 +89,7 @@ sections:
         options:
           - skrl_script.trainer_PPO
           - skrl_script.trainer_APG
+          - rsl_rl_script.trainer
         description_zh: "訓練器模組路徑"
         description_en: "Trainer module import path"
 
@@ -96,6 +106,15 @@ sections:
         max: 100000
         description_zh: "狀態觀察向量維度"
         description_en: "State observation vector size"
+
+      - key: critic_obs_size
+        type: int
+        required: false
+        nullable: true
+        min: 1
+        max: 100000
+        description_zh: "非對稱 Critic 觀察向量維度（留空則與 state_obs_size 相同）"
+        description_en: "Asymmetric critic observation vector size (empty falls back to state_obs_size)"
 
       - key: obs_width
         type: int

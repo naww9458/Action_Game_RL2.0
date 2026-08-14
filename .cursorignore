@@ -1,8 +1,8 @@
 .cursor/plans
+tests/fps_testing/Action_Game_RL_FPS_testing
 .vscode/
 .gitignore
 .git/
 
 capture/
-runs/
 

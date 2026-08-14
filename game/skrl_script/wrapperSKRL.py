@@ -81,6 +81,12 @@ class WarpEnv(gym.Env):
         GameConfig.reward_components = train_cfg.reward_components
         GameConfig.reward_components_diff = train_cfg.reward_components_diff
         GameConfig.reward_parameters = train_cfg.reward_parameters
+        # Mirror mjlab's `enable_corruption`: observation noise is applied only
+        # during training; evaluation/play uses clean observations.
+        try:
+            GameConfig.ENABLE_OBS_NOISE = bool(is_training)
+        except AttributeError:
+            pass
 
         event_is_window_setup_ready = mp.Event()
         human_input_queue = Queue(maxsize=1)
@@ -125,14 +131,17 @@ class WarpEnv(gym.Env):
         self.dt = self.game.physics_manager.frame_dt
         self.max_speed = 5.0
 
-        self.truncated_tensor = torch.zeros((num_envs, 1), device=GameConfig.DEVICE, dtype=torch.float32)
-
         # 定義 Gymnasium 空間
         self.observation_space = model_cfg.observation_space
         self.action_space = schema_to_gym_space(GameConfig.ACTION_SPACE_CONFIG)[0] # TODO
         print("self.action_space: ", self.action_space)
 
         self.state_space = self.observation_space
+
+        # Cached asymmetric critic observation (policy obs + foot state) exposed
+        # to RSL-rl's ``RslRlVecEnvWrapper``. ``None`` keeps the wrapper on the
+        # symmetric-critic fallback (policy obs).
+        self.critic_obs = None
 
     def reset(self, seed=None, options=None):
         super().reset(seed=self.seed)
@@ -151,6 +160,12 @@ class WarpEnv(gym.Env):
                 "visual": self.game._get_observation_game_screen(),
                 "state": self.game._get_observation_state_based()
             }
+
+        # Cache the asymmetric critic observation (state_based levels only).
+        if self.model_obs_type == "state_based":
+            self.critic_obs = self.game._get_critic_observation()
+        else:
+            self.critic_obs = None
 
         # Gymnasium 要求返回 (observation, info)
         if isinstance(self.obs, dict):
@@ -172,6 +187,8 @@ class WarpEnv(gym.Env):
 
         rewards = wp.to_torch(step_total_rewards).view(-1, 1)
         terminated_tensor = wp.to_torch(terminated).view(-1, 1)
+        # Timeout (truncation) flag produced by the game's episode-end detector.
+        truncated_tensor = wp.to_torch(self.game.truncated).view(-1, 1)
 
         # print("step_total_rewards.numpy(): ", step_total_rewards.numpy())
 
@@ -206,7 +223,11 @@ class WarpEnv(gym.Env):
         if isinstance(obs, dict):
             obs = flatten_tensorized_space(obs)
 
-        return obs, rewards, terminated_tensor, self.truncated_tensor, {}
+        # Refresh the asymmetric critic observation cache for this frame.
+        if self.model_obs_type == "state_based":
+            self.critic_obs = self.game._get_critic_observation()
+
+        return obs, rewards, terminated_tensor, truncated_tensor, {}
 
     def step_Diff(self, actions: torch.Tensor):
         # 接收 game 回傳的 actions_wp (不包含 tape)
@@ -214,6 +235,8 @@ class WarpEnv(gym.Env):
 
         rewards = wp.to_torch(step_total_rewards).view(-1, 1)
         terminated_tensor = wp.to_torch(terminated).view(-1, 1)
+        # Timeout (truncation) flag produced by the game's episode-end detector.
+        truncated_tensor = wp.to_torch(self.game.truncated).view(-1, 1)
         
         if isinstance(obs, dict):
             obs = flatten_tensorized_space(obs)
@@ -225,7 +248,7 @@ class WarpEnv(gym.Env):
         }
 
         # 最後一個參數從 tape 改為 info
-        return obs, rewards, terminated_tensor, self.truncated_tensor, info
+        return obs, rewards, terminated_tensor, truncated_tensor, info
 
     def _get_observations(self):
         # obs will return by game step function
@@ -235,6 +258,14 @@ class WarpEnv(gym.Env):
     def close(self):
         self.game.physics_manager.cleanup() 
         self.game.close()
+
+    def get_training_log(self):
+        """Forward the unified training log to the underlying Game."""
+        return self.game.get_training_log()
+
+    def get_training_diagnostics(self) -> list:
+        """Forward reward diagnostics to the underlying Game."""
+        return self.game.get_training_diagnostics()
 
 
 

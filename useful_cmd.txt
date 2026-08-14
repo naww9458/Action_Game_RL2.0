@@ -2,7 +2,7 @@ python.exe -m pyinstrument --html [project_root_dir]/game/test_game_without_rend
 python.exe -m pyinstrument game/test_game_without_render.py
 
 tensorboard --logdir runs/26-06-15_04-25-34-576219_PPO
-tensorboard --logdir fps_testing/Action_Game_RL_FPS_testing
+tensorboard --logdir tests/fps_testing/Action_Game_RL_FPS_testing
 
 [project_root_dir]/.venv/Scripts/python.exe -m pyinstrument [project_root_dir]/game/test_env.py
 [project_root_dir]/.venv/Scripts/python.exe -m pyinstrument [project_root_dir]/game/test_game_only_ViewerGL.py

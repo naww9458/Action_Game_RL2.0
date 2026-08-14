@@ -35,6 +35,9 @@ def cmd_train(args: argparse.Namespace) -> int:
         window_num_envs=args.window_envs if args.enable_window else None,
         checkpoint_path=args.resume,
         preset_path=str(loaded.preset_path) if loaded.preset_path else None,
+        dump_rollouts=bool(getattr(args, "dump_rollouts", False)),
+        dump_actions_steps=int(getattr(args, "dump_actions_steps", 0) or 0),
+        dump_obs_steps=int(getattr(args, "dump_obs_steps", 0) or 0),
     )
     if args.mode == "custom":
         trainer.train_custom()
@@ -83,7 +86,7 @@ def cmd_eval(args: argparse.Namespace) -> int:
             _, _, _, loaded = Trainer_base().load_config_from_checkpoint(str(checkpoint_path))
 
     Trainer = loaded.Trainer
-    print(f"Eval trainer: {Trainer.__module__}.{Trainer.__name__} (algorithm={loaded.meta.algorithm})")
+    print(f"Eval trainer: {Trainer.__module__}.{Trainer.__name__} (framework={loaded.meta.framework}, algorithm={loaded.meta.algorithm})")
     trainer = Trainer(
         device=DEVICE,
         num_envs=args.num_envs,
@@ -127,7 +130,7 @@ def cmd_list_presets(args: argparse.Namespace) -> int:
     from training.registry import TrainingPresetRegistry
 
     for preset in TrainingPresetRegistry.list_presets():
-        line = f"{preset['id']} | level={preset['level']}_{preset['sub_level']} | {preset['display_name']}"
+        line = f"{preset['id']} | {preset.get('framework', 'SKRL')}/{preset['algorithm']} | level={preset['level']}_{preset['sub_level']} | {preset['display_name']}"
         print(line.encode("utf-8", errors="replace").decode("utf-8"))
     return 0
 
@@ -143,6 +146,23 @@ def build_parser() -> argparse.ArgumentParser:
     train_p.add_argument("--window-envs", type=int, default=1, help="Environments to display when window is enabled")
     train_p.add_argument("--resume", default=None, help="Checkpoint .pt path to resume from")
     train_p.add_argument("--mode", choices=["sequential", "custom"], default="custom")
+    train_p.add_argument(
+        "--dump-rollouts",
+        action="store_true",
+        help="Save the first N env steps of actions/obs to .npy under the run dumps/ folder",
+    )
+    train_p.add_argument(
+        "--dump-actions-steps",
+        type=int,
+        default=100,
+        help="Number of env steps of model outputs (actions) to save when --dump-rollouts is set",
+    )
+    train_p.add_argument(
+        "--dump-obs-steps",
+        type=int,
+        default=100,
+        help="Number of env steps of observations to save when --dump-rollouts is set",
+    )
     train_p.set_defaults(func=cmd_train)
 
     eval_p = sub.add_parser("eval", help="Evaluate a checkpoint")

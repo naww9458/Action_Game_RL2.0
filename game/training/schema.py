@@ -2,9 +2,49 @@ from __future__ import annotations
 
 from typing import Any, Dict, List, Optional
 
-from pydantic import BaseModel, Field, field_validator
+from pydantic import BaseModel, Field, field_validator, model_validator
 
 from script.role.controller_utils import normalize_player_controller_overrides
+
+FRAMEWORK_SKRL = "SKRL"
+FRAMEWORK_RSL_RL = "RSL_RL"
+FRAMEWORK_ALGORITHMS: Dict[str, frozenset[str]] = {
+    FRAMEWORK_SKRL: frozenset({"PPO", "APG"}),
+    FRAMEWORK_RSL_RL: frozenset({"PPO"}),
+}
+
+
+def coerce_framework_algorithm(data: Any) -> Any:
+    """Normalize meta/manifest dicts: framework is peer to SKRL, algorithm is PPO/APG.
+
+    Legacy presets stored ``algorithm: RSL_RL``; that value is a framework, not
+    an algorithm, and is rewritten to ``framework=RSL_RL, algorithm=PPO``.
+    """
+    if not isinstance(data, dict):
+        return data
+    data = dict(data)
+    raw_algo = str(data.get("algorithm", "PPO") or "PPO").upper()
+    raw_fw = data.get("framework")
+    if raw_algo == FRAMEWORK_RSL_RL:
+        data["framework"] = FRAMEWORK_RSL_RL
+        data["algorithm"] = "PPO"
+        return data
+    data["framework"] = str(raw_fw or FRAMEWORK_SKRL).upper()
+    data["algorithm"] = raw_algo
+    return data
+
+
+def validate_framework_algorithm(framework: str, algorithm: str) -> None:
+    fw = framework.upper()
+    algo = algorithm.upper()
+    allowed_fw = sorted(FRAMEWORK_ALGORITHMS)
+    if fw not in FRAMEWORK_ALGORITHMS:
+        raise ValueError(f"Unknown framework '{fw}'. Available: {allowed_fw}")
+    allowed_algo = sorted(FRAMEWORK_ALGORITHMS[fw])
+    if algo not in FRAMEWORK_ALGORITHMS[fw]:
+        raise ValueError(
+            f"Framework {fw} does not support algorithm {algo}. Supported: {allowed_algo}"
+        )
 
 
 class PresetMetaConfig(BaseModel):
@@ -13,9 +53,20 @@ class PresetMetaConfig(BaseModel):
     level: int
     sub_level: int
     obs_type: str = "state_based"
+    framework: str = FRAMEWORK_SKRL
     algorithm: str = "PPO"
     policy_module: str
     trainer_module: str = "skrl_script.trainer_PPO"
+
+    @model_validator(mode="before")
+    @classmethod
+    def _coerce_framework_algorithm(cls, data):
+        return coerce_framework_algorithm(data)
+
+    @model_validator(mode="after")
+    def _check_framework_algorithm(self):
+        validate_framework_algorithm(self.framework, self.algorithm)
+        return self
 
 
 class ClassRefConfig(BaseModel):
@@ -56,6 +107,9 @@ class APGHyperparamsConfig(BaseModel):
 
 class ModelPresetConfig(BaseModel):
     state_obs_size: int
+    # Asymmetric critic observation size. ``None`` falls back to ``state_obs_size``
+    # (symmetric critic).
+    critic_obs_size: Optional[int] = None
     obs_width: int = 0
     obs_height: int = 0
     stack_size: int = 1
@@ -103,7 +157,18 @@ class ManifestEntry(BaseModel):
     display_name: str = ""
     level: int = 0
     sub_level: int = 0
+    framework: str = FRAMEWORK_SKRL
     algorithm: str = "PPO"
+
+    @model_validator(mode="before")
+    @classmethod
+    def _coerce_framework_algorithm(cls, data):
+        return coerce_framework_algorithm(data)
+
+    @model_validator(mode="after")
+    def _check_framework_algorithm(self):
+        validate_framework_algorithm(self.framework, self.algorithm)
+        return self
 
 
 class ManifestConfig(BaseModel):

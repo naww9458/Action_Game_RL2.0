@@ -300,6 +300,38 @@ class Levels:
 
         pass
 
+    def get_command_metrics(self) -> Optional[dict]:
+        """Return per-step command-tracking metrics, or ``None``.
+
+        Framework-agnostic public interface: levels that track a reference
+        command override this to return ``dict[str, torch.Tensor]`` of 0-d GPU
+        tensors (keys already carry the ``Metrics/`` prefix). ``None`` means the
+        level has no such metrics and the caller simply skips them.
+        """
+        return None
+
+    def get_curriculum_metrics(self) -> Optional[dict]:
+        """Return per-step curriculum / command-range metrics, or ``None``.
+
+        Framework-agnostic public interface mirroring :meth:`get_command_metrics`.
+        Levels that sample commands from curriculum-style ranges override this to
+        return ``dict[str, torch.Tensor]`` of 0-d GPU tensors (keys already carry
+        the ``Curriculum/`` prefix). ``None`` means the level has no curriculum
+        and the caller simply skips them.
+        """
+        return None
+
+    def get_log_key_order(self) -> Optional[tuple[str, ...]]:
+        """Return the desired iteration-log key order, or ``None``.
+
+        Lets a level align its training-log lines with a reference
+        implementation (e.g. mjlab) that prints extras in a fixed, non-insertion
+        order. Keys produced by the level but absent from the template keep
+        their natural insertion position at the end; template keys the level
+        does not produce are ignored.
+        """
+        return None
+
     def initialize_player_roles(self):
         color_human = wp.vec3(1, 0, 0)
         color_rl = wp.vec3(0, 1, 0)
@@ -360,6 +392,15 @@ class Levels:
             num_bot_players=self.num_bot_players,
             is_bot_player_mask_gpu=self.is_bot_player_mask_gpu,
         )
+
+    def update_curriculum(self):
+        """No-op hook invoked at the start of each game step.
+
+        Level implementations (e.g. Level5_0) advance a global step counter and
+        schedule curriculum changes here. Called from host code outside the
+        CUDA-graph capture region so device buffers can be updated safely.
+        """
+        return None
 
     def reset_env(self, terminated, current_step):
         if self.num_objects_total <= 0:

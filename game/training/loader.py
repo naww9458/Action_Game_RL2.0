@@ -9,7 +9,7 @@ import numpy as np
 import yaml
 from gymnasium import spaces
 
-from skrl_script.algorithm import build_agent_cfg_for_algorithm
+from training.frameworks import build_agent_cfg
 from training.registry import (
     TrainingPresetRegistry,
     import_policy_classes,
@@ -31,6 +31,7 @@ class ModelConfigView:
         self.obs_height = model.obs_height
         self.stack_size = model.stack_size
         self.state_obs_size = model.state_obs_size
+        self.critic_obs_size = model.critic_obs_size or model.state_obs_size
         self.observation_space = spaces.Box(
             low=-1.0,
             high=1.0,
@@ -40,7 +41,7 @@ class ModelConfigView:
         self.level = meta.level
         self.sub_level = meta.sub_level
 
-        self.cfg = build_agent_cfg_for_algorithm(meta.algorithm, preset)
+        self.cfg = build_agent_cfg(preset)
 
 
 class TrainConfigView:
@@ -141,6 +142,8 @@ class TrainingPresetLoader:
         policy_module = (manifest or {}).get("policy_module")
         trainer_module = (manifest or {}).get("trainer_module")
         algorithm = str((manifest or {}).get("algorithm", "PPO")).upper()
+        framework = str((manifest or {}).get("framework", "SKRL")).upper()
+
         if not policy_module or not trainer_module:
             from training.level_defaults import resolve_preset_id
             from training.registry import TrainingPresetRegistry
@@ -150,6 +153,7 @@ class TrainingPresetLoader:
                 getattr(model_cfg, "level", 4),
                 getattr(model_cfg, "sub_level", 0),
                 getattr(model_cfg, "model_obs_type", "state_based"),
+                framework=framework,
             )
             preset_meta = TrainingPresetRegistry.load_preset_yaml(preset_id).meta
             policy_module = policy_module or preset_meta.policy_module
@@ -164,12 +168,14 @@ class TrainingPresetLoader:
                 "level": getattr(model_cfg, "level", 4),
                 "sub_level": getattr(model_cfg, "sub_level", 0),
                 "obs_type": getattr(model_cfg, "model_obs_type", "state_based"),
-                "algorithm": (manifest or {}).get("algorithm", "PPO"),
+                "framework": framework,
+                "algorithm": algorithm,
                 "policy_module": policy_module,
                 "trainer_module": trainer_module,
             },
             "model": {
                 "state_obs_size": getattr(model_cfg, "state_obs_size", 18),
+                "critic_obs_size": getattr(model_cfg, "critic_obs_size", None),
                 "obs_width": getattr(model_cfg, "obs_width", 0),
                 "obs_height": getattr(model_cfg, "obs_height", 0),
                 "stack_size": getattr(model_cfg, "stack_size", 1),

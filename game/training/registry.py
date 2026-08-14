@@ -79,6 +79,7 @@ class TrainingPresetRegistry:
                 "display_name": entry.display_name or entry.id,
                 "level": entry.level,
                 "sub_level": entry.sub_level,
+                "framework": entry.framework,
                 "algorithm": entry.algorithm,
                 "path": str(cls._presets_dir / entry.file),
             })
@@ -126,6 +127,7 @@ class TrainingPresetRegistry:
                 "display_name": preset.meta.display_name or preset.meta.id,
                 "level": preset.meta.level,
                 "sub_level": preset.meta.sub_level,
+                "framework": preset.meta.framework,
                 "algorithm": preset.meta.algorithm,
             })
             cls.save_manifest(manifest)

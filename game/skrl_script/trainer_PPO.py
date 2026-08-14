@@ -22,6 +22,7 @@ from skrl.trainers.torch import SequentialTrainer
 from skrl_script.trainer_base import Trainer_base
 from skrl_script.wrapperSKRL import WarpEnv
 from training.runtime_env import ensure_runtime_env, make_experiment_name
+from training.rollout_dump import RolloutDumper
 
 
 class Trainer(Trainer_base):
@@ -39,6 +40,9 @@ class Trainer(Trainer_base):
         loaded_config=None,
         preset_path=None,
         preset_id=None,
+        dump_rollouts=False,
+        dump_actions_steps=0,
+        dump_obs_steps=0,
     ):
         ensure_runtime_env()
 
@@ -49,6 +53,9 @@ class Trainer(Trainer_base):
         self.Policy = None
         self.Value = None
         self._resume_from = checkpoint_path
+        self.dump_rollouts = bool(dump_rollouts)
+        self.dump_actions_steps = int(dump_actions_steps or 0)
+        self.dump_obs_steps = int(dump_obs_steps or 0)
 
         if loaded_config is None and preset_id is not None:
             from training.loader import TrainingPresetLoader
@@ -58,7 +65,7 @@ class Trainer(Trainer_base):
             from training.level_defaults import resolve_preset_id
             from training.loader import TrainingPresetLoader
 
-            preset_key = resolve_preset_id("PPO", level, sub_level, obs_type)
+            preset_key = resolve_preset_id("PPO", level, sub_level, obs_type, framework="SKRL")
             loaded_config = TrainingPresetLoader.load(preset_key)
 
         if checkpoint_path is not None:
@@ -100,7 +107,7 @@ class Trainer(Trainer_base):
         if is_training and not checkpoint_path:
             meta = loaded_config.meta
             cfg["experiment"]["experiment_name"] = make_experiment_name(
-                meta.level, meta.sub_level, meta.algorithm
+                meta.level, meta.sub_level, meta.algorithm, framework=meta.framework
             )
 
         memory = RandomMemory(
@@ -209,6 +216,13 @@ class Trainer(Trainer_base):
         config_path = os.path.join(self.agent.experiment_dir, "config")
         self.save_run_config(config_path, self.env.game.level.level_configs)
 
+        dumper = RolloutDumper(
+            self.agent.experiment_dir,
+            enabled=self.dump_rollouts,
+            actions_steps=self.dump_actions_steps,
+            obs_steps=self.dump_obs_steps,
+        )
+
         if trainer.num_simultaneous_agents > 1:
             for agent in trainer.agents:
                 agent.set_running_mode("train")
@@ -217,44 +231,48 @@ class Trainer(Trainer_base):
 
         states, infos = trainer.env.reset()
 
-        for timestep in tqdm.tqdm(
-            range(trainer.initial_timestep, trainer.timesteps),
-            disable=trainer.disable_progressbar,
-            file=sys.stdout,
-        ):
-            trainer.agents.pre_interaction(timestep=timestep, timesteps=trainer.timesteps)
+        try:
+            for timestep in tqdm.tqdm(
+                range(trainer.initial_timestep, trainer.timesteps),
+                disable=trainer.disable_progressbar,
+                file=sys.stdout,
+            ):
+                trainer.agents.pre_interaction(timestep=timestep, timesteps=trainer.timesteps)
 
-            with torch.no_grad():
-                actions = trainer.agents.act(states, timestep=timestep, timesteps=trainer.timesteps)[0]
-                next_states, rewards, terminated, truncated, infos = trainer.env.step(actions)
-
-                if not trainer.headless:
-                    trainer.env.render()
-
-                trainer.agents.record_transition(
-                    states=states,
-                    actions=actions,
-                    rewards=rewards,
-                    next_states=next_states,
-                    terminated=terminated,
-                    truncated=truncated,
-                    infos=infos,
-                    timestep=timestep,
-                    timesteps=trainer.timesteps,
-                )
-
-                if trainer.environment_info in infos:
-                    for k, v in infos[trainer.environment_info].items():
-                        if isinstance(v, torch.Tensor) and v.numel() == 1:
-                            trainer.agents.track_data(f"Info / {k}", v.item())
-
-            trainer.agents.post_interaction(timestep=timestep, timesteps=trainer.timesteps)
-
-            if terminated.any() or truncated.any():
                 with torch.no_grad():
-                    states, infos = trainer.env.reset()
-            else:
-                states = next_states
+                    actions = trainer.agents.act(states, timestep=timestep, timesteps=trainer.timesteps)[0]
+                    dumper.record(states, actions)
+                    next_states, rewards, terminated, truncated, infos = trainer.env.step(actions)
+
+                    if not trainer.headless:
+                        trainer.env.render()
+
+                    trainer.agents.record_transition(
+                        states=states,
+                        actions=actions,
+                        rewards=rewards,
+                        next_states=next_states,
+                        terminated=terminated,
+                        truncated=truncated,
+                        infos=infos,
+                        timestep=timestep,
+                        timesteps=trainer.timesteps,
+                    )
+
+                    if trainer.environment_info in infos:
+                        for k, v in infos[trainer.environment_info].items():
+                            if isinstance(v, torch.Tensor) and v.numel() == 1:
+                                trainer.agents.track_data(f"Info / {k}", v.item())
+
+                trainer.agents.post_interaction(timestep=timestep, timesteps=trainer.timesteps)
+
+                if terminated.any() or truncated.any():
+                    with torch.no_grad():
+                        states, infos = trainer.env.reset()
+                else:
+                    states = next_states
+        finally:
+            dumper.finalize()
 
     def evaluate_custom(self, test_episodes=10):
         try:

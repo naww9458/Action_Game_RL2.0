@@ -214,6 +214,7 @@ class Articulation_body_control(Ability):
         self._low_level_actions_wp: Optional[wp.array2d] = None
         self._mjlab_targets_wp: Optional[wp.array2d] = None
         self._encoder_bias_wp: Optional[wp.array2d] = None
+        self._encoder_bias_external = False
         self._torch_device: Optional[torch.device] = None
         self._ability_share_key: Optional[str] = None
 
@@ -257,6 +258,19 @@ class Articulation_body_control(Ability):
                 self.physics_manager.device,
             )
         self._build_action_buffers()
+
+    def set_encoder_bias_source(self, encoder_bias_wp) -> None:
+        """Use an external per-env encoder-bias buffer for PD targets.
+
+        mjlab applies the same bias to actor joint_pos and to
+        ``target = default + scale * action - bias``. Callers that own the
+        buffer (e.g. a locomotion observation provider) pass it here so the
+        applier does not keep a disconnected zeros array. ``None`` is ignored.
+        """
+        if encoder_bias_wp is None:
+            return
+        self._encoder_bias_wp = encoder_bias_wp
+        self._encoder_bias_external = True
 
     def configure_from_player_configs_post_indices(self, level: "Levels") -> None:
         super().configure_from_player_configs_post_indices(level)
@@ -390,9 +404,10 @@ class Articulation_body_control(Ability):
             self._mjlab_targets_wp = wp.zeros(
                 target_shape, dtype=wp.float32, device=self.physics_manager.device
             )
-            self._encoder_bias_wp = wp.zeros(
-                command_shape, dtype=wp.float32, device=self.physics_manager.device
-            )
+            if not self._encoder_bias_external:
+                self._encoder_bias_wp = wp.zeros(
+                    command_shape, dtype=wp.float32, device=self.physics_manager.device
+                )
             return
 
         action_dim = _resolve_rl_action_dim(self.articulation_body, self.pattern)
@@ -406,9 +421,10 @@ class Articulation_body_control(Ability):
         self._mjlab_targets_wp = wp.zeros(
             shape, dtype=wp.float32, device=self.physics_manager.device
         )
-        self._encoder_bias_wp = wp.zeros(
-            shape, dtype=wp.float32, device=self.physics_manager.device
-        )
+        if not self._encoder_bias_external:
+            self._encoder_bias_wp = wp.zeros(
+                shape, dtype=wp.float32, device=self.physics_manager.device
+            )
 
     def _ensure_configured(self) -> None:
         if not self._configured:

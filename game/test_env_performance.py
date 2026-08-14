@@ -67,7 +67,7 @@ if __name__ == '__main__':
     step_mode="cuda_graph"
     num_step_for_test=100000
 
-    fps_recorder=TensorboardRecorder(is_use_timestamp=False, project_name="Action_Game_RL", task_name=f"FPS_testing/{step_mode}/{obs_type}", log_dir="fps_testing")
+    fps_recorder=TensorboardRecorder(is_use_timestamp=False, project_name="Action_Game_RL", task_name=f"FPS_testing/{step_mode}/{obs_type}", log_dir="tests/fps_testing")
 
     try:
         fps_recorder.change_run(f"num_env_{tested_num_env}")

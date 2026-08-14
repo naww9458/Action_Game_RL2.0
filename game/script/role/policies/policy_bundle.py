@@ -233,6 +233,7 @@ class PolicyBundleRegistry:
         history_len: int = 1,
         instance_world_indices: list[int] | None = None,
         instance_view_indices: list[int] | None = None,
+        **kwargs,
     ):
         cls.ensure_loaded()
         factory = cls._obs_provider_factories.get(provider_id)
@@ -249,6 +250,7 @@ class PolicyBundleRegistry:
             history_len=history_len,
             instance_world_indices=instance_world_indices,
             instance_view_indices=instance_view_indices,
+            **kwargs,
         )
 
 

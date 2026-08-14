@@ -1,9 +1,10 @@
 meta:
-  id: level4_0_ppo_state_based
+  id: level4_0_skrl_ppo_state_based
   display_name: Level 4 射擊 PPO
   level: 4
   sub_level: 0
   obs_type: state_based
+  framework: SKRL
   algorithm: PPO
   policy_module: skrl_script.policy_PPO2_state_based
   trainer_module: skrl_script.trainer_PPO

@@ -257,6 +257,23 @@ class ExperimentHubPage(QWidget):
         self.input_resume.setPlaceholderText("runs/.../checkpoints/agent_100.pt")
         form.addRow(self.TR("resume_checkpoint"), self.input_resume)
 
+        self.check_dump_rollouts = QCheckBox()
+        self.check_dump_rollouts.setChecked(False)
+        self.check_dump_rollouts.stateChanged.connect(self._update_dump_rollouts_visibility)
+        form.addRow(self.TR("dump_rollouts"), self.check_dump_rollouts)
+
+        self.lbl_dump_actions_steps = QLabel(self.TR("dump_actions_steps"))
+        self.spin_dump_actions_steps = QSpinBox()
+        self.spin_dump_actions_steps.setRange(1, 1_000_000)
+        self.spin_dump_actions_steps.setValue(100)
+        form.addRow(self.lbl_dump_actions_steps, self.spin_dump_actions_steps)
+
+        self.lbl_dump_obs_steps = QLabel(self.TR("dump_obs_steps"))
+        self.spin_dump_obs_steps = QSpinBox()
+        self.spin_dump_obs_steps.setRange(1, 1_000_000)
+        self.spin_dump_obs_steps.setValue(100)
+        form.addRow(self.lbl_dump_obs_steps, self.spin_dump_obs_steps)
+
         self.btn_start_train = QPushButton(self.TR("start_train"))
         self.btn_start_train.setStyleSheet("background-color: #1565c0; color: white; font-weight: bold; padding: 10px;")
         self.btn_start_train.clicked.connect(self.launch_train)
@@ -271,6 +288,7 @@ class ExperimentHubPage(QWidget):
 
         self.tabs.addTab(tab, self.TR("tab_launch"))
         self._update_window_envs_visibility()
+        self._update_dump_rollouts_visibility()
 
     def _sync_window_envs_range(self, _value: int | None = None):
         max_envs = self.spin_train_envs.value()
@@ -284,6 +302,13 @@ class ExperimentHubPage(QWidget):
         self.spin_window_envs.setVisible(visible)
         if visible:
             self._sync_window_envs_range()
+
+    def _update_dump_rollouts_visibility(self, _state: int | None = None):
+        visible = self.check_dump_rollouts.isChecked()
+        self.lbl_dump_actions_steps.setVisible(visible)
+        self.spin_dump_actions_steps.setVisible(visible)
+        self.lbl_dump_obs_steps.setVisible(visible)
+        self.spin_dump_obs_steps.setVisible(visible)
 
     def refresh_presets(self):
         self._ensure_training_imports()
@@ -299,7 +324,7 @@ class ExperimentHubPage(QWidget):
         self.preset_list.clear()
         self.preset_combo.clear()
         for preset in presets:
-            label = f"{preset['display_name']} ({preset['id']})"
+            label = f"{preset['display_name']} [{preset.get('framework', 'SKRL')}/{preset['algorithm']}] ({preset['id']})"
             item = QListWidgetItem(label)
             item.setData(Qt.ItemDataRole.UserRole, preset)
             self.preset_list.addItem(item)
@@ -588,8 +613,15 @@ class ExperimentHubPage(QWidget):
                 "--enable-window",
                 "--window-envs", str(self.spin_window_envs.value()),
             ])
+        if self.check_dump_rollouts.isChecked():
+            cmd_args.extend([
+                "--dump-rollouts",
+                "--dump-actions-steps", str(self.spin_dump_actions_steps.value()),
+                "--dump-obs-steps", str(self.spin_dump_obs_steps.value()),
+            ])
         try:
             self._train_process = self._spawn_launcher(*cmd_args)
+
             self._update_train_ui_state()
             self.status_label.setText(f"{self.TR('train_started')} (PID {self._train_process.pid})")
         except Exception as e:
@@ -617,6 +649,8 @@ class ExperimentHubPage(QWidget):
         self.btn_start_train.setText(self.TR("start_train"))
         self.btn_stop_train.setText(self.TR("stop_train"))
         self.lbl_window_envs.setText(self.TR("window_envs"))
+        self.lbl_dump_actions_steps.setText(self.TR("dump_actions_steps"))
+        self.lbl_dump_obs_steps.setText(self.TR("dump_obs_steps"))
         lang = getattr(self.main_app, "global_config", {}).get("language", "zh")
         self.preset_editor.set_language(lang)
 

@@ -304,6 +304,14 @@ class G1LocomotionTerminator(RewardComponent):
         self.max_height = cfg.get("max_height", 5.0)
         self.min_height = cfg.get("min_height", -1.0)
 
+        # D1: mjlab only terminates on 70° tilt + timeout. The extra safety
+        # checks below are kept (default True) but can be disabled in the
+        # training presets to match mjlab's episode-length distribution.
+        self.enable_height_check = bool(cfg.get("enable_height_check", True))
+        self.enable_height_absurd_check = bool(cfg.get("enable_height_absurd_check", True))
+        self.enable_speed_check = bool(cfg.get("enable_speed_check", True))
+        self.enable_nonfinite_check = bool(cfg.get("enable_nonfinite_check", True))
+
         if self.pattern is not None:
             self._resolve_view()
 
@@ -339,13 +347,17 @@ class G1LocomotionTerminator(RewardComponent):
                   current_step: wp.array, 
                   max_episode_step: int, 
                   step_total_rewards: wp.array,
-                  terminated: wp.array, 
+                  terminated: wp.array,
+                  truncated: wp.array = None, 
                   **kwargs):
         
         pm = physics_manager
 
         root_tfs = self.view.get_root_transforms(pm.state_0)
         root_vels = self.view.get_root_velocities(pm.state_0)
+
+        if truncated is None:
+            truncated = terminated
 
         wp.launch(
             kernel=self.calculate_gpu,
@@ -363,7 +375,12 @@ class G1LocomotionTerminator(RewardComponent):
                 self.min_height,
                 self.survival_base,
                 self.survival_factor,
+                self.enable_height_check,
+                self.enable_height_absurd_check,
+                self.enable_speed_check,
+                self.enable_nonfinite_check,
                 terminated,
+                truncated,
                 step_total_rewards,
                 env_players_index_offset,
                 player_shape_ids_gpu,
@@ -385,7 +402,12 @@ class G1LocomotionTerminator(RewardComponent):
         min_height: float,
         survival_base: float,
         survival_factor: float,
+        enable_height_check: wp.bool,
+        enable_height_absurd_check: wp.bool,
+        enable_speed_check: wp.bool,
+        enable_nonfinite_check: wp.bool,
         terminated: wp.array(dtype=wp.bool, ndim=1),
+        truncated: wp.array(dtype=wp.bool, ndim=1),
         step_total_rewards: wp.array(dtype=wp.float32),
         env_players_index_offset: wp.array(dtype=wp.int32),
         player_shape_ids_gpu: wp.array(dtype=wp.int32),
@@ -400,8 +422,8 @@ class G1LocomotionTerminator(RewardComponent):
         cur_step = current_step[env_idx]
         time_out = (cur_step >= max_episode_step)
 
-        height_too_low = (my_pos[2] < fall_height_threshold)
-        height_absurd = (my_pos[2] > max_height or my_pos[2] < min_height)
+        height_too_low = enable_height_check and (my_pos[2] < fall_height_threshold)
+        height_absurd = enable_height_absurd_check and (my_pos[2] > max_height or my_pos[2] < min_height)
 
         inv_rot = wp.quat_inverse(my_rot)
         world_gravity = wp.vec3(0.0, 0.0, -1.0)
@@ -411,9 +433,9 @@ class G1LocomotionTerminator(RewardComponent):
 
         lin_speed_sq = root_qd[0] * root_qd[0] + root_qd[1] * root_qd[1] + root_qd[2] * root_qd[2]
         ang_speed_sq = root_qd[3] * root_qd[3] + root_qd[4] * root_qd[4] + root_qd[5] * root_qd[5]
-        speed_too_high = (lin_speed_sq > max_lin_speed_sq or ang_speed_sq > max_ang_speed_sq)
+        speed_too_high = enable_speed_check and (lin_speed_sq > max_lin_speed_sq or ang_speed_sq > max_ang_speed_sq)
 
-        state_non_finite = (
+        state_non_finite = enable_nonfinite_check and (
             (not wp.isfinite(my_pos[0]))
             or (not wp.isfinite(my_pos[1]))
             or (not wp.isfinite(my_pos[2]))
@@ -432,15 +454,22 @@ class G1LocomotionTerminator(RewardComponent):
         has_fallen = (height_too_low or tilted_too_much)
         is_unstable = (state_non_finite or height_absurd or speed_too_high)
 
-        if time_out or has_fallen or is_unstable:
+        # Timeout is a truncation: flag ``truncated`` so RL frameworks bootstrap
+        # the value (non-terminal), while still flagging ``terminated`` so the
+        # environment reset mask covers the env. Falls/unstable states are true
+        # terminations and only set ``terminated``.
+        if time_out:
+            truncated[env_idx] = True
+            terminated[env_idx] = True
+        elif has_fallen or is_unstable:
             terminated[env_idx] = True
 
-            if survival_base > 0.0 and survival_factor != 1.0:
-                player_idx = env_players_index_offset[env_idx]
-                my_shape_id = player_shape_ids_gpu[player_idx]
-                steps_survived = float(cur_step)
-                survival_bonus = survival_base * wp.pow(survival_factor, steps_survived)
-                step_total_rewards[my_shape_id] += survival_bonus
+        if (time_out or has_fallen or is_unstable) and survival_base > 0.0 and survival_factor != 1.0:
+            player_idx = env_players_index_offset[env_idx]
+            my_shape_id = player_shape_ids_gpu[player_idx]
+            steps_survived = float(cur_step)
+            survival_bonus = survival_base * wp.pow(survival_factor, steps_survived)
+            step_total_rewards[my_shape_id] += survival_bonus
 
     def reset(self, **kwargs):
         pass

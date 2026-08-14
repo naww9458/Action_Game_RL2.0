@@ -19,7 +19,7 @@ def build_agent_cfg_for_algorithm(algorithm: str, preset: TrainingPresetConfig) 
         _register_builtin(key)
     if key not in _ALGORITHM_BUILDERS:
         available = sorted(_ALGORITHM_BUILDERS)
-        raise KeyError(f"Unknown algorithm: {algorithm}. Available: {available}")
+        raise KeyError(f"Unknown SKRL algorithm: {algorithm}. Available: {available}")
     return _ALGORITHM_BUILDERS[key](preset)
 
 

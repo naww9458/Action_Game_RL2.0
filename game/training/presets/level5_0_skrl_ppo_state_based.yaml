@@ -1,9 +1,10 @@
 meta:
-  id: level5_0_ppo_state_based
+  id: level5_0_skrl_ppo_state_based
   display_name: "G1 速度行走 PPO"
   level: 5
   sub_level: 0
   obs_type: state_based
+  framework: SKRL
   algorithm: PPO
   policy_module: skrl_script.policy_PPO_g1_velocity
   trainer_module: skrl_script.trainer_PPO
@@ -68,7 +69,48 @@ train:
     - VariablePostureReward
   reward_components_diff: []
   reward_parameters:
+    G1LocomotionTerminator:
+      # D1: disable extra safety terminations to match mjlab (only 70° tilt +
+      # timeout), keeping the episode-length distribution aligned.
+      enable_height_check: false
+      enable_height_absurd_check: false
+      enable_speed_check: false
+      enable_nonfinite_check: false
+    # Term weights from mjlab Velocity-Flat-Unitree-G1 env_cfg.py
+    # (applied as weight * dt). Required; the reward module has no fallbacks.
+    TrackLinearVelocityReward:
+      weight: 2.0
+    TrackAngularVelocityReward:
+      weight: 2.0
+    ActionRateL2Reward:
+      weight: -0.1
+    AngularMomentumPenaltyReward:
+      weight: -0.02
+      body_name: pelvis
+    BodyAngularVelocityPenaltyReward:
+      weight: -0.05
+      body_name: torso_link
+    FeetAirTimeReward:
+      weight: 0.0
+    FeetClearanceReward:
+      weight: -2.0
+    FeetSlipReward:
+      weight: -0.1
+    FeetSwingHeightReward:
+      weight: -0.25
+    JointPosLimitsReward:
+      weight: -1.0
+    SelfCollisionCostReward:
+      weight: -1.0
+      num_history: 4
+      force_threshold: 10.0
+    SoftLandingReward:
+      weight: -1.0e-5
+    UprightReward:
+      weight: 1.0
+      body_name: torso_link
     VariablePostureReward:
+      weight: 1.0
       walking_threshold: 0.05
       running_threshold: 1.5
 

@@ -39,6 +39,7 @@ from script.role.bodies.articulation_body import ArticulationBody
 from script.role.bodies.deformable_body import DeformableBody
 
 from script.levels.rewards.reward_calculator import RewardCalculator
+from script.training_log import TrainingLogCollector
 from script.game_config import GameConfig
 from script.renderer.renderer import get_renderer, isRendererImplemented
 from script.role.abilities.ability import Ability
@@ -134,6 +135,10 @@ class Game:
         self.num_env = num_env
         self.torch_device = wp.device_to_torch(self.physics_manager.device)
         self.terminated = wp.ones(self.num_env, dtype=wp.bool, device=self.physics_manager.device)
+        # Per-env timeout flag: set when an episode reaches ``max_episode_step``.
+        # Distinct from ``terminated`` (fall/unstable) so RL frameworks can treat
+        # timeouts as truncations (value bootstrap) rather than terminal states.
+        self.truncated = wp.zeros(self.num_env, dtype=wp.bool, device=self.physics_manager.device)
         self.step_total_rewards = None
         self.current_step = wp.zeros(shape=self.num_env, dtype=wp.int32)
 
@@ -208,6 +213,13 @@ class Game:
         )
         self._step_actions_wp = wp.from_torch(self._step_actions_torch, dtype=wp.float32)
 
+        # Host-side training extras (action acc, termination counts, reward
+        # terms). Captured inside the step because ``reset()`` zeroes done
+        # flags before frameworks read ``get_training_log()``.
+        self._train_log = TrainingLogCollector(
+            action_dim=int(getattr(self.level, "rl_action_dim", GameConfig.ACTION_SHAPE_OFFSET)),
+        )
+
     def _prepare_step_actions(self, actions: torch.Tensor | None) -> wp.array2d:
         """Copy incoming policy actions into the persistent Warp buffer used by CUDA Graph."""
         if actions is None:
@@ -219,6 +231,17 @@ class Game:
             )
         self._step_actions_torch.copy_(actions)
         return self._step_actions_wp
+
+    def get_training_log(self) -> dict:
+        """Unified per-step training-log interface (framework-agnostic)."""
+        return self._train_log.collect(
+            reward_calculator=getattr(self, "reward_calculator", None),
+            level=self.level,
+        )
+
+    def get_training_diagnostics(self) -> list:
+        """Return automatic diagnostics for always-zero/abnormal reward terms."""
+        return self._train_log.diagnostics(getattr(self, "reward_calculator", None))
 
     def setup_render(self):
         """Set up renderer and window"""
@@ -350,6 +373,7 @@ class Game:
                             self.episode_total_rewards[index_player] = 0
 
         self.terminated.zero_()
+        self.truncated.zero_()
 
     def step_CUDA_Graph(self, actions: torch.Tensor):
         """
@@ -366,9 +390,14 @@ class Game:
         """
 
         actions_wp = self._prepare_step_actions(actions)
+        self._train_log.on_actions(actions)
 
         self._apply_inspector_rl_actions(actions_wp)
         self.players.rl_action(actions=actions_wp)
+
+        # Curriculum hook: host-side, outside the CUDA-graph capture region so
+        # device buffers (e.g. velocity-command ranges) update before replay.
+        self.level.update_curriculum()
 
         if self.graph is not None:
             self._apply_inspector_pinned_controls()
@@ -395,7 +424,8 @@ class Game:
                 current_step=self.current_step, 
                 actions=self._step_actions_wp, 
                 max_episode_step=self.max_episode_step, 
-                command_vel=self.level.commands
+                command_vel=self.level.commands,
+                truncated=self.truncated,
             )
             if hasattr(self.level, "on_step_actions"):
                 self.level.on_step_actions(self._step_actions_wp)
@@ -443,6 +473,8 @@ class Game:
         # print("self.level.commands: ", self.level.commands)
         # print(" ")
 
+        self._train_log.on_rewards_done(self.terminated, self.truncated)
+
         return self.obs, self.step_total_rewards, self.terminated 
 
     def step_Diff(self, actions: torch.Tensor):
@@ -452,9 +484,13 @@ class Game:
             actions_wp = wp.from_torch(actions, dtype=wp.float32, requires_grad=GameConfig.requires_grad)
         else:
             actions_wp = self.default_action
+        self._train_log.on_actions(actions)
 
         self._apply_inspector_rl_actions(actions_wp)
         self.players.rl_action(actions=actions_wp)
+
+        # Curriculum hook (host-side; step_Diff runs without a CUDA graph).
+        self.level.update_curriculum()
 
         self.players.bot_action(index_obj_to_env_mapping_gpu=self.level._index_obj_to_env_mapping_gpu)
         self.physics_manager.simulate()
@@ -473,6 +509,7 @@ class Game:
             actions=actions_wp, 
             max_episode_step=self.max_episode_step, 
             command_vel=self.level.commands,
+            truncated=self.truncated,
         )
         if hasattr(self.level, "on_step_actions"):
             self.level.on_step_actions(actions_wp)
@@ -511,6 +548,8 @@ class Game:
                 "state": self.obs_state_based
             }
 
+        self._train_log.on_rewards_done(self.terminated, self.truncated)
+
         return self.obs, self.step_total_rewards, self.step_total_rewards_diff, self.terminated, actions_wp
 
     def _get_observation_game_screen(self) -> dict[np.ndarray, np.ndarray]:
@@ -525,6 +564,17 @@ class Game:
         obs = self.level._get_observation_state_based()
 
         return obs
+
+    def _get_critic_observation(self) -> 'torch.Tensor':
+        """Public method to get the asymmetric critic observation without taking a step.
+
+        Falls back to the policy observation when the level does not provide a
+        separate critic observation (symmetric critic).
+        """
+        getter = getattr(self.level, "_get_critic_observation", None)
+        if getter is None:
+            return self._get_observation_state_based()
+        return getter()
 
     def _apply_inspector_pinned_controls(self):
         viewer = self.physics_manager.viewerGL

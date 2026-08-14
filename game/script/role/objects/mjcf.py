@@ -48,7 +48,7 @@ class MjcfModel(BaseObjectModel):
     ctrl_direct: bool = False
     override_root_xform: bool = False
     approximate_meshes: bool = True
-    body_collision_shape_overrides: dict[str, str] | None = None
+    body_collision_shape_overrides: dict[str, str | dict | list] | None = None
 
 
 def _join_asset_path(base: str, name: str) -> str:

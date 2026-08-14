@@ -8,12 +8,18 @@ def register() -> None:
         register_robot_loader,
     )
     from script.role.policies.policy_bundle import PolicyBundleRegistry
+    from script.role.policies.critic_obs_provider import CriticObsProviderRegistry
 
     from .g1_control_config import G1_ROBOT_NAME, get_g1_task_config
     from .g1_velocity_locomotion_provider import create_g1_velocity_locomotion_provider
+    from .g1_foot_critic_obs import create_g1_foot_critic_obs
 
     register_robot_loader(G1_ROBOT_NAME, get_g1_task_config)
     PolicyBundleRegistry.register_obs_provider(
         "g1_velocity_locomotion",
         create_g1_velocity_locomotion_provider,
+    )
+    CriticObsProviderRegistry.register(
+        "unitree_g1",
+        create_g1_foot_critic_obs,
     )

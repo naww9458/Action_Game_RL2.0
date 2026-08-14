@@ -4,7 +4,10 @@ import warp as wp
 from typing import List, Literal, Optional
 from script.simulate.mesh_builder import MeshBuilder
 from script.role.objects.base_object import BaseObjectModel, BaseObject
-from script.role.objects.collision_shape_override import apply_body_collision_shape_overrides
+from script.role.objects.collision_shape_override import (
+    apply_body_collision_exclude_pairs,
+    apply_body_collision_shape_overrides,
+)
 from script.role.abilities.articulation_control_config.joint_config_registry import (
     apply_physics_init_for_pattern,
 )
@@ -46,7 +49,8 @@ class UsdModel(BaseObjectModel):
     schema_resolvers: list | None = None
     force_position_velocity_actuation: bool = False
     override_root_xform: bool = False
-    body_collision_shape_overrides: dict[str, str] | None = None
+    body_collision_shape_overrides: dict[str, str | dict | list] | None = None
+    body_collision_exclude_pairs: list[list[str]] | None = None
 
 
 def _join_asset_path(base: str, name: str) -> str:
@@ -227,6 +231,28 @@ class UsdObject(BaseObject):
             except Exception as exc:
                 print(
                     f"[UsdObject] body_collision_shape_overrides skipped for "
+                    f"'{label}': {exc}"
+                )
+
+        # mjlab-aligned contact excludes: pairs whose colliders overlap at
+        # nominal joint positions but must never collide (mjlab <contact>
+        # excludes, e.g. elbow-wrist / pelvis-hip_roll).
+        exclude_pairs = data.get("body_collision_exclude_pairs")
+        if exclude_pairs:
+            try:
+                added = apply_body_collision_exclude_pairs(
+                    builder_env,
+                    shape_start=shape_start,
+                    exclude_pairs=list(exclude_pairs),
+                )
+                if added > 0:
+                    print(
+                        f"[UsdObject] Applied {added} body collision exclude "
+                        f"pair(s) for '{label}'"
+                    )
+            except Exception as exc:
+                print(
+                    f"[UsdObject] body_collision_exclude_pairs skipped for "
                     f"'{label}': {exc}"
                 )
 

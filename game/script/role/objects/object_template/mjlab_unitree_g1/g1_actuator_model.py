@@ -113,7 +113,6 @@ DAMPING_7520_22 = 2.0 * DAMPING_RATIO * ARMATURE_7520_22 * NATURAL_FREQ
 DAMPING_4010 = 2.0 * DAMPING_RATIO * ARMATURE_4010 * NATURAL_FREQ
 
 _NON_RL_PATTERNS = frozenset({"finger", "thumb", "hand"})
-_NON_RL_SCALE_KEYS = frozenset({"finger", "thumb", "hand"})
 
 # Hand joints present in g1_29dof_with_hand USD but absent from mjlab.
 # Defaults match Action_Game_RL_Assets/assets/external_sources/newton-assets-main/unitree_g1/rl_policies/g1_29dof.yaml.
@@ -153,19 +152,6 @@ HOME_JOINT_POS: Dict[str, float] = {
     ".*_elbow_joint": 1.28,
     "left_shoulder_roll_joint": 0.2,
     "right_shoulder_roll_joint": -0.2,
-}
-
-G1_INIT_STATES: Dict[str, Dict[str, object]] = {
-    "knees_bent": {
-        "root_pos": (0.0, 0.0, 0.76),
-        "root_rot": (0.0, 0.0, 0.7071, 0.7071),
-        "joint_pos": KNEES_BENT_JOINT_POS,
-    },
-    "home": {
-        "root_pos": (0.0, 0.0, 0.783675),
-        "root_rot": (0.0, 0.0, 0.7071, 0.7071),
-        "joint_pos": HOME_JOINT_POS,
-    },
 }
 
 
@@ -285,14 +271,6 @@ _COMPILED_PHYSICS_RULES = [
     (re.compile(pattern), physics) for pattern, physics in G1_ACTUATOR_PHYSICS
 ]
 
-G1_JOINT_SCALE_RULES: List[Tuple[str, float]] = [
-    (pattern, physics.scale) for pattern, physics in G1_ACTUATOR_PHYSICS
-]
-
-_COMPILED_SCALE_RULES = [
-    (re.compile(pattern), scale) for pattern, scale in G1_JOINT_SCALE_RULES
-]
-
 _COMPILED_KEYFRAME_RULES: Dict[str, List[Tuple[re.Pattern[str], float]]] = {}
 for keyframe_name, patterns in (
     ("knees_bent", KNEES_BENT_JOINT_POS),
@@ -301,10 +279,6 @@ for keyframe_name, patterns in (
     _COMPILED_KEYFRAME_RULES[keyframe_name] = [
         (re.compile(pattern), value) for pattern, value in patterns.items()
     ]
-
-# print(f"G1_ACTUATOR_PHYSICS: {G1_ACTUATOR_PHYSICS}")
-# print(f"G1_JOINT_SCALE_RULES: {G1_JOINT_SCALE_RULES}")
-# print(f"_COMPILED_SCALE_RULES: {_COMPILED_SCALE_RULES}")
 
 
 def normalize_joint_label(joint_label: str) -> str:
@@ -339,11 +313,6 @@ def resolve_joint_physics(joint_label: str) -> Optional[JointPhysics]:
     return None
 
 
-def resolve_joint_scale(joint_label: str) -> float:
-    physics = resolve_joint_physics(joint_label)
-    return physics.scale if physics is not None else 0.0
-
-
 def resolve_joint_nominal(
     joint_label: str,
     keyframe: str = "knees_bent",
@@ -363,32 +332,9 @@ def resolve_joint_nominal(
     return 0.0
 
 
-def scale_for_config_key(key: str) -> float:
-    if key in _NON_RL_SCALE_KEYS:
-        return 0.0
-
-    if key.endswith("_joint"):
-        candidates = [key]
-    elif key.startswith("left_") or key.startswith("right_"):
-        candidates = [f"{key}_joint", key]
-    else:
-        candidates = [f"left_{key}_joint", f"right_{key}_joint", f"{key}_joint", key]
-
-    for candidate in candidates:
-        scale = resolve_joint_scale(candidate)
-        if scale > 0.0:
-            return scale
-    return 0.0
-
-
 ##
 # Mjlab velocity locomotion task (29-DOF action vector).
 ##
-
-# Timing (policy runs once every ``DECIMATION`` physics substeps).
-DECIMATION = 4
-SIM_DT = 0.005
-STEP_DT = SIM_DT * DECIMATION  # 0.02 s policy / env step
 
 # Actuated joints in mjlab action-vector order (natural G1 joint order).
 JOINT_NAMES: tuple[str, ...] = (
@@ -424,59 +370,3 @@ JOINT_NAMES: tuple[str, ...] = (
 )
 
 ACTION_DIM = len(JOINT_NAMES)
-
-# Reference ctrl indices for the stock mjlab ``g1.xml`` (one position actuator per joint).
-CTRL_IDS_MJLAB: tuple[int, ...] = (
-    10,
-    15,
-    11,
-    16,
-    25,
-    26,
-    12,
-    17,
-    13,
-    18,
-    27,
-    28,
-    14,
-    23,
-    24,
-    0,
-    1,
-    2,
-    3,
-    4,
-    19,
-    20,
-    5,
-    6,
-    7,
-    8,
-    9,
-    21,
-    22,
-)
-
-# mjlab G1 velocity task does not clip actions by default (clip_actions=None).
-CLIP_ACTIONS: float | None = None
-
-
-def _tuple_for_velocity_joints(fn) -> tuple[float, ...]:
-    return tuple(float(fn(name)) for name in JOINT_NAMES)
-
-
-ACTION_SCALE = _tuple_for_velocity_joints(resolve_joint_scale)
-DEFAULT_JOINT_POS = _tuple_for_velocity_joints(
-    lambda name: resolve_joint_nominal(name, keyframe="knees_bent")
-)
-STIFFNESS = _tuple_for_velocity_joints(
-    lambda name: resolve_joint_physics(name).stiffness  # type: ignore[union-attr]
-)
-DAMPING = _tuple_for_velocity_joints(
-    lambda name: resolve_joint_physics(name).damping  # type: ignore[union-attr]
-)
-
-JOINT_NAME_TO_ACTION_INDEX: dict[str, int] = {
-    name: idx for idx, name in enumerate(JOINT_NAMES)
-}

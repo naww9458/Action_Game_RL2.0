@@ -14,30 +14,12 @@ reward term from ``env_cfg.py``.  Data arrays are supplied at runtime via
 
 from __future__ import annotations
 
-import fnmatch
+import re
 
 import warp as wp
 
 from script.levels.rewards.reward_calculator import RewardComponent
 from script.game_config import GameConfig
-
-# Default weights from Mjlab-Velocity-Flat-Unitree-G1_simplified/configs/env_cfg.py
-MJLAB_REWARD_WEIGHTS: dict[str, float] = {
-    "TrackLinearVelocityReward": 2.0,
-    "TrackAngularVelocityReward": 2.0,
-    "UprightReward": 1.0,
-    "VariablePostureReward": 1.0,
-    "BodyAngularVelocityPenaltyReward": -0.05,
-    "AngularMomentumPenaltyReward": -0.02,
-    "SelfCollisionCostReward": -1.0,
-    "JointPosLimitsReward": -1.0,
-    "ActionRateL2Reward": -0.1,
-    "FeetAirTimeReward": 0.0,
-    "FeetClearanceReward": -2.0,
-    "FeetSwingHeightReward": -0.25,
-    "FeetSlipReward": -0.1,
-    "SoftLandingReward": -1.0e-5,
-}
 
 
 def _component_params(params: dict, class_name: str) -> dict:
@@ -48,9 +30,18 @@ def _component_params(params: dict, class_name: str) -> dict:
 
 
 def _init_mjlab_scaling(reward: RewardComponent, class_name: str) -> None:
-    """Match mjlab RewardManager: total += raw_value * weight * step_dt."""
+    """Match mjlab RewardManager: total += raw_value * weight * step_dt.
+
+    ``weight`` must be declared in the training preset under
+    ``reward_parameters.<ClassName>.weight``.
+    """
     cfg = _component_params(reward.params, class_name)
-    weight = float(cfg.get("weight", MJLAB_REWARD_WEIGHTS.get(class_name, 1.0)))
+    if "weight" not in cfg:
+        raise KeyError(
+            f"Missing reward_parameters.{class_name}.weight. "
+            "Reward term weights must be declared in the training preset YAML."
+        )
+    weight = float(cfg["weight"])
     if "step_dt" in reward.params:
         step_dt = float(reward.params["step_dt"])
     elif "step_dt" in cfg:
@@ -70,11 +61,43 @@ def _setup_g1_view_reward(reward, device, pattern: str) -> None:
         reward.view = reward.articulation_body.views[view_idx]
 
 
+def _resolve_view_link_index(view, body_name: str) -> int:
+    """Resolve the per-view link index whose name ends with ``body_name``.
+
+    Newton ``ArticulationView.link_names`` holds the leaf component of the
+    hierarchical body label (e.g. ``torso_link``). Matching uses ``endswith`` so
+    the resolved index stays stable regardless of the USD/XPath prefix.
+    """
+    names = list(getattr(view, "link_names", ()) or ())
+    for i, name in enumerate(names):
+        if name.endswith(body_name):
+            return i
+    raise RuntimeError(
+        f"Body '{body_name}' not found in view.link_names "
+        f"(available: {names[:16]}{'...' if len(names) > 16 else ''})."
+    )
+
+
 def _bind_g1_level_resources(reward, level) -> None:
     reward.foot_sensor = getattr(level, "foot_sensor", None)
+    # ``policy_actions`` holds the action of the previous step (a_{t-1}) at reward
+    # computation time, matching mjlab's ``action_manager.prev_action``.
+    reward.policy_actions = getattr(level, "policy_actions", None)
     reward.prev_actions = getattr(level, "prev_actions", None)
     reward.rl_action_dim = getattr(level, "rl_action_dim", GameConfig.ACTION_SHAPE_OFFSET)
     reward.num_env = getattr(level, "num_env", GameConfig.NUM_PLAYERS)
+
+
+def _get_log_buffers(kwargs: dict, log_name: str | None, metric_names: tuple[str, ...] = ()):
+    """Extract the per-term reward buffer and metric buffers from calculator kwargs.
+
+    ``RewardCalculator`` passes ``reward_term_bufs`` / ``metric_bufs`` dicts keyed
+    by the component's ``log_name`` / ``metric_log_names``. Returns the term
+    buffer (or ``None``) plus a list of metric buffers in declaration order.
+    """
+    term_buf = kwargs.get("reward_term_bufs", {}).get(log_name) if log_name else None
+    metric_bufs = kwargs.get("metric_bufs", {})
+    return term_buf, [metric_bufs.get(n) for n in metric_names]
 
 def _normalize_pattern(pattern: str) -> str:
     if len(pattern) >= 2 and pattern[0] == "r" and pattern[1] in ("'", '"'):
@@ -83,13 +106,20 @@ def _normalize_pattern(pattern: str) -> str:
 
 
 def resolve_joint_stds(pattern_dict: dict[str, float], joint_names: list[str]) -> list[float]:
-    """Map regex-style joint-name patterns to per-joint standard deviations."""
+    """Map regex-style joint-name patterns to per-joint standard deviations.
+
+    Uses ``re.fullmatch`` (as mjlab's ``resolve_matching_names_values``) so
+    regex metacharacters like ``.*`` behave like real regexes. Joints that
+    match no pattern keep ``default_std`` so the returned list always has one
+    entry per joint name (mjlab instead drops unmatched joints, which would
+    desync the array from ``num_joints`` used by the reward kernel).
+    """
     default_std = 0.1
     result: list[float] = []
     for name in joint_names:
         matched_std = default_std
         for pattern, std in pattern_dict.items():
-            if fnmatch.fnmatch(name, _normalize_pattern(pattern)):
+            if re.fullmatch(_normalize_pattern(pattern), name):
                 matched_std = float(std)
                 break
         result.append(matched_std)
@@ -128,6 +158,8 @@ def _command_active_func(
 class TrackLinearVelocityReward(RewardComponent):
     """exp(-||v_cmd_xy - v_actual_xy||² / std² - v_actual_z² / std²)."""
 
+    log_name = "track_linear_velocity"
+
     def __init__(self, device, pattern, **kwargs):
         super().__init__(**kwargs)
         _setup_g1_view_reward(self, device, pattern)
@@ -150,6 +182,8 @@ class TrackLinearVelocityReward(RewardComponent):
         root_tfs = self.view.get_root_transforms(pm.state_0)
         root_vels = self.view.get_root_velocities(pm.state_0)
 
+        term_buf, _ = _get_log_buffers(kwargs, self.log_name)
+
         wp.launch(
             kernel=self.calculate_gpu,
             dim=num_players,
@@ -163,6 +197,7 @@ class TrackLinearVelocityReward(RewardComponent):
                 self.articulation_body.num_objects_env,
                 self.view.count_per_world,
                 step_total_rewards,
+                term_buf,
                 self.std_sq,
                 self.reward_scale,
             ],
@@ -180,6 +215,7 @@ class TrackLinearVelocityReward(RewardComponent):
         num_objects_env: int,
         count_per_world: int,
         step_total_rewards: wp.array(dtype=wp.float32),
+        term_buf: wp.array(dtype=wp.float32),
         std_sq: wp.float32,
         reward_scale: wp.float32,
     ):
@@ -210,6 +246,7 @@ class TrackLinearVelocityReward(RewardComponent):
         lin_vel_error = xy_error + z_error
         reward_value = wp.exp(-lin_vel_error / std_sq) * reward_scale
         wp.atomic_add(step_total_rewards, shape_id, reward_value)
+        wp.atomic_add(term_buf, world, reward_value)
 
     def reset(self, **kwargs):
         pass
@@ -217,6 +254,8 @@ class TrackLinearVelocityReward(RewardComponent):
 
 class TrackAngularVelocityReward(RewardComponent):
     """exp(-||ω_cmd_z - ω_actual_z||² / std² - ||ω_actual_xy||² / std²)."""
+
+    log_name = "track_angular_velocity"
 
     def __init__(self, device, pattern, **kwargs):
         super().__init__(**kwargs)
@@ -240,6 +279,8 @@ class TrackAngularVelocityReward(RewardComponent):
         root_tfs = self.view.get_root_transforms(pm.state_0)
         root_vels = self.view.get_root_velocities(pm.state_0)
 
+        term_buf, _ = _get_log_buffers(kwargs, self.log_name)
+
         wp.launch(
             kernel=self.calculate_gpu,
             dim=num_players,
@@ -253,6 +294,7 @@ class TrackAngularVelocityReward(RewardComponent):
                 self.articulation_body.num_objects_env,
                 self.view.count_per_world,
                 step_total_rewards,
+                term_buf,
                 self.std_sq,
                 self.reward_scale,
             ],
@@ -270,6 +312,7 @@ class TrackAngularVelocityReward(RewardComponent):
         num_objects_env: int,
         count_per_world: int,
         step_total_rewards: wp.array(dtype=wp.float32),
+        term_buf: wp.array(dtype=wp.float32),
         std_sq: wp.float32,
         reward_scale: wp.float32,
     ):
@@ -297,6 +340,7 @@ class TrackAngularVelocityReward(RewardComponent):
         ang_vel_error = z_error + xy_error
         reward_value = wp.exp(-ang_vel_error / std_sq) * reward_scale
         wp.atomic_add(step_total_rewards, shape_id, reward_value)
+        wp.atomic_add(term_buf, world, reward_value)
 
     def reset(self, **kwargs):
         pass
@@ -305,10 +349,12 @@ class TrackAngularVelocityReward(RewardComponent):
 class ActionRateL2Reward(RewardComponent):
     """||a_t - a_{t-1}||² summed over action dimensions."""
 
+    log_name = "action_rate_l2"
+
     def __init__(self, device, **kwargs):
         super().__init__(**kwargs)
         self.device = device
-        self.prev_actions = None
+        self.policy_actions = None
         self.rl_action_dim = GameConfig.ACTION_SHAPE_OFFSET
         _init_mjlab_scaling(self, "ActionRateL2Reward")
 
@@ -326,8 +372,10 @@ class ActionRateL2Reward(RewardComponent):
         index_player_obj_to_env_mapping_gpu: wp.array,
         **kwargs,
     ):
-        if self.prev_actions is None:
+        if self.policy_actions is None:
             return
+
+        term_buf, _ = _get_log_buffers(kwargs, self.log_name)
 
         wp.launch(
             kernel=self.calculate_gpu,
@@ -335,10 +383,11 @@ class ActionRateL2Reward(RewardComponent):
             inputs=[
                 player_shape_ids_gpu,
                 actions,
-                self.prev_actions,
+                self.policy_actions,
                 is_rl_player_mask_gpu,
                 index_player_obj_to_env_mapping_gpu,
                 step_total_rewards,
+                term_buf,
                 self.rl_action_dim,
                 self.reward_scale,
             ],
@@ -349,10 +398,11 @@ class ActionRateL2Reward(RewardComponent):
     def calculate_gpu(
         player_shape_ids_gpu: wp.array(dtype=wp.int32),
         actions: wp.array2d(dtype=wp.float32),
-        prev_actions: wp.array2d(dtype=wp.float32),
+        policy_actions: wp.array2d(dtype=wp.float32),
         is_rl_player_mask_gpu: wp.array(dtype=wp.int32),
         index_player_obj_to_env_mapping_gpu: wp.array(dtype=wp.int32),
         step_total_rewards: wp.array(dtype=wp.float32),
+        term_buf: wp.array(dtype=wp.float32),
         rl_action_dim: wp.int32,
         reward_scale: wp.float32,
     ):
@@ -364,21 +414,44 @@ class ActionRateL2Reward(RewardComponent):
         world = index_player_obj_to_env_mapping_gpu[tid]
         penalty = wp.float32(0.0)
         for i in range(rl_action_dim):
-            diff = actions[rl_row, i] - prev_actions[world, i]
+            # policy_actions == a_{t-1} at reward time, so diff == a_t - a_{t-1}.
+            diff = actions[rl_row, i] - policy_actions[world, i]
             penalty += diff * diff
         wp.atomic_add(step_total_rewards, shape_id, penalty * reward_scale)
+        wp.atomic_add(term_buf, world, penalty * reward_scale)
 
     def reset(self, **kwargs):
         pass
 
 
 class AngularMomentumPenaltyReward(RewardComponent):
-    """||L||² for whole-body angular momentum (approximated via root ω in body frame)."""
+    """||L||² for the whole-robot angular momentum (mjlab subtreeangmom on a root body)."""
+
+    log_name = "angular_momentum"
+    metric_log_names = ("angular_momentum_mean",)
 
     def __init__(self, device, pattern, **kwargs):
         super().__init__(**kwargs)
         _setup_g1_view_reward(self, device, pattern)
+        cfg = _component_params(self.params, "AngularMomentumPenaltyReward")
+        if "body_name" not in cfg:
+            raise KeyError(
+                "Missing reward_parameters.AngularMomentumPenaltyReward.body_name "
+                "(mjlab uses pelvis)."
+            )
+        self.root_body_name = str(cfg["body_name"])
+        self.root_mj_body_id = None
         _init_mjlab_scaling(self, "AngularMomentumPenaltyReward")
+
+    def bind_level(self, level):
+        from script.role.objects.object_template.mjlab_unitree_g1.g1_foot_sensor_cfg import (
+            resolve_g1_body_mj_id,
+        )
+
+        pm = getattr(level, "physics_manager", None)
+        if pm is None:
+            return
+        self.root_mj_body_id = resolve_g1_body_mj_id(pm, self.root_body_name)
 
     def calculate(
         self,
@@ -389,22 +462,27 @@ class AngularMomentumPenaltyReward(RewardComponent):
         index_player_obj_to_env_mapping_gpu: wp.array,
         **kwargs,
     ):
+        if self.root_mj_body_id is None:
+            return
         pm = physics_manager
-        root_tfs = self.view.get_root_transforms(pm.state_0)
-        root_vels = self.view.get_root_velocities(pm.state_0)
+        solver = getattr(getattr(pm, "solver_handler", None), "solver", None)
+        if solver is None or not hasattr(solver, "mjw_data"):
+            return
+        subtree_angmom = solver.mjw_data.subtree_angmom
+
+        term_buf, metric_bufs = _get_log_buffers(kwargs, self.log_name, self.metric_log_names)
 
         wp.launch(
             kernel=self.calculate_gpu,
             dim=num_players,
             inputs=[
                 player_shape_ids_gpu,
-                root_tfs,
-                root_vels,
+                subtree_angmom,
                 index_player_obj_to_env_mapping_gpu,
-                self.articulation_body.view_object_indices_gpus[self.pattern],
-                self.articulation_body.num_objects_env,
-                self.view.count_per_world,
                 step_total_rewards,
+                term_buf,
+                metric_bufs[0],
+                self.root_mj_body_id,
                 self.reward_scale,
             ],
             device=self.device,
@@ -413,41 +491,39 @@ class AngularMomentumPenaltyReward(RewardComponent):
     @wp.kernel
     def calculate_gpu(
         player_shape_ids_gpu: wp.array(dtype=wp.int32),
-        root_tfs: wp.array2d(dtype=wp.transform),
-        root_vels: wp.array2d(dtype=wp.spatial_vector),
+        subtree_angmom: wp.array2d(dtype=wp.vec3),
         index_player_obj_to_env_mapping_gpu: wp.array(dtype=wp.int32),
-        view_object_indices: wp.array(dtype=int),
-        num_objects_env: int,
-        count_per_world: int,
         step_total_rewards: wp.array(dtype=wp.float32),
+        term_buf: wp.array(dtype=wp.float32),
+        ang_mom_metric_buf: wp.array(dtype=wp.float32),
+        root_mj_body_id: int,
         reward_scale: wp.float32,
     ):
         tid = wp.tid()
         shape_id = player_shape_ids_gpu[tid]
         world = index_player_obj_to_env_mapping_gpu[tid]
-        local_idx = shape_id % num_objects_env
-        obj_idx = _find_view_obj_idx(local_idx, view_object_indices, count_per_world)
-        if obj_idx == -1:
-            return
 
-        my_rot = wp.transform_get_rotation(root_tfs[world, obj_idx])
-        root_qd = root_vels[world, obj_idx]
-        inv_rot = wp.quat_inverse(my_rot)
-        world_ang = wp.vec3(root_qd[3], root_qd[4], root_qd[5])
-        local_ang = wp.quat_rotate(inv_rot, world_ang)
-        penalty = local_ang[0] * local_ang[0] + local_ang[1] * local_ang[1] + local_ang[2] * local_ang[2]
+        angmom = subtree_angmom[world, root_mj_body_id]
+        penalty = angmom[0] * angmom[0] + angmom[1] * angmom[1] + angmom[2] * angmom[2]
         wp.atomic_add(step_total_rewards, shape_id, penalty * reward_scale)
+        wp.atomic_add(term_buf, world, penalty * reward_scale)
+        ang_mom_metric_buf[world] = wp.sqrt(penalty)
 
     def reset(self, **kwargs):
         pass
 
 
 class BodyAngularVelocityPenaltyReward(RewardComponent):
-    """||ω_body_xy||² for the pelvis/root body."""
+    """||ω_xy||² for the torso_link body (world-frame angular velocity, mjlab)."""
+
+    log_name = "body_ang_vel"
 
     def __init__(self, device, pattern, **kwargs):
         super().__init__(**kwargs)
         _setup_g1_view_reward(self, device, pattern)
+        cfg = _component_params(self.params, "BodyAngularVelocityPenaltyReward")
+        body_name = str(cfg.get("body_name", "torso_link"))
+        self.body_link_idx = _resolve_view_link_index(self.view, body_name)
         _init_mjlab_scaling(self, "BodyAngularVelocityPenaltyReward")
 
     def calculate(
@@ -460,21 +536,23 @@ class BodyAngularVelocityPenaltyReward(RewardComponent):
         **kwargs,
     ):
         pm = physics_manager
-        root_tfs = self.view.get_root_transforms(pm.state_0)
-        root_vels = self.view.get_root_velocities(pm.state_0)
+        link_vels = self.view.get_link_velocities(pm.state_0)
+
+        term_buf, _ = _get_log_buffers(kwargs, self.log_name)
 
         wp.launch(
             kernel=self.calculate_gpu,
             dim=num_players,
             inputs=[
                 player_shape_ids_gpu,
-                root_tfs,
-                root_vels,
+                link_vels,
                 index_player_obj_to_env_mapping_gpu,
                 self.articulation_body.view_object_indices_gpus[self.pattern],
                 self.articulation_body.num_objects_env,
                 self.view.count_per_world,
                 step_total_rewards,
+                term_buf,
+                self.body_link_idx,
                 self.reward_scale,
             ],
             device=self.device,
@@ -483,13 +561,14 @@ class BodyAngularVelocityPenaltyReward(RewardComponent):
     @wp.kernel
     def calculate_gpu(
         player_shape_ids_gpu: wp.array(dtype=wp.int32),
-        root_tfs: wp.array2d(dtype=wp.transform),
-        root_vels: wp.array2d(dtype=wp.spatial_vector),
+        link_vels: wp.array(dtype=wp.spatial_vector, ndim=3),
         index_player_obj_to_env_mapping_gpu: wp.array(dtype=wp.int32),
         view_object_indices: wp.array(dtype=int),
         num_objects_env: int,
         count_per_world: int,
         step_total_rewards: wp.array(dtype=wp.float32),
+        term_buf: wp.array(dtype=wp.float32),
+        body_link_idx: int,
         reward_scale: wp.float32,
     ):
         tid = wp.tid()
@@ -500,13 +579,13 @@ class BodyAngularVelocityPenaltyReward(RewardComponent):
         if obj_idx == -1:
             return
 
-        my_rot = wp.transform_get_rotation(root_tfs[world, obj_idx])
-        root_qd = root_vels[world, obj_idx]
-        inv_rot = wp.quat_inverse(my_rot)
-        world_ang = wp.vec3(root_qd[3], root_qd[4], root_qd[5])
-        local_ang = wp.quat_rotate(inv_rot, world_ang)
-        penalty = local_ang[0] * local_ang[0] + local_ang[1] * local_ang[1]
+        link_qd = link_vels[world, obj_idx, body_link_idx]
+        # Warp spatial_vector layout is [lin.x, lin.y, lin.z, ang.x, ang.y, ang.z].
+        # mjlab penalizes world-frame angular velocity xy (body_link_ang_vel_w).
+        world_ang = wp.vec3(link_qd[3], link_qd[4], link_qd[5])
+        penalty = world_ang[0] * world_ang[0] + world_ang[1] * world_ang[1]
         wp.atomic_add(step_total_rewards, shape_id, penalty * reward_scale)
+        wp.atomic_add(term_buf, world, penalty * reward_scale)
 
     def reset(self, **kwargs):
         pass
@@ -514,6 +593,8 @@ class BodyAngularVelocityPenaltyReward(RewardComponent):
 
 class FeetAirTimeReward(RewardComponent):
     """Count feet whose air time lies in [threshold_min, threshold_max]."""
+
+    log_name = "air_time"
 
     def __init__(self, device, **kwargs):
         super().__init__(**kwargs)
@@ -542,6 +623,8 @@ class FeetAirTimeReward(RewardComponent):
         if self.foot_sensor is None:
             return
 
+        term_buf, _ = _get_log_buffers(kwargs, self.log_name)
+
         wp.launch(
             kernel=self.calculate_gpu,
             dim=num_players,
@@ -551,6 +634,7 @@ class FeetAirTimeReward(RewardComponent):
                 command_vel,
                 index_player_obj_to_env_mapping_gpu,
                 step_total_rewards,
+                term_buf,
                 self.num_feet,
                 self.threshold_min,
                 self.threshold_max,
@@ -567,6 +651,7 @@ class FeetAirTimeReward(RewardComponent):
         command_vel: wp.array2d(dtype=wp.float32),
         index_player_obj_to_env_mapping_gpu: wp.array(dtype=wp.int32),
         step_total_rewards: wp.array(dtype=wp.float32),
+        term_buf: wp.array(dtype=wp.float32),
         num_feet: wp.int32,
         threshold_min: wp.float32,
         threshold_max: wp.float32,
@@ -583,6 +668,7 @@ class FeetAirTimeReward(RewardComponent):
                 reward += wp.float32(1.0)
         active = _command_active_func(command_vel, world, command_threshold)
         wp.atomic_add(step_total_rewards, shape_id, reward * active * reward_scale)
+        wp.atomic_add(term_buf, world, reward * active * reward_scale)
 
     def reset(self, **kwargs):
         pass
@@ -590,6 +676,8 @@ class FeetAirTimeReward(RewardComponent):
 
 class FeetClearanceReward(RewardComponent):
     """|h - h_target| weighted by foot XY velocity magnitude."""
+
+    log_name = "foot_clearance"
 
     def __init__(self, device, **kwargs):
         super().__init__(**kwargs)
@@ -617,6 +705,8 @@ class FeetClearanceReward(RewardComponent):
         if self.foot_sensor is None:
             return
 
+        term_buf, _ = _get_log_buffers(kwargs, self.log_name)
+
         wp.launch(
             kernel=self.calculate_gpu,
             dim=num_players,
@@ -627,6 +717,7 @@ class FeetClearanceReward(RewardComponent):
                 command_vel,
                 index_player_obj_to_env_mapping_gpu,
                 step_total_rewards,
+                term_buf,
                 self.num_feet,
                 self.target_height,
                 self.command_threshold,
@@ -643,6 +734,7 @@ class FeetClearanceReward(RewardComponent):
         command_vel: wp.array2d(dtype=wp.float32),
         index_player_obj_to_env_mapping_gpu: wp.array(dtype=wp.int32),
         step_total_rewards: wp.array(dtype=wp.float32),
+        term_buf: wp.array(dtype=wp.float32),
         num_feet: wp.int32,
         target_height: wp.float32,
         command_threshold: wp.float32,
@@ -659,6 +751,7 @@ class FeetClearanceReward(RewardComponent):
             cost += delta * vel_norm
         active = _command_active_func(command_vel, world, command_threshold)
         wp.atomic_add(step_total_rewards, shape_id, cost * active * reward_scale)
+        wp.atomic_add(term_buf, world, cost * active * reward_scale)
 
     def reset(self, **kwargs):
         pass
@@ -666,6 +759,9 @@ class FeetClearanceReward(RewardComponent):
 
 class FeetSlipReward(RewardComponent):
     """||v_foot_xy||² while foot is in contact."""
+
+    log_name = "foot_slip"
+    metric_log_names = ("slip_velocity_mean",)
 
     def __init__(self, device, **kwargs):
         super().__init__(**kwargs)
@@ -692,6 +788,8 @@ class FeetSlipReward(RewardComponent):
         if self.foot_sensor is None:
             return
 
+        term_buf, metric_bufs = _get_log_buffers(kwargs, self.log_name, self.metric_log_names)
+
         wp.launch(
             kernel=self.calculate_gpu,
             dim=num_players,
@@ -702,6 +800,8 @@ class FeetSlipReward(RewardComponent):
                 command_vel,
                 index_player_obj_to_env_mapping_gpu,
                 step_total_rewards,
+                term_buf,
+                metric_bufs[0],
                 self.num_feet,
                 self.command_threshold,
                 self.reward_scale,
@@ -717,6 +817,8 @@ class FeetSlipReward(RewardComponent):
         command_vel: wp.array2d(dtype=wp.float32),
         index_player_obj_to_env_mapping_gpu: wp.array(dtype=wp.int32),
         step_total_rewards: wp.array(dtype=wp.float32),
+        term_buf: wp.array(dtype=wp.float32),
+        slip_metric_buf: wp.array(dtype=wp.float32),
         num_feet: wp.int32,
         command_threshold: wp.float32,
         reward_scale: wp.float32,
@@ -725,12 +827,19 @@ class FeetSlipReward(RewardComponent):
         shape_id = player_shape_ids_gpu[tid]
         world = index_player_obj_to_env_mapping_gpu[tid]
         cost = wp.float32(0.0)
+        slip_sum = wp.float32(0.0)
+        slip_count = wp.float32(0.0)
         for foot in range(num_feet):
             contact = wp.float32(in_contact[world, foot])
             if contact > 0.0:
+                vel_norm = wp.sqrt(foot_vel_xy_sq[world, foot])
                 cost += foot_vel_xy_sq[world, foot] * contact
+                slip_sum += vel_norm
+                slip_count += wp.float32(1.0)
         active = _command_active_func(command_vel, world, command_threshold)
         wp.atomic_add(step_total_rewards, shape_id, cost * active * reward_scale)
+        wp.atomic_add(term_buf, world, cost * active * reward_scale)
+        slip_metric_buf[world] = slip_sum / wp.max(slip_count, wp.float32(1.0))
 
     def reset(self, **kwargs):
         pass
@@ -738,6 +847,9 @@ class FeetSlipReward(RewardComponent):
 
 class FeetSwingHeightReward(RewardComponent):
     """Penalize deviation from target swing height, evaluated at landing."""
+
+    log_name = "foot_swing_height"
+    metric_log_names = ("peak_height_mean",)
 
     def __init__(self, device, **kwargs):
         super().__init__(**kwargs)
@@ -771,6 +883,8 @@ class FeetSwingHeightReward(RewardComponent):
         if self.foot_sensor is None or self.peak_heights is None:
             return
 
+        term_buf, metric_bufs = _get_log_buffers(kwargs, self.log_name, self.metric_log_names)
+
         wp.launch(
             kernel=self.calculate_gpu,
             dim=num_players,
@@ -783,6 +897,8 @@ class FeetSwingHeightReward(RewardComponent):
                 self.peak_heights,
                 index_player_obj_to_env_mapping_gpu,
                 step_total_rewards,
+                term_buf,
+                metric_bufs[0],
                 self.num_feet,
                 self.target_height,
                 self.command_threshold,
@@ -801,6 +917,8 @@ class FeetSwingHeightReward(RewardComponent):
         peak_heights: wp.array2d(dtype=wp.float32),
         index_player_obj_to_env_mapping_gpu: wp.array(dtype=wp.int32),
         step_total_rewards: wp.array(dtype=wp.float32),
+        term_buf: wp.array(dtype=wp.float32),
+        peak_metric_buf: wp.array(dtype=wp.float32),
         num_feet: wp.int32,
         target_height: wp.float32,
         command_threshold: wp.float32,
@@ -810,6 +928,8 @@ class FeetSwingHeightReward(RewardComponent):
         shape_id = player_shape_ids_gpu[tid]
         world = index_player_obj_to_env_mapping_gpu[tid]
         cost = wp.float32(0.0)
+        peak_sum = wp.float32(0.0)
+        peak_count = wp.float32(0.0)
         for foot in range(num_feet):
             height = foot_heights[world, foot]
             in_air = foot_found[world, foot] == 0
@@ -819,9 +939,13 @@ class FeetSwingHeightReward(RewardComponent):
             if landed > 0.0:
                 error = peak_heights[world, foot] / target_height - wp.float32(1.0)
                 cost += error * error * landed
+                peak_sum += peak_heights[world, foot]
+                peak_count += wp.float32(1.0)
                 peak_heights[world, foot] = wp.float32(0.0)
         active = _command_active_func(command_vel, world, command_threshold)
         wp.atomic_add(step_total_rewards, shape_id, cost * active * reward_scale)
+        wp.atomic_add(term_buf, world, cost * active * reward_scale)
+        peak_metric_buf[world] = peak_sum / wp.max(peak_count, wp.float32(1.0))
 
     def reset(
         self,
@@ -862,10 +986,13 @@ class FeetSwingHeightReward(RewardComponent):
 class JointPosLimitsReward(RewardComponent):
     """Soft joint-limit violation penalty."""
 
+    log_name = "dof_pos_limits"
+
     def __init__(self, device, pattern, **kwargs):
         super().__init__(**kwargs)
         _setup_g1_view_reward(self, device, pattern)
         self.num_joints = self.view.joint_dof_count
+        self.joint_rl_mask = self.articulation_body.control_joint_rl_mask_gpus[self.pattern]
         _init_mjlab_scaling(self, "JointPosLimitsReward")
 
     def calculate(
@@ -880,6 +1007,8 @@ class JointPosLimitsReward(RewardComponent):
         pm = physics_manager
         joint_qs = self.view.get_dof_positions(pm.state_0)
 
+        term_buf, _ = _get_log_buffers(kwargs, self.log_name)
+
         wp.launch(
             kernel=self.calculate_gpu,
             dim=num_players,
@@ -893,6 +1022,8 @@ class JointPosLimitsReward(RewardComponent):
                 self.articulation_body.num_objects_env,
                 self.view.count_per_world,
                 step_total_rewards,
+                term_buf,
+                self.joint_rl_mask,
                 self.num_joints,
                 self.reward_scale,
             ],
@@ -910,6 +1041,8 @@ class JointPosLimitsReward(RewardComponent):
         num_objects_env: int,
         count_per_world: int,
         step_total_rewards: wp.array(dtype=wp.float32),
+        term_buf: wp.array(dtype=wp.float32),
+        joint_rl_mask: wp.array(dtype=wp.int32),
         num_joints: wp.int32,
         reward_scale: wp.float32,
     ):
@@ -923,6 +1056,8 @@ class JointPosLimitsReward(RewardComponent):
 
         penalty = wp.float32(0.0)
         for joint in range(num_joints):
+            if joint_rl_mask[joint] == 0:
+                continue
             pos = joint_qs[world, obj_idx, joint]
             lower = joint_limits_min[joint]
             upper = joint_limits_max[joint]
@@ -933,6 +1068,7 @@ class JointPosLimitsReward(RewardComponent):
             if above > 0.0:
                 penalty += above
         wp.atomic_add(step_total_rewards, shape_id, penalty * reward_scale)
+        wp.atomic_add(term_buf, world, penalty * reward_scale)
 
     def reset(self, **kwargs):
         pass
@@ -941,14 +1077,27 @@ class JointPosLimitsReward(RewardComponent):
 class SelfCollisionCostReward(RewardComponent):
     """Count self-collision substeps where force exceeds threshold."""
 
+    log_name = "self_collisions"
+
     def __init__(self, device, **kwargs):
         super().__init__(**kwargs)
         self.device = device
+        self.self_collision_sensor = None
         cfg = _component_params(self.params, "SelfCollisionCostReward")
         self.num_history = int(cfg.get("num_history", 4))
         self.force_threshold = float(cfg.get("force_threshold", 10.0))
         self.use_force_history = self.num_history > 0
         _init_mjlab_scaling(self, "SelfCollisionCostReward")
+
+    def bind_level(self, level):
+        """Bind the level's per-substep self-collision sensor (mjlab semantics).
+
+        The sensor keeps a rolling ``force_history`` of the max robot-on-robot
+        contact force over the last ``history_length`` substeps (index 0 = most
+        recent), matching mjlab's ``self_collision`` ContactSensor with
+        ``history_length`` set to the decimation value.
+        """
+        self.self_collision_sensor = getattr(level, "self_collision_sensor", None)
 
     def calculate(
         self,
@@ -956,36 +1105,44 @@ class SelfCollisionCostReward(RewardComponent):
         physics_manager,
         step_total_rewards: wp.array,
         player_shape_ids_gpu: wp.array,
-        self_collision_force_mag: wp.array | None = None,
-        self_collision_found: wp.array | None = None,
+        index_player_obj_to_env_mapping_gpu: wp.array,
         **kwargs,
     ):
+        if self.self_collision_sensor is None:
+            return
+
+        term_buf, _ = _get_log_buffers(kwargs, self.log_name)
         if self.use_force_history:
-            if self_collision_force_mag is None:
-                return
+            history = self.self_collision_sensor.force_history
+            # Clamp to the sensor's actual width so a stale preset cannot index
+            # out of bounds.
+            num_history = min(self.num_history, self.self_collision_sensor.history_length)
             wp.launch(
                 kernel=self.calculate_from_force_history_gpu,
                 dim=num_players,
                 inputs=[
                     player_shape_ids_gpu,
-                    self_collision_force_mag,
+                    index_player_obj_to_env_mapping_gpu,
+                    history,
                     step_total_rewards,
-                    self.num_history,
+                    term_buf,
+                    num_history,
                     self.force_threshold,
                     self.reward_scale,
                 ],
                 device=self.device,
             )
         else:
-            if self_collision_found is None:
-                return
+            found = self.self_collision_sensor.found
             wp.launch(
                 kernel=self.calculate_from_found_gpu,
                 dim=num_players,
                 inputs=[
                     player_shape_ids_gpu,
-                    self_collision_found,
+                    index_player_obj_to_env_mapping_gpu,
+                    found,
                     step_total_rewards,
+                    term_buf,
                     self.reward_scale,
                 ],
                 device=self.device,
@@ -994,31 +1151,38 @@ class SelfCollisionCostReward(RewardComponent):
     @wp.kernel
     def calculate_from_force_history_gpu(
         player_shape_ids_gpu: wp.array(dtype=wp.int32),
-        self_collision_force_mag: wp.array(dtype=wp.float32),
+        index_player_obj_to_env_mapping_gpu: wp.array(dtype=wp.int32),
+        force_history: wp.array2d(dtype=wp.float32),
         step_total_rewards: wp.array(dtype=wp.float32),
+        term_buf: wp.array(dtype=wp.float32),
         num_history: wp.int32,
         force_threshold: wp.float32,
         reward_scale: wp.float32,
     ):
         tid = wp.tid()
         shape_id = player_shape_ids_gpu[tid]
+        world = index_player_obj_to_env_mapping_gpu[tid]
         cost = wp.float32(0.0)
-        base = tid * num_history
         for h in range(num_history):
-            if self_collision_force_mag[base + h] > force_threshold:
+            if force_history[world, h] > force_threshold:
                 cost += wp.float32(1.0)
         wp.atomic_add(step_total_rewards, shape_id, cost * reward_scale)
+        wp.atomic_add(term_buf, world, cost * reward_scale)
 
     @wp.kernel
     def calculate_from_found_gpu(
         player_shape_ids_gpu: wp.array(dtype=wp.int32),
-        self_collision_found: wp.array(dtype=wp.float32),
+        index_player_obj_to_env_mapping_gpu: wp.array(dtype=wp.int32),
+        self_collision_found: wp.array(dtype=wp.int32),
         step_total_rewards: wp.array(dtype=wp.float32),
+        term_buf: wp.array(dtype=wp.float32),
         reward_scale: wp.float32,
     ):
         tid = wp.tid()
         shape_id = player_shape_ids_gpu[tid]
-        wp.atomic_add(step_total_rewards, shape_id, self_collision_found[tid] * reward_scale)
+        world = index_player_obj_to_env_mapping_gpu[tid]
+        wp.atomic_add(step_total_rewards, shape_id, wp.float32(self_collision_found[world]) * reward_scale)
+        wp.atomic_add(term_buf, world, wp.float32(self_collision_found[world]) * reward_scale)
 
     def reset(self, **kwargs):
         pass
@@ -1026,6 +1190,9 @@ class SelfCollisionCostReward(RewardComponent):
 
 class SoftLandingReward(RewardComponent):
     """Penalize high impact forces at first foot contact."""
+
+    log_name = "soft_landing"
+    metric_log_names = ("landing_force_mean",)
 
     def __init__(self, device, **kwargs):
         super().__init__(**kwargs)
@@ -1052,6 +1219,8 @@ class SoftLandingReward(RewardComponent):
         if self.foot_sensor is None:
             return
 
+        term_buf, metric_bufs = _get_log_buffers(kwargs, self.log_name, self.metric_log_names)
+
         wp.launch(
             kernel=self.calculate_gpu,
             dim=num_players,
@@ -1062,9 +1231,12 @@ class SoftLandingReward(RewardComponent):
                 command_vel,
                 index_player_obj_to_env_mapping_gpu,
                 step_total_rewards,
+                term_buf,
+                metric_bufs[0],
                 self.num_feet,
                 self.command_threshold,
                 self.reward_scale,
+
             ],
             device=self.device,
         )
@@ -1077,20 +1249,31 @@ class SoftLandingReward(RewardComponent):
         command_vel: wp.array2d(dtype=wp.float32),
         index_player_obj_to_env_mapping_gpu: wp.array(dtype=wp.int32),
         step_total_rewards: wp.array(dtype=wp.float32),
+        term_buf: wp.array(dtype=wp.float32),
+        landing_metric_buf: wp.array(dtype=wp.float32),
         num_feet: wp.int32,
         command_threshold: wp.float32,
         reward_scale: wp.float32,
+
     ):
         tid = wp.tid()
         shape_id = player_shape_ids_gpu[tid]
         world = index_player_obj_to_env_mapping_gpu[tid]
         cost = wp.float32(0.0)
+        force_sum = wp.float32(0.0)
+        force_count = wp.float32(0.0)
         for foot in range(num_feet):
             force_mag = contact_forces[world, foot]
             landed = wp.float32(first_contact[world, foot])
             cost += force_mag * landed
+            # if landed > 0.0:
+            force_sum += force_mag
+            force_count += wp.float32(1.0)
         active = _command_active_func(command_vel, world, command_threshold)
         wp.atomic_add(step_total_rewards, shape_id, cost * active * reward_scale)
+        wp.atomic_add(term_buf, world, cost * active * reward_scale)
+
+        landing_metric_buf[world] = force_sum / wp.max(force_count, wp.float32(1.0))
 
     def reset(self, **kwargs):
         pass
@@ -1098,6 +1281,8 @@ class SoftLandingReward(RewardComponent):
 
 class UprightReward(RewardComponent):
     """exp(-||projected_gravity_xy||² / std²) for keeping the body upright."""
+
+    log_name = "upright"
 
     def __init__(self, device, pattern, **kwargs):
         super().__init__(**kwargs)
@@ -1107,6 +1292,8 @@ class UprightReward(RewardComponent):
         self.std_sq = self.std * self.std
         gravity = cfg.get("gravity_vec", (0.0, 0.0, -1.0))
         self.gravity_vec = wp.vec3(float(gravity[0]), float(gravity[1]), float(gravity[2]))
+        body_name = str(cfg.get("body_name", "torso_link"))
+        self.body_link_idx = _resolve_view_link_index(self.view, body_name)
         _init_mjlab_scaling(self, "UprightReward")
 
     def calculate(
@@ -1119,19 +1306,23 @@ class UprightReward(RewardComponent):
         **kwargs,
     ):
         pm = physics_manager
-        root_tfs = self.view.get_root_transforms(pm.state_0)
+        link_tfs = self.view.get_link_transforms(pm.state_0)
+
+        term_buf, _ = _get_log_buffers(kwargs, self.log_name)
 
         wp.launch(
             kernel=self.calculate_gpu,
             dim=num_players,
             inputs=[
                 player_shape_ids_gpu,
-                root_tfs,
+                link_tfs,
                 index_player_obj_to_env_mapping_gpu,
                 self.articulation_body.view_object_indices_gpus[self.pattern],
                 self.articulation_body.num_objects_env,
                 self.view.count_per_world,
                 step_total_rewards,
+                term_buf,
+                self.body_link_idx,
                 self.gravity_vec,
                 self.std_sq,
                 self.reward_scale,
@@ -1142,12 +1333,14 @@ class UprightReward(RewardComponent):
     @wp.kernel
     def calculate_gpu(
         player_shape_ids_gpu: wp.array(dtype=wp.int32),
-        root_tfs: wp.array2d(dtype=wp.transform),
+        link_tfs: wp.array(dtype=wp.transform, ndim=3),
         index_player_obj_to_env_mapping_gpu: wp.array(dtype=wp.int32),
         view_object_indices: wp.array(dtype=int),
         num_objects_env: int,
         count_per_world: int,
         step_total_rewards: wp.array(dtype=wp.float32),
+        term_buf: wp.array(dtype=wp.float32),
+        body_link_idx: int,
         gravity_vec: wp.vec3,
         std_sq: wp.float32,
         reward_scale: wp.float32,
@@ -1160,11 +1353,12 @@ class UprightReward(RewardComponent):
         if obj_idx == -1:
             return
 
-        quat = wp.transform_get_rotation(root_tfs[world, obj_idx])
+        quat = wp.transform_get_rotation(link_tfs[world, obj_idx, body_link_idx])
         projected_gravity_b = wp.quat_rotate_inv(quat, gravity_vec)
         xy_squared = projected_gravity_b[0] * projected_gravity_b[0] + projected_gravity_b[1] * projected_gravity_b[1]
         reward_value = wp.exp(-xy_squared / std_sq) * reward_scale
         wp.atomic_add(step_total_rewards, shape_id, reward_value)
+        wp.atomic_add(term_buf, world, reward_value)
 
     def reset(self, **kwargs):
         pass
@@ -1173,12 +1367,17 @@ class UprightReward(RewardComponent):
 class VariablePostureReward(RewardComponent):
     """exp(-mean((q - q_default)² / std(speed)²)) with speed-dependent tolerance."""
 
+    log_name = "pose"
+
     def __init__(self, device, pattern: str, **kwargs):
         super().__init__(**kwargs)
         _setup_g1_view_reward(self, device, pattern)
-        joint_names = self.view.joint_names
-
+        # Restrict pose / limit terms to RL-controlled DoFs (mjlab JOINT_NAMES,
+        # 29 on G1). Hand joints stay in the view arrays but must not enter the
+        # mean / penalty — they have no corresponding mjlab reward term.
+        joint_names = self.view.joint_dof_names
         self.num_joints = len(joint_names)
+        self.joint_rl_mask = self.articulation_body.control_joint_rl_mask_gpus[self.pattern]
         posture_cfg = _component_params(self.params, "VariablePostureReward")
         self.walking_threshold = float(posture_cfg.get("walking_threshold", 0.05))
         self.running_threshold = float(posture_cfg.get("running_threshold", 1.5))
@@ -1212,6 +1411,8 @@ class VariablePostureReward(RewardComponent):
         pm = physics_manager
         joint_qs = self.view.get_dof_positions(pm.state_0)
 
+        term_buf, _ = _get_log_buffers(kwargs, self.log_name)
+
         wp.launch(
             kernel=self.calculate_gpu,
             dim=num_players,
@@ -1228,6 +1429,8 @@ class VariablePostureReward(RewardComponent):
                 self.std_walking,
                 self.std_running,
                 step_total_rewards,
+                term_buf,
+                self.joint_rl_mask,
                 self.num_joints,
                 self.walking_threshold,
                 self.running_threshold,
@@ -1250,6 +1453,8 @@ class VariablePostureReward(RewardComponent):
         std_walking: wp.array(dtype=wp.float32),
         std_running: wp.array(dtype=wp.float32),
         step_total_rewards: wp.array(dtype=wp.float32),
+        term_buf: wp.array(dtype=wp.float32),
+        joint_rl_mask: wp.array(dtype=wp.int32),
         num_joints: wp.int32,
         walking_threshold: wp.float32,
         running_threshold: wp.float32,
@@ -1269,7 +1474,10 @@ class VariablePostureReward(RewardComponent):
         linear_speed = wp.sqrt(lin_x * lin_x + lin_y * lin_y)
         total_speed = linear_speed + wp.abs(ang_z)
         mean_term = wp.float32(0.0)
+        n_rl = wp.float32(0.0)
         for joint in range(num_joints):
+            if joint_rl_mask[joint] == 0:
+                continue
             error = joint_qs[world, obj_idx, joint] - default_joint_pos[joint]
             error_sq = error * error
             if total_speed < walking_threshold:
@@ -1280,9 +1488,12 @@ class VariablePostureReward(RewardComponent):
                 std_val = std_running[joint]
             std_sq = std_val * std_val
             mean_term += error_sq / std_sq
-        mean_term /= wp.float32(num_joints)
+            n_rl += wp.float32(1.0)
+        if n_rl > 0.0:
+            mean_term /= n_rl
         reward_value = wp.exp(-mean_term) * reward_scale
         wp.atomic_add(step_total_rewards, shape_id, reward_value)
+        wp.atomic_add(term_buf, world, reward_value)
 
     def reset(self, **kwargs):
         pass

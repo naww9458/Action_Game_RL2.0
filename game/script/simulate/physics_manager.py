@@ -8,7 +8,7 @@ from script.role.objects.base_object import ObjectRegistry
 from script.simulate.solvers.base_solver import SolverRegistry
 from script.game_config import GameConfig
 from script.exceptions import GameClosedException
-from script.sensors.contact_sensor import ContactSensor, build_shape_to_role_map
+from script.sensors.contact_sensor import RoleContactSensor, build_shape_to_role_map
 from script.simulate.coupling_index_builder import CouplingIndexBuilder
 
 from script.role.bodies.articulation_body import ArticulationBody
@@ -56,9 +56,10 @@ class PhysicsManager:
         self.current_step = 0
         self.capture_graph_after_step = 1
         self.pre_substep_callback: Optional[Callable[[int], None]] = None
+        self.post_substep_callback: Optional[Callable[[int], None]] = None
         self.inspector_body_f = None
 
-        self.contact_sensor: ContactSensor | None = None
+        self.contact_sensor: RoleContactSensor | None = None
         self._role_shape_ranges: list[tuple[int, int, int]] = []
         self._template_shape_count = 0
 
@@ -229,7 +230,7 @@ class PhysicsManager:
         self.shape_to_role_np = shape_to_role_np
         self.num_objects_env = num_objects_env
 
-        self.contact_sensor = ContactSensor(
+        self.contact_sensor = RoleContactSensor(
             num_roles=num_roles,
             shape_count=self.model.shape_count,
             shape_to_role_np=shape_to_role_np,
@@ -387,6 +388,10 @@ class PhysicsManager:
                 contacts=self.contacts,
                 dt=self.sim_dt
             )
+
+            if self.post_substep_callback is not None:
+                self.post_substep_callback(substep_idx)
+
             # Swap states (next becomes current)
             self.state_0, self.state_1 = self.state_1, self.state_0
 

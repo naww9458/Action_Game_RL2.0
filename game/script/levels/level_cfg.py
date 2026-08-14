@@ -54,6 +54,12 @@ class EnvironmentConfig(BaseModel):
     sub_steps: int = 6
     ground_shape_friction: float = 0.5
     solver_config: SolverConfig = XPBDSolverModel()
+    # Per-segment uniform observation-noise amplitudes (only used while training).
+    observation_noise: Optional[Dict[str, Any]] = None
+    # Domain randomisation / curriculum settings (mjlab ``events`` + ``curriculum``).
+    # Consumed by Level5_0; kept as a free-form dict so the level can read
+    # arbitrary DR blocks without schema churn.
+    domain_randomization: Optional[Dict[str, Any]] = None
 
 class LevelConfig(BaseModel):
     level_class: Optional[str] = None

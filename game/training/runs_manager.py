@@ -23,10 +23,11 @@ class CheckpointInfo:
 class RunInfo:
     name: str
     path: Path
-    algorithm: str = "PPO"
+    framework: str
+    algorithm: str
+    trainer_module: str
     preset_id: str = ""
     policy_module: str = ""
-    trainer_module: str = "skrl_script.trainer_PPO"
     start_time: str = ""
     num_envs: Optional[int] = None
     level: Optional[int] = None
@@ -38,8 +39,9 @@ class RunInfo:
     @property
     def display_label(self) -> str:
         parts = [self.name]
-        if self.algorithm:
-            parts.append(f"[{self.algorithm}]")
+        fw = (self.framework).upper()
+        algo = (self.algorithm).upper()
+        parts.append(f"[{fw}/{algo}]")
         if self.preset_id:
             parts.append(f"[{self.preset_id}]")
         elif self.level is not None and self.sub_level is not None:
@@ -51,7 +53,7 @@ class RunInfo:
 
 class RunsManager:
     CHECKPOINT_PATTERN = re.compile(r"^agent_(\d+)\.pt$")
-    RUN_LEVEL_PATTERN = re.compile(r"_Level(\d+)-(\d+)$", re.IGNORECASE)
+    RUN_LEVEL_PATTERN = re.compile(r"_Level(\d+)-(\d+)(?:_\d+)?$", re.IGNORECASE)
 
     def __init__(self, runs_dir: Optional[Path] = None, project_root: Optional[Path] = None):
         self.project_root = Path(project_root) if project_root else Path.cwd()
@@ -89,6 +91,11 @@ class RunsManager:
 
     @classmethod
     def parse_level_from_run_name(cls, run_name: str) -> tuple[Optional[int], Optional[int]]:
+        from training.runtime_env import parse_experiment_name
+
+        parsed = parse_experiment_name(run_name)
+        if parsed is not None:
+            return parsed["level"], parsed["sub_level"]
         match = cls.RUN_LEVEL_PATTERN.search(run_name)
         if not match:
             return None, None
@@ -102,35 +109,22 @@ class RunsManager:
         *,
         model_obs_type: str = "state_based",
     ) -> Dict[str, Any]:
+        from training.runtime_env import parse_experiment_name
+        from training.schema import coerce_framework_algorithm
+
         manifest = dict(manifest or {})
-        run_name = run_dir.name
-
-        level = manifest.get("level")
-        sub_level = manifest.get("sub_level")
-        if level is None or sub_level is None:
-            parsed_level, parsed_sub = cls.parse_level_from_run_name(run_name)
-            level = level if level is not None else parsed_level
-            sub_level = sub_level if sub_level is not None else parsed_sub
-        if level is not None:
-            manifest.setdefault("level", level)
-        if sub_level is not None:
-            manifest.setdefault("sub_level", sub_level)
-
-        algorithm = manifest.get("algorithm")
-        if not algorithm:
-            if "APG" in run_name and "PPO" not in run_name:
-                algorithm = "APG"
-            elif "PPO" in run_name:
-                algorithm = "PPO"
-            else:
-                algorithm = "PPO"
-            manifest["algorithm"] = algorithm
-
-        algo = str(manifest["algorithm"]).upper()
-        if not manifest.get("trainer_module"):
-            manifest["trainer_module"] = (
-                "skrl_script.trainer_APG" if algo == "APG" else "skrl_script.trainer_PPO"
-            )
+        parsed = parse_experiment_name(run_dir.name)
+        if parsed:
+            for key in ("framework", "algorithm", "level", "sub_level"):
+                if manifest.get(key) in (None, ""):
+                    manifest[key] = parsed[key]
+        if manifest.get("level") is None or manifest.get("sub_level") is None:
+            parsed_level, parsed_sub = cls.parse_level_from_run_name(run_dir.name)
+            if manifest.get("level") is None:
+                manifest["level"] = parsed_level
+            if manifest.get("sub_level") is None:
+                manifest["sub_level"] = parsed_sub
+        manifest = coerce_framework_algorithm(manifest)
 
         if (
             (not manifest.get("policy_module") or not manifest.get("preset_id"))
@@ -143,16 +137,18 @@ class RunsManager:
 
                 obs_type = manifest.get("obs_type", model_obs_type)
                 preset_id = resolve_preset_id(
-                    algo,
+                    str(manifest["algorithm"]),
                     int(manifest["level"]),
                     int(manifest["sub_level"]),
                     obs_type,
+                    framework=str(manifest["framework"]),
                 )
                 preset_meta = TrainingPresetRegistry.load_preset_yaml(preset_id).meta
                 manifest.setdefault("preset_id", preset_id)
                 manifest.setdefault("policy_module", preset_meta.policy_module)
                 manifest.setdefault("trainer_module", preset_meta.trainer_module)
                 manifest.setdefault("algorithm", preset_meta.algorithm)
+                manifest.setdefault("framework", preset_meta.framework)
             except KeyError:
                 pass
 
@@ -190,15 +186,17 @@ class RunsManager:
             level = level if level is not None else parsed_level
             sub_level = sub_level if sub_level is not None else parsed_sub
 
-        algorithm = manifest.get("algorithm", "PPO")
+        algorithm = manifest.get("algorithm")
+        framework = manifest.get("framework")
 
         return RunInfo(
             name=run_dir.name,
             path=run_dir,
+            framework=framework,
             algorithm=algorithm,
             preset_id=manifest.get("preset_id", ""),
             policy_module=manifest.get("policy_module", ""),
-            trainer_module=manifest.get("trainer_module", "skrl_script.trainer_PPO"),
+            trainer_module=manifest.get("trainer_module"),
             start_time=manifest.get("start_time", ""),
             num_envs=manifest.get("num_envs"),
             level=level,
@@ -222,8 +220,9 @@ class RunsManager:
             return {
                 "preset_id": meta.get("id", ""),
                 "policy_module": meta.get("policy_module", ""),
-                "trainer_module": meta.get("trainer_module", "skrl_script.trainer_PPO"),
-                "algorithm": meta.get("algorithm", "PPO"),
+                "trainer_module": meta.get("trainer_module"),
+                "framework": meta.get("framework"),
+                "algorithm": meta.get("algorithm"),
                 "level": meta.get("level"),
                 "sub_level": meta.get("sub_level"),
             }
@@ -269,12 +268,14 @@ class RunsManager:
         num_envs: int,
         level: int,
         sub_level: int,
+        framework: str,
         resume_from: Optional[str] = None,
     ) -> Dict[str, Any]:
         manifest = {
             "preset_id": preset_id,
             "policy_module": policy_module,
             "trainer_module": trainer_module,
+            "framework": framework,
             "algorithm": algorithm,
             "num_envs": num_envs,
             "level": level,
