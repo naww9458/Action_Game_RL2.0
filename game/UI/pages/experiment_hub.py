@@ -6,8 +6,8 @@ import yaml
 from pathlib import Path
 from PyQt6.QtWidgets import (
     QWidget, QVBoxLayout, QHBoxLayout, QTabWidget, QLabel, QListWidget,
-    QListWidgetItem, QPushButton, QComboBox, QSpinBox, QCheckBox,
-    QLineEdit, QFormLayout, QMessageBox,
+    QListWidgetItem, QTreeWidget, QTreeWidgetItem, QPushButton, QComboBox,
+    QSpinBox, QCheckBox, QLineEdit, QFormLayout, QMessageBox,
 )
 from PyQt6.QtCore import Qt, QUrl
 from PyQt6.QtGui import QDesktopServices
@@ -20,8 +20,8 @@ class ExperimentHubPage(QWidget):
         super().__init__()
         self.main_app = main_app
         self.TR = tr_get
-        self.target_level = None
-        self.target_sub_level = None
+        self.target_env_id = None
+        self.target_env_path = None
         self._tb_process = None
         self._tb_active_run = None
         self._tb_port = 6006
@@ -75,12 +75,23 @@ class ExperimentHubPage(QWidget):
         if game_dir not in sys.path:
             sys.path.insert(0, game_dir)
 
-    def set_target(self, level, sub_level):
-        self.target_level = level
-        self.target_sub_level = sub_level
+    def set_target(self, env_id=None, env_path=None):
+        self.target_env_path = env_path
+        self.target_env_id = str(env_id or "").strip() or None
+        if self.target_env_id is None and env_path:
+            self.target_env_id = Path(env_path).stem
         self.refresh_presets()
+        self.refresh_runs()
         if self.preset_combo.count() > 0:
             self.preset_combo.setCurrentIndex(0)
+
+    def _resolved_env_id(self) -> str:
+        env_id = str(self.target_env_id or "").strip()
+        if env_id:
+            return env_id
+        if self.target_env_path:
+            return Path(self.target_env_path).stem
+        return ""
 
     def _build_preset_tab(self):
         tab = QWidget()
@@ -118,9 +129,12 @@ class ExperimentHubPage(QWidget):
 
         left = QVBoxLayout()
         left.addWidget(QLabel(self.TR("run_list")))
-        self.run_list = QListWidget()
-        self.run_list.currentItemChanged.connect(self._on_run_selected)
-        left.addWidget(self.run_list)
+        self.run_tree = QTreeWidget()
+        self.run_tree.setHeaderHidden(True)
+        self.run_tree.setRootIsDecorated(True)
+        self.run_tree.setExpandsOnDoubleClick(True)
+        self.run_tree.currentItemChanged.connect(self._on_run_selected)
+        left.addWidget(self.run_tree)
         self.btn_refresh_runs = QPushButton(self.TR("refresh"))
         self.btn_refresh_runs.clicked.connect(self.refresh_runs)
         left.addWidget(self.btn_refresh_runs)
@@ -254,7 +268,7 @@ class ExperimentHubPage(QWidget):
         form.addRow(self.lbl_window_envs, self.spin_window_envs)
 
         self.input_resume = QLineEdit()
-        self.input_resume.setPlaceholderText("runs/.../checkpoints/agent_100.pt")
+        self.input_resume.setPlaceholderText("runs/SKRL/.../checkpoints/agent_100.pt")
         form.addRow(self.TR("resume_checkpoint"), self.input_resume)
 
         self.check_dump_rollouts = QCheckBox()
@@ -314,12 +328,12 @@ class ExperimentHubPage(QWidget):
         self._ensure_training_imports()
         from training.registry import TrainingPresetRegistry
 
+        env_id = self._resolved_env_id()
         presets = TrainingPresetRegistry.list_presets()
-        if self.target_level is not None:
-            presets = [
-                p for p in presets
-                if p["level"] == self.target_level and p["sub_level"] == self.target_sub_level
-            ]
+        if env_id:
+            presets = [p for p in presets if p.get("env_id") == env_id]
+        else:
+            presets = []
 
         self.preset_list.clear()
         self.preset_combo.clear()
@@ -332,6 +346,8 @@ class ExperimentHubPage(QWidget):
 
         if self.preset_list.count() > 0:
             self.preset_list.setCurrentRow(0)
+        else:
+            self.preset_editor.set_data({})
 
     def _load_selected_preset(self, current, _previous):
         if current is None:
@@ -381,27 +397,80 @@ class ExperimentHubPage(QWidget):
     def refresh_runs(self):
         self._ensure_training_imports()
         from training.runs_manager import RunsManager
+        from training.schema import FRAMEWORK_RUN_FOLDER, FRAMEWORK_SKRL, FRAMEWORK_RSL_RL, normalize_framework_id
 
         manager = RunsManager(project_root=Path(self._project_root()))
-        if self.target_level is not None:
-            runs = manager.list_runs(level=self.target_level, sub_level=self.target_sub_level)
-        else:
-            runs = manager.list_runs()
+        env_id = self._resolved_env_id()
+        runs = manager.list_runs(env_id=env_id) if env_id else []
 
-        self.run_list.clear()
+        selected_path = None
+        current_run = self._selected_run()
+        if current_run is not None:
+            selected_path = str(current_run.path)
+
+        expanded = {}
+        root = self.run_tree.invisibleRootItem()
+        for i in range(root.childCount()):
+            group = root.child(i)
+            key = group.data(0, Qt.ItemDataRole.UserRole)
+            if isinstance(key, str):
+                expanded[key] = group.isExpanded()
+
+        self.run_tree.blockSignals(True)
+        self.run_tree.clear()
+
+        groups = {}
+        for fw in (FRAMEWORK_SKRL, FRAMEWORK_RSL_RL):
+            label = FRAMEWORK_RUN_FOLDER[fw]
+            group = QTreeWidgetItem(self.run_tree, [f"{label} (0)"])
+            group.setData(0, Qt.ItemDataRole.UserRole, fw)
+            group.setFlags(Qt.ItemFlag.ItemIsEnabled)
+            font = group.font(0)
+            font.setBold(True)
+            group.setFont(0, font)
+            groups[fw] = group
+
+        selected_item = None
         for run in runs:
-            item = QListWidgetItem(run.display_label)
-            item.setData(Qt.ItemDataRole.UserRole, run)
-            self.run_list.addItem(item)
-        if self.run_list.count() > 0:
-            self.run_list.setCurrentRow(0)
+            fw = normalize_framework_id(run.framework)
+            group = groups.get(fw, groups[FRAMEWORK_SKRL])
+            item = QTreeWidgetItem(group, [run.display_label])
+            item.setData(0, Qt.ItemDataRole.UserRole, run)
+            if selected_path is not None and str(run.path) == selected_path:
+                selected_item = item
+
+        for fw, group in groups.items():
+            count = group.childCount()
+            group.setText(0, f"{FRAMEWORK_RUN_FOLDER[fw]} ({count})")
+            group.setExpanded(expanded.get(fw, True))
+
+        if selected_item is None:
+            for fw in (FRAMEWORK_SKRL, FRAMEWORK_RSL_RL):
+                group = groups[fw]
+                if group.childCount() > 0:
+                    selected_item = group.child(0)
+                    break
+
+        self.run_tree.blockSignals(False)
+        if selected_item is not None:
+            self.run_tree.setCurrentItem(selected_item)
+        else:
+            self._on_run_selected(None, None)
+
+    def _run_from_item(self, item):
+        if item is None:
+            return None
+        data = item.data(0, Qt.ItemDataRole.UserRole)
+        if data is None or isinstance(data, str):
+            return None
+        return data
 
     def _on_run_selected(self, current, _previous):
         self.checkpoint_combo.clear()
-        if current is None:
+        run = self._run_from_item(current)
+        if run is None:
             self._update_eval_run_hints(None)
             return
-        run = current.data(Qt.ItemDataRole.UserRole)
         for ckpt in run.checkpoints:
             label = ckpt.name if ckpt.step is None else f"{ckpt.name} (step {ckpt.step})"
             self.checkpoint_combo.addItem(label, ckpt.name)
@@ -410,10 +479,7 @@ class ExperimentHubPage(QWidget):
         self._update_eval_run_hints(run)
 
     def _selected_run(self):
-        item = self.run_list.currentItem()
-        if item is None:
-            return None
-        return item.data(Qt.ItemDataRole.UserRole)
+        return self._run_from_item(self.run_tree.currentItem())
 
     def launch_eval(self):
         run = self._selected_run()
@@ -582,12 +648,6 @@ class ExperimentHubPage(QWidget):
 
     def stop_training(self):
         self._stop_training()
-
-    def hideEvent(self, event):
-        self._stop_tensorboard(silent=True)
-        self._stop_training(silent=True)
-        self._stop_eval(silent=True)
-        super().hideEvent(event)
 
     def open_run_folder(self):
         run = self._selected_run()

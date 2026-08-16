@@ -8,7 +8,7 @@ from skrl.resources.preprocessors.torch import RunningStandardScaler
 from script.game_config import GameConfig
 # Assuming your policy.py contains Policy, Value (for PPO)
 
-from skrl_script.wrapperSKRL import WarpEnv
+from rl_framework.skrl_script.wrapperSKRL import WarpEnv
 
 DEVICE = "cuda:0"
 
@@ -16,8 +16,8 @@ DEVICE = "cuda:0"
 # PPO Configuration Wrapper Function
 # =============================================================================
 def get_ppo_config(env, device):
-    from skrl_script.policy_PPO2_state_based import Policy as Policy_PPO, Value as Value_PPO
-    # from skrl_script.policy_PPO3_mixed import Policy as Policy_PPO, Value as Value_PPO
+    from rl_framework.skrl_script.policy_PPO2_state_based import Policy as Policy_PPO, Value as Value_PPO
+    # from rl_framework.skrl_script.policy_PPO3_mixed import Policy as Policy_PPO, Value as Value_PPO
 
     from skrl.agents.torch.ppo import PPO, PPO_DEFAULT_CONFIG
     from skrl.memories.torch import RandomMemory
@@ -37,9 +37,9 @@ def get_ppo_config(env, device):
 # APG Configuration Wrapper Function
 # =============================================================================
 def get_apg_config(env, device):
-    from skrl_script.policy_APG1_state_based import Policy as Policy_APG
+    from rl_framework.skrl_script.policy_APG1_state_based import Policy as Policy_APG
     
-    from game.skrl_script.algorithm.apg.apg import APG
+    from rl_framework.skrl_script.algorithm.apg.apg import APG
 
     models = {
         "policy": Policy_APG(env.observation_space, env.action_space, device=device),
@@ -63,7 +63,7 @@ if __name__ == '__main__':
         print("Switching to PPO evaluation mode")
 
         from training.loader import TrainingPresetLoader
-        loaded = TrainingPresetLoader.load("level4_0_ppo_state_based")
+        loaded = TrainingPresetLoader.load("standing_target_skrl_ppo_state_based")
         model_cfg = loaded.model_cfg
         train_cfg = loaded.train_cfg
         env = WarpEnv(num_envs=num_envs, device=device, model_cfg=model_cfg, train_cfg=train_cfg, is_training=False, step_mode="CUDA_Graph", enable_window=enable_window)

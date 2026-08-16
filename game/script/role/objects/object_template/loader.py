@@ -2,12 +2,13 @@ from __future__ import annotations
 
 import importlib
 from pathlib import Path
-from typing import Any, Callable, Dict, Optional
+from typing import Any, Callable, Dict, List, Optional
 
 import yaml
 
 _TEMPLATE_ROOT = Path(__file__).parent
 _TEMPLATES_REGISTERED = False
+_TEMPLATE_SETUP_FNS: List[Callable[[Any], None]] = []
 
 
 def load_object_templates() -> Dict[str, Dict[str, Any]]:
@@ -73,6 +74,9 @@ def _register_template_folder(folder: Path, template_data: Dict[str, Any]) -> No
                 f"Template folder '{folder.name}' has register.py but no register() function."
             )
         register_fn()
+        setup_fn = getattr(module, "setup", None)
+        if callable(setup_fn):
+            _TEMPLATE_SETUP_FNS.append(setup_fn)
         return
 
     articulation = dict(template_data.get("articulation") or {})
@@ -104,3 +108,15 @@ def ensure_object_templates_registered() -> None:
         _register_template_folder(folder, template_data)
 
     _TEMPLATES_REGISTERED = True
+
+
+def run_object_template_setups(environment: Any) -> None:
+    """Run per-template ``setup(environment)`` hooks after physics is built.
+
+    ``register.py`` may define ``setup(environment)`` for object-specific runtime
+    wiring (sensors, soft forces, ...). Templates without ``setup`` are skipped.
+    Each hook is responsible for no-op when its object is not in the environment.
+    """
+    ensure_object_templates_registered()
+    for setup_fn in _TEMPLATE_SETUP_FNS:
+        setup_fn(environment)

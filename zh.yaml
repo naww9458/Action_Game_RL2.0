@@ -8,7 +8,8 @@ add_player: + 玩家
 attr_edit: 屬性修改區域
 back_main: 返回主菜單
 browse: 📁 瀏覽
-calc_level_path: '關卡讀取路徑 (自動):'
+calc_env_path: '環境讀取路徑 (自動):'
+calc_level_path: '環境讀取路徑 (自動):'
 calc_reward_path: '獎勵函數路徑 (自動):'
 calc_shape_path: '形狀讀取路徑 (自動):'
 cancel: 取消
@@ -24,6 +25,21 @@ config_dir: '設置文件儲存目錄:'
 confirm: 確定
 controller: '控制者:'
 delete_obj: 刪除選中
+delete_env_node: 刪除
+delete_env_title: 刪除環境項目
+delete_env_confirm: 確定刪除「{name}」？此操作無法復原。
+delete_failed: 刪除失敗
+copy_to_custom: 複製到自定義
+copy_failed: 複製失敗
+upload_to_template: 上傳到範本
+overwrite_title: 目標已存在
+overwrite_dest_confirm: 目標位置已有同名項目，是否覆蓋？（只覆蓋被複製的葉節點，不刪除旁邊的兄弟項目）
+env_name_label: 名稱
+env_intro_label: 簡介
+env_intro_optional: 簡介可留空
+new_series: 新增系列
+new_category: 新增分類
+new_environment: 新增環境
 edit: 編輯
 edit_mode: 編輯模式
 entity_cfg: 📦 實體物件配置
@@ -40,6 +56,10 @@ eval_started: 評估已在子進程啟動
 eval_stopped: 評估已終止
 exp_hub_title: 實驗中心
 font_size: '全局字體大小 (px):'
+tree_color_section: 環境列表字體顏色
+tree_color_series: 系列
+tree_color_category: 分類
+tree_color_env: 環境
 headless_train: 無視窗訓練 (headless)
 dump_rollouts: 保存前 N 步 rollout (.npy)
 dump_actions_steps: '保存模型輸出步數 (actions):'
@@ -47,14 +67,19 @@ dump_obs_steps: '保存觀測步數 (obs):'
 is_lock_fps: '鎖定幀率 (is_lock_fps):'
 language_select: '語言選擇:'
 launch_tb: 啟動 TensorBoard
-level_list: 關卡列表
-level_path: '關卡路徑:'
+env_list: 環境列表
+level_list: 環境列表
+env_templates: 環境範本
+env_templates_hint: 可右鍵刪除不需要的範本，或複製到自定義後再編輯、訓練與測試。
+close: 關閉
+env_path: '環境路徑:'
+level_path: '環境路徑:'
 add_object_template: 套用物件模板
 max_episode_step: '最大步數 (max_episode_step):'
 model_attr_section: --- 模型屬性 ---
 model_obs_type: '觀察類型 (model_obs_type):'
-new_level_series: 新增關卡系列
-new_sub_level: 新增子關卡
+new_level_series: 新增環境系列
+new_sub_level: 新增環境
 none_tip: 輸入 None 表示禁用
 num_env: '環境數量 (num_env):'
 num_envs: '環境數量 (num_envs):'
@@ -67,7 +92,7 @@ obs_height: '觀察高度 (obs_height):'
 obs_width: '觀察寬度 (obs_width):'
 open_folder: 打開目錄
 open_tb_browser: 在瀏覽器打開
-placeholder_path: 請選擇 levels 文件夾...
+placeholder_path: 請選擇 environments 文件夾...
 platform_cfg: 🧱 平台物件配置
 player_cfg: 👤 玩家物件配置
 player_ids: '玩家 ID 列表 (player_ids):'
@@ -84,15 +109,15 @@ run_list: 實驗列表
 save_back: 保存並返回
 save_preset: 保存預設
 save_success: 保存成功
-select_series_desc: 請選擇要在哪個系列下新增子關卡：
-select_series_title: 選擇關卡系列
+select_series_desc: 請選擇要在哪個系列下新增環境：
+select_series_title: 選擇環境系列
 start_test: 🚀 開始測試
 start_attached: '啟動時自動掛載 (start_attached):'
 start_train: 開始訓練
 stop_eval: 停止評估
 stop_tb: 關閉 TensorBoard
 stop_train: 終止並清理訓練
-sub_item: 子關卡
+sub_item: 環境
 sys_settings: 系統設置
 tab_launch: 啟動訓練
 tab_preset: 訓練預設
@@ -103,7 +128,7 @@ tb_switching: 正在切換 TensorBoard
 test: 測試
 test_mode: 測試模式
 test_settings: 模擬測試參數配置
-tip_select_first: 請先選擇一個子關卡（例如：子關卡 0）才能進行此操作
+tip_select_first: 請先選擇一個環境才能進行此操作
 train: 訓練
 train_mode: 訓練模式
 train_started: 訓練已在子進程啟動
@@ -114,5 +139,5 @@ view_3d: 3D 交互視圖區域
 window_envs: '視窗顯示環境數量 (window_envs):'
 window_envs_prompt: 請輸入在視窗內顯示多少個環境（1-{max_envs}）：
 window_envs_title: 視窗顯示環境數量
-window_title: 關卡管理器
+window_title: 環境管理器
 yaml_error: YAML 格式錯誤

@@ -30,8 +30,7 @@ class RunInfo:
     policy_module: str = ""
     start_time: str = ""
     num_envs: Optional[int] = None
-    level: Optional[int] = None
-    sub_level: Optional[int] = None
+    env_id: str = ""
     checkpoints: List[CheckpointInfo] = field(default_factory=list)
     latest_checkpoint_step: Optional[int] = None
     has_tensorboard: bool = False
@@ -44,16 +43,15 @@ class RunInfo:
         parts.append(f"[{fw}/{algo}]")
         if self.preset_id:
             parts.append(f"[{self.preset_id}]")
-        elif self.level is not None and self.sub_level is not None:
-            parts.append(f"[Level{self.level}-{self.sub_level}]")
+        elif self.env_id:
+            parts.append(f"[{self.env_id}]")
         if self.latest_checkpoint_step is not None:
             parts.append(f"step={self.latest_checkpoint_step}")
         return " ".join(parts)
 
 
 class RunsManager:
-    CHECKPOINT_PATTERN = re.compile(r"^agent_(\d+)\.pt$")
-    RUN_LEVEL_PATTERN = re.compile(r"_Level(\d+)-(\d+)(?:_\d+)?$", re.IGNORECASE)
+    CHECKPOINT_PATTERN = re.compile(r"^(?:agent|model)_(\d+)\.pt$")
 
     def __init__(self, runs_dir: Optional[Path] = None, project_root: Optional[Path] = None):
         self.project_root = Path(project_root) if project_root else Path.cwd()
@@ -71,35 +69,90 @@ class RunsManager:
                     self.runs_dir = candidate.resolve()
                     break
 
-    def list_runs(self, level: Optional[int] = None, sub_level: Optional[int] = None) -> List[RunInfo]:
-        if not self.runs_dir.exists():
-            return []
+    def _framework_folder_names(self) -> set[str]:
+        from training.schema import FRAMEWORK_RUN_FOLDER
 
-        runs: List[RunInfo] = []
-        for entry in sorted(self.runs_dir.iterdir(), key=lambda p: p.stat().st_mtime, reverse=True):
-            if not entry.is_dir():
+        return set(FRAMEWORK_RUN_FOLDER.values())
+
+    def _run_parent_dirs(self) -> List[Path]:
+        from training.runtime_env import experiment_parent_dirs
+
+        parents = experiment_parent_dirs(project_root=self.project_root)
+        if self.runs_dir not in parents:
+            parents.append(self.runs_dir)
+        return parents
+
+    @staticmethod
+    def _looks_like_run_dir(path: Path) -> bool:
+        if not path.is_dir():
+            return False
+        if (path / "checkpoints").is_dir() or (path / "config").is_dir():
+            return True
+        return any(path.glob("events.out.tfevents.*"))
+
+    def _collect_run_dirs(self) -> List[Path]:
+        skip = self._framework_folder_names()
+        found: List[Path] = []
+        seen: set[Path] = set()
+
+        def add(path: Path) -> None:
+            resolved = path.resolve()
+            if resolved in seen:
+                return
+            seen.add(resolved)
+            found.append(resolved)
+
+        for parent in self._run_parent_dirs():
+            if not parent.is_dir():
                 continue
-            info = self.get_run_info(entry.name)
+            scan_as_framework_bucket = parent.name in skip
+            for entry in parent.iterdir():
+                if not entry.is_dir():
+                    continue
+                if scan_as_framework_bucket:
+                    if self._looks_like_run_dir(entry):
+                        add(entry)
+                    continue
+                if entry.name in skip:
+                    for child in entry.iterdir():
+                        if self._looks_like_run_dir(child):
+                            add(child)
+                    continue
+                if self._looks_like_run_dir(entry):
+                    add(entry)
+                    continue
+                if parent.name.lower() in {"rsl_rl", "rsl-rl"}:
+                    for child in entry.iterdir():
+                        if child.is_dir() and self._looks_like_run_dir(child):
+                            add(child)
+
+        found.sort(key=lambda p: p.stat().st_mtime, reverse=True)
+        return found
+
+    def list_runs(self, env_id: Optional[str] = None) -> List[RunInfo]:
+        runs: List[RunInfo] = []
+        wanted = str(env_id).strip() if env_id else ""
+        for entry in self._collect_run_dirs():
+            info = self.get_run_info(str(entry))
             if info is None:
                 continue
-            if level is not None and info.level != level:
-                continue
-            if sub_level is not None and info.sub_level != sub_level:
+            if wanted and info.env_id != wanted:
                 continue
             runs.append(info)
         return runs
 
-    @classmethod
-    def parse_level_from_run_name(cls, run_name: str) -> tuple[Optional[int], Optional[int]]:
-        from training.runtime_env import parse_experiment_name
+    @staticmethod
+    def _framework_from_run_path(run_dir: Path) -> Optional[str]:
+        from training.schema import FRAMEWORK_RSL_RL, FRAMEWORK_RUN_FOLDER, FRAMEWORK_SKRL
 
-        parsed = parse_experiment_name(run_name)
-        if parsed is not None:
-            return parsed["level"], parsed["sub_level"]
-        match = cls.RUN_LEVEL_PATTERN.search(run_name)
-        if not match:
-            return None, None
-        return int(match.group(1)), int(match.group(2))
+        parts_lower = {part.lower() for part in run_dir.parts}
+        rsl_folder = FRAMEWORK_RUN_FOLDER[FRAMEWORK_RSL_RL].lower()
+        skrl_folder = FRAMEWORK_RUN_FOLDER[FRAMEWORK_SKRL].lower()
+        if rsl_folder in parts_lower or "rsl_rl" in parts_lower:
+            return FRAMEWORK_RSL_RL
+        if skrl_folder in parts_lower:
+            return FRAMEWORK_SKRL
+        return None
 
     @classmethod
     def infer_run_metadata(
@@ -114,32 +167,31 @@ class RunsManager:
 
         manifest = dict(manifest or {})
         parsed = parse_experiment_name(run_dir.name)
+        if parsed is None:
+            parsed = parse_experiment_name(run_dir.parent.name)
         if parsed:
-            for key in ("framework", "algorithm", "level", "sub_level"):
-                if manifest.get(key) in (None, ""):
-                    manifest[key] = parsed[key]
-        if manifest.get("level") is None or manifest.get("sub_level") is None:
-            parsed_level, parsed_sub = cls.parse_level_from_run_name(run_dir.name)
-            if manifest.get("level") is None:
-                manifest["level"] = parsed_level
-            if manifest.get("sub_level") is None:
-                manifest["sub_level"] = parsed_sub
+            for key in ("framework", "algorithm", "env_id"):
+                value = parsed.get(key)
+                if value not in (None, "") and manifest.get(key) in (None, ""):
+                    manifest[key] = value
+        if manifest.get("framework") in (None, ""):
+            path_fw = cls._framework_from_run_path(run_dir)
+            if path_fw:
+                manifest["framework"] = path_fw
         manifest = coerce_framework_algorithm(manifest)
 
         if (
             (not manifest.get("policy_module") or not manifest.get("preset_id"))
-            and manifest.get("level") is not None
-            and manifest.get("sub_level") is not None
+            and manifest.get("env_id")
         ):
             try:
-                from training.level_defaults import resolve_preset_id
+                from training.env_defaults import resolve_preset_id
                 from training.registry import TrainingPresetRegistry
 
                 obs_type = manifest.get("obs_type", model_obs_type)
                 preset_id = resolve_preset_id(
                     str(manifest["algorithm"]),
-                    int(manifest["level"]),
-                    int(manifest["sub_level"]),
+                    str(manifest["env_id"]),
                     obs_type,
                     framework=str(manifest["framework"]),
                 )
@@ -149,6 +201,7 @@ class RunsManager:
                 manifest.setdefault("trainer_module", preset_meta.trainer_module)
                 manifest.setdefault("algorithm", preset_meta.algorithm)
                 manifest.setdefault("framework", preset_meta.framework)
+                manifest.setdefault("env_id", preset_meta.env_id)
             except KeyError:
                 pass
 
@@ -160,9 +213,15 @@ class RunsManager:
             return candidate.resolve()
         if candidate.exists():
             return candidate.resolve()
-        run_path = self.runs_dir / run_name_or_path
-        if run_path.exists():
-            return run_path.resolve()
+        for parent in self._run_parent_dirs():
+            run_path = parent / run_name_or_path
+            if run_path.exists():
+                return run_path.resolve()
+            if parent.name == "rsl_rl" and parent.is_dir():
+                for nested in parent.iterdir():
+                    nested_path = nested / run_name_or_path
+                    if nested.is_dir() and nested_path.exists():
+                        return nested_path.resolve()
         raise FileNotFoundError(f"Run not found: {run_name_or_path}")
 
     def get_run_info(self, run_name_or_path: str) -> Optional[RunInfo]:
@@ -179,15 +238,18 @@ class RunsManager:
             if ckpt.step is not None:
                 latest_step = max(latest_step or 0, ckpt.step)
 
-        level = manifest.get("level")
-        sub_level = manifest.get("sub_level")
-        if level is None or sub_level is None:
-            parsed_level, parsed_sub = self.parse_level_from_run_name(run_dir.name)
-            level = level if level is not None else parsed_level
-            sub_level = sub_level if sub_level is not None else parsed_sub
+        env_id = str(manifest.get("env_id") or "")
+        if not env_id:
+            from training.runtime_env import parse_experiment_name
+
+            parsed = parse_experiment_name(run_dir.name)
+            if parsed and parsed.get("env_id"):
+                env_id = str(parsed["env_id"])
 
         algorithm = manifest.get("algorithm")
-        framework = manifest.get("framework")
+        from training.schema import normalize_framework_id
+
+        framework = normalize_framework_id(manifest.get("framework"))
 
         return RunInfo(
             name=run_dir.name,
@@ -199,11 +261,10 @@ class RunsManager:
             trainer_module=manifest.get("trainer_module"),
             start_time=manifest.get("start_time", ""),
             num_envs=manifest.get("num_envs"),
-            level=level,
-            sub_level=sub_level,
+            env_id=env_id,
             checkpoints=checkpoints,
             latest_checkpoint_step=latest_step,
-            has_tensorboard=any(run_dir.glob("events.out.tfevents.*")),
+            has_tensorboard=any(run_dir.rglob("events.out.tfevents.*")),
         )
 
     def _load_run_manifest(self, run_dir: Path) -> Dict[str, Any]:
@@ -223,8 +284,7 @@ class RunsManager:
                 "trainer_module": meta.get("trainer_module"),
                 "framework": meta.get("framework"),
                 "algorithm": meta.get("algorithm"),
-                "level": meta.get("level"),
-                "sub_level": meta.get("sub_level"),
+                "env_id": meta.get("env_id", ""),
             }
         return {}
 
@@ -266,8 +326,7 @@ class RunsManager:
         trainer_module: str,
         algorithm: str,
         num_envs: int,
-        level: int,
-        sub_level: int,
+        env_id: str,
         framework: str,
         resume_from: Optional[str] = None,
     ) -> Dict[str, Any]:
@@ -278,8 +337,7 @@ class RunsManager:
             "framework": framework,
             "algorithm": algorithm,
             "num_envs": num_envs,
-            "level": level,
-            "sub_level": sub_level,
+            "env_id": env_id,
             "start_time": datetime.now().isoformat(timespec="seconds"),
         }
         if resume_from:
@@ -293,7 +351,7 @@ class RunsManager:
         manifest: Dict[str, Any],
         model_cfg,
         train_cfg,
-        level_cfg: Dict[str, Any],
+        environment_cfg: Dict[str, Any],
     ) -> None:
         config_dir.mkdir(parents=True, exist_ok=True)
 
@@ -305,9 +363,9 @@ class RunsManager:
         with open(manifest_path, "w", encoding="utf-8") as f:
             json.dump(manifest, f, indent=2, ensure_ascii=False)
 
-        from skrl_script.trainer_base import Trainer_base
+        from rl_framework.skrl_script.trainer_base import Trainer_base
         trainer_base = Trainer_base()
-        trainer_base.save_config_pickle(model_cfg, train_cfg, level_cfg, str(config_dir))
+        trainer_base.save_config_pickle(model_cfg, train_cfg, environment_cfg, str(config_dir))
 
     def launch_tensorboard(self, run_name_or_path: str, port: int = 6006) -> subprocess.Popen:
         from training.runtime_env import resolve_tensorboard_command

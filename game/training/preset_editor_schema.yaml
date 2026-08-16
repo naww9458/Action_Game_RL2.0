@@ -24,23 +24,12 @@ sections:
         description_zh: "在 UI 中顯示的名稱"
         description_en: "Display name shown in the UI"
 
-      - key: level
-        type: int
+      - key: env_id
+        type: string
         required: true
         nullable: false
-        min: 0
-        max: 99
-        description_zh: "關卡編號"
-        description_en: "Level index"
-
-      - key: sub_level
-        type: int
-        required: true
-        nullable: false
-        min: 0
-        max: 99
-        description_zh: "子關卡編號"
-        description_en: "Sub-level index"
+        description_zh: "環境識別碼（目錄／YAML 檔名，例如 dodge_duel）"
+        description_en: "Environment id (folder / YAML stem, e.g. dodge_duel)"
 
       - key: obs_type
         type: enum
@@ -72,12 +61,12 @@ sections:
         nullable: false
         allow_custom: false
         options:
-          - skrl_script.policy_PPO1_state_based
-          - skrl_script.policy_PPO2_state_based
-          - skrl_script.policy_PPO3_mixed
-          - skrl_script.policy_PPO_g1_velocity
-          - skrl_script.policy_APG1_state_based
-          - rsl_rl_script.policy
+          - rl_framework.skrl_script.policy_PPO1_state_based
+          - rl_framework.skrl_script.policy_PPO2_state_based
+          - rl_framework.skrl_script.policy_PPO3_mixed
+          - rl_framework.skrl_script.policy_PPO_g1_velocity
+          - rl_framework.skrl_script.policy_APG1_state_based
+          - rl_framework.rsl_rl_script.policy
         description_zh: "策略網路模組路徑"
         description_en: "Policy module import path"
 
@@ -87,9 +76,9 @@ sections:
         nullable: false
         allow_custom: false
         options:
-          - skrl_script.trainer_PPO
-          - skrl_script.trainer_APG
-          - rsl_rl_script.trainer
+          - rl_framework.skrl_script.trainer_PPO
+          - rl_framework.skrl_script.trainer_APG
+          - rl_framework.rsl_rl_script.trainer
         description_zh: "訓練器模組路徑"
         description_en: "Trainer module import path"
 
@@ -456,8 +445,8 @@ sections:
         type: yaml_mapping
         required: false
         nullable: false
-        description_zh: "獎勵參數字典，結構依關卡而異，支援嵌套 YAML"
-        description_en: "Reward parameter mapping; structure varies by level"
+        description_zh: "獎勵參數字典，結構依環境而異，支援嵌套 YAML"
+        description_en: "Reward parameter mapping; structure varies by environment"
 
       - key: player_ids
         type: string_list

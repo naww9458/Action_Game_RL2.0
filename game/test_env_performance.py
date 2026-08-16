@@ -3,8 +3,8 @@ import sys
 import torch
 import time
 
-from skrl_script.wrapperSKRL import WarpEnv
-from skrl_script.get_config_and_model import get_config_and_model
+from rl_framework.skrl_script.wrapperSKRL import WarpEnv
+from rl_framework.skrl_script.get_config_and_model import get_config_and_model
 
 from utils.fps_calculator import fpsCalculator
 from utils.tensorboard_recorder import TensorboardRecorder
@@ -12,13 +12,13 @@ from utils.tensorboard_recorder import TensorboardRecorder
 
 DEVICE = "cuda:0"
 
-def test_env(algorithm: str, level: int, sub_level: int, obs_type: str, num_envs: int, step_mode: str, enable_window: bool, num_step_for_test: int, recorder, device):
-    model_cfg, train_cfg, Policy_cls, Value_cls = get_config_and_model(algorithm=algorithm, level=level, sub_level=sub_level, obs_type=obs_type)
+def test_env(algorithm: str, env_id: str, obs_type: str, num_envs: int, step_mode: str, enable_window: bool, num_step_for_test: int, recorder, device):
+    model_cfg, train_cfg, Policy_cls, Value_cls = get_config_and_model(algorithm=algorithm, env_id=env_id, obs_type=obs_type)
 
     fps_calculator = fpsCalculator()
 
     # "cuda_graph", "differentiation"
-    env = WarpEnv(num_envs=num_envs, device=device, model_cfg=model_cfg, train_cfg=train_cfg, level_config_path=None, is_training=True, step_mode=step_mode, enable_window=enable_window)
+    env = WarpEnv(num_envs=num_envs, device=device, model_cfg=model_cfg, train_cfg=train_cfg, environment_config_path=None, is_training=True, step_mode=step_mode, enable_window=enable_window)
 
     low = env.action_space.low[0] # TODO Hard code
     high = env.action_space.high[0] # TODO Hard code
@@ -72,8 +72,7 @@ if __name__ == '__main__':
     try:
         fps_recorder.change_run(f"num_env_{tested_num_env}")
         test_env(algorithm="PPO",
-                level=4,
-                sub_level=0,
+                env_id="standing_target",
                 obs_type=obs_type,
                 num_envs=tested_num_env,
                 step_mode=step_mode,

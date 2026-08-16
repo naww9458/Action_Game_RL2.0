@@ -300,7 +300,7 @@ class PolicyRunner:
         expected_obs_dim: Optional[int] = None,
         expected_action_dim: Optional[int] = None,
     ) -> None:
-        from skrl_script.policy_PPO_g1_velocity import (
+        from rl_framework.skrl_script.policy_PPO_g1_velocity import (
             Policy,
             infer_dims_from_mjlab_checkpoint,
             load_mjlab_checkpoint,

@@ -30,7 +30,7 @@ from script.role.abilities.articulation_control_config.profile_registry import (
 
 if TYPE_CHECKING:
     from newton.selection import ArticulationView
-    from script.levels.levels import Levels
+    from script.environments.environment import Environment
     from script.mjlab_components.act.warp_kernels import MjlabWarpActionApplier
     from script.role.bodies.articulation_body import ArticulationBody
 
@@ -225,7 +225,7 @@ class Articulation_body_control(Ability):
         return str(share_key).split(":", 1)[1]
 
     def configure_from_player_configs(
-        self, player_configs: List[Dict[str, Any]], level: "Levels"
+        self, player_configs: List[Dict[str, Any]], environment: "Environment"
     ) -> None:
         matched_config = find_player_config_for_ability(
             player_configs,
@@ -236,7 +236,7 @@ class Articulation_body_control(Ability):
         self._control_task = matched_object.get("control_task")
 
         # Parent re-resolves the matching player config via share_key / robot_pattern.
-        super().configure_from_player_configs(player_configs, level)
+        super().configure_from_player_configs(player_configs, environment)
 
         self._command_interface = resolve_command_interface_for_pattern(
             self.pattern,
@@ -272,8 +272,8 @@ class Articulation_body_control(Ability):
         self._encoder_bias_wp = encoder_bias_wp
         self._encoder_bias_external = True
 
-    def configure_from_player_configs_post_indices(self, level: "Levels") -> None:
-        super().configure_from_player_configs_post_indices(level)
+    def configure_from_player_configs_post_indices(self, environment: "Environment") -> None:
+        super().configure_from_player_configs_post_indices(environment)
         if self._configured:
             self._build_action_buffers()
             self._setup_runtime_nominals_gpu()
@@ -604,7 +604,7 @@ class Articulation_body_control(Ability):
         pass
 
     def configure_from_tool_configs(
-        self, tool_configs: List[Dict[str, Any]], level: "Levels"
+        self, tool_configs: List[Dict[str, Any]], environment: "Environment"
     ) -> None:
         matched_config = find_tool_config_for_ability(
             tool_configs,
@@ -625,10 +625,10 @@ class Articulation_body_control(Ability):
             f"pattern={self.pattern}, share_key={getattr(self, '_ability_share_key', None)}"
         )
 
-    def configure_from_tool_configs_post_indices(self, level: "Levels") -> None:
+    def configure_from_tool_configs_post_indices(self, environment: "Environment") -> None:
         try:
-            ability_idx = level.tools.abilities_instance_list.index(self)
-            owners = level.tools.abilities_owner_list[ability_idx]
+            ability_idx = environment.tools.abilities_instance_list.index(self)
+            owners = environment.tools.abilities_owner_list[ability_idx]
         except (ValueError, AttributeError):
             owners = []
         self.cache_action_pattern_views(owners)
@@ -658,6 +658,9 @@ class Articulation_body_control(Ability):
             self.articulation_body, self.pattern
         )
         return self.action_space
+
+    def uses_command_as_rl_action(self) -> bool:
+        return bool(self._use_command_expander and self._command_interface is not None)
 
     def reset(self):
         pass

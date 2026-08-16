@@ -25,6 +25,18 @@ from script.viewer_controls import (
     load_viewer_controls,
 )
 
+
+class _ViewerForceState:
+    """Expose picking's body_q / body_qd while staging wrenches off state.body_f."""
+
+    __slots__ = ("body_q", "body_qd", "body_f")
+
+    def __init__(self, state: State, body_f):
+        self.body_q = state.body_q
+        self.body_qd = state.body_qd
+        self.body_f = body_f
+
+
 class CustomViewerGL(ViewerGL):
     def __init__(
         self,
@@ -208,6 +220,37 @@ class CustomViewerGL(ViewerGL):
         self._configure_display_envs(game.num_env)
         self.camera.fov = 100.0
         self._build_role_name_label_pool()
+
+    def apply_forces(self, state: State | None = None):
+        """Stage viewer picking/wind before ``simulate()``.
+
+        Newton writes picking wrenches into ``state.body_f``, which
+        ``PhysicsManager.simulate`` zeros every substep. Redirect the pick
+        kernel onto ``ArticulationBody.external_body_f`` so ``apply_controls``
+        re-applies it after ``clear_forces`` — same phase as player action.
+        """
+        if state is None:
+            game = getattr(self, "game", None)
+            pm = getattr(game, "physics_manager", None) if game is not None else None
+            state = getattr(pm, "state_0", None)
+        if state is None:
+            return
+
+        picking = getattr(self, "picking", None)
+        if getattr(self, "picking_enabled", False) and picking is not None:
+            ab = getattr(getattr(self, "game", None), "articulation_body", None)
+            overlay = getattr(ab, "external_body_f", None) if ab is not None else None
+            if (
+                overlay is not None
+                and getattr(state, "body_q", None) is not None
+                and getattr(state, "body_qd", None) is not None
+            ):
+                overlay.zero_()
+                picking._apply_picking_force(_ViewerForceState(state, overlay))
+
+        wind = getattr(self, "wind", None)
+        if wind is not None:
+            wind._apply_wind_force(state)
 
     def _build_role_name_label_pool(self):
         self._role_name_tag_entries = self.object_inspector.build_role_name_tag_entries()
@@ -411,8 +454,8 @@ class CustomViewerGL(ViewerGL):
         if follow_targets is None:
             return
         host_role_object_id = follow_targets[0]
-        level = getattr(self.game, "level", None)
-        mount_registry = getattr(level, "mount_joint_registry", None) if level is not None else None
+        environment = getattr(self.game, "environment", None)
+        mount_registry = getattr(environment, "mount_joint_registry", None) if environment is not None else None
         if mount_registry is None:
             return
 

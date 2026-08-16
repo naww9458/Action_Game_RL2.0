@@ -36,7 +36,7 @@ aim:
   aim_body_prim_suffix: gun_110
   # Y 軸 RevoluteJoint：+q 為俯角，與相機 pitch_error 符號相反。
   # 所有調參數值一律以本檔為唯一來源（代碼中的類默認值僅為中性安全值）；
-  # 單一關卡可用 level tool_configs 的舊平鋪鍵 aim_control 覆寫。
+  # 單一環境可用 environment tool_configs 的舊平鋪鍵 aim_control 覆寫。
   control:
     # yaw（掛載 revolute 關節）PD 驅動
     yaw_torque_gain: 200.0

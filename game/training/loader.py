@@ -38,8 +38,7 @@ class ModelConfigView:
             shape=(model.state_obs_size,),
             dtype=np.float32,
         )
-        self.level = meta.level
-        self.sub_level = meta.sub_level
+        self.env_id = meta.env_id
 
         self.cfg = build_agent_cfg(preset)
 
@@ -61,7 +60,7 @@ class TrainConfigView:
         self.max_episode_step_evaluate = train.max_episode_step_evaluate
         self.seed = train.seed
         self.num_envs_default = train.num_envs_default
-        from script.levels.rewards.reward_calculator import RewardComponent
+        from script.environments.rewards.reward_calculator import RewardComponent
         self.reward_components = [RewardComponent.resolve(name) for name in train.reward_components]
         self.reward_components_diff = [RewardComponent.resolve(name) for name in train.reward_components_diff]
         self.reward_parameters = dict(train.reward_parameters)
@@ -145,28 +144,31 @@ class TrainingPresetLoader:
         framework = str((manifest or {}).get("framework", "SKRL")).upper()
 
         if not policy_module or not trainer_module:
-            from training.level_defaults import resolve_preset_id
+            preset_id = (manifest or {}).get("preset_id")
+            if not preset_id:
+                raise ValueError(
+                    "Legacy pickle is missing policy_module/trainer_module and preset_id"
+                )
             from training.registry import TrainingPresetRegistry
 
-            preset_id = (manifest or {}).get("preset_id") or resolve_preset_id(
-                algorithm,
-                getattr(model_cfg, "level", 4),
-                getattr(model_cfg, "sub_level", 0),
-                getattr(model_cfg, "model_obs_type", "state_based"),
-                framework=framework,
-            )
             preset_meta = TrainingPresetRegistry.load_preset_yaml(preset_id).meta
             policy_module = policy_module or preset_meta.policy_module
             trainer_module = trainer_module or preset_meta.trainer_module
         Policy, Value = import_policy_classes(policy_module)
         Trainer = import_trainer_class(trainer_module)
 
+        env_id = (
+            getattr(model_cfg, "env_id", None)
+            or (manifest or {}).get("env_id")
+        )
+        if not env_id:
+            raise ValueError("Legacy pickle is missing env_id")
+
         preset_data = {
             "meta": {
                 "id": (manifest or {}).get("preset_id", "legacy"),
                 "display_name": "Legacy Run",
-                "level": getattr(model_cfg, "level", 4),
-                "sub_level": getattr(model_cfg, "sub_level", 0),
+                "env_id": env_id,
                 "obs_type": getattr(model_cfg, "model_obs_type", "state_based"),
                 "framework": framework,
                 "algorithm": algorithm,

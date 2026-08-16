@@ -77,10 +77,10 @@ class TrainingLogCollector:
         self._time_out_count = torch.count_nonzero(truncated_t).float()
         self._fell_over_count = torch.count_nonzero(terminated_t & ~truncated_t).float()
 
-    def collect(self, *, reward_calculator: Any = None, level: Any = None) -> dict:
+    def collect(self, *, reward_calculator: Any = None, environment: Any = None) -> dict:
         """Build the unified per-step log dict of GPU tensors.
 
-        Aggregates reward terms, physics metrics, optional level extras,
+        Aggregates reward terms, physics metrics, optional environment extras,
         and the snapshots from :meth:`on_actions` / :meth:`on_rewards_done`.
         Missing sources are skipped (no dummy keys).
         """
@@ -88,15 +88,15 @@ class TrainingLogCollector:
         if reward_calculator is not None:
             log.update(reward_calculator.get_reward_terms())
             log.update(reward_calculator.get_metric_means())
-        self._merge_optional(log, level, "get_command_metrics")
-        self._merge_optional(log, level, "get_curriculum_metrics")
+        self._merge_optional(log, environment, "get_command_metrics")
+        self._merge_optional(log, environment, "get_curriculum_metrics")
         if self._time_out_count is not None:
             log[KEY_TIME_OUT] = self._time_out_count
         if self._fell_over_count is not None:
             log[KEY_FELL_OVER] = self._fell_over_count
         if self._action_acc_mean is not None:
             log[KEY_ACTION_ACC] = self._action_acc_mean
-        return self._reorder(log, level)
+        return self._reorder(log, environment)
 
     def diagnostics(self, reward_calculator: Any = None) -> list:
         """Forward reward-term diagnostics, or an empty list when absent."""
@@ -105,8 +105,8 @@ class TrainingLogCollector:
         return reward_calculator.get_reward_term_diagnostics()
 
     @staticmethod
-    def _merge_optional(log: dict, level: Any, method_name: str) -> None:
-        getter = getattr(level, method_name, None) if level is not None else None
+    def _merge_optional(log: dict, environment: Any, method_name: str) -> None:
+        getter = getattr(environment, method_name, None) if environment is not None else None
         if getter is None:
             return
         extra = getter()
@@ -114,8 +114,8 @@ class TrainingLogCollector:
             log.update(extra)
 
     @staticmethod
-    def _reorder(log: dict, level: Any) -> dict:
-        order_getter = getattr(level, "get_log_key_order", None) if level is not None else None
+    def _reorder(log: dict, environment: Any) -> dict:
+        order_getter = getattr(environment, "get_log_key_order", None) if environment is not None else None
         order: Optional[tuple[str, ...]] = order_getter() if order_getter is not None else None
         if not order:
             return log

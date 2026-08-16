@@ -27,8 +27,7 @@ if __name__ == '__main__':
                 platform_configs=platform_configs,
                 environment_configs=environment_configs,
                 num_env=1,
-                level=8, 
-                sub_level=0,
+                env_id="dual_vehicle_turret", # "g1_empty_arena", "dual_vehicle_turret"
                 capture_per_second=None,
                 
                 requires_grad=False,

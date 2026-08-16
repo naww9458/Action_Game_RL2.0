@@ -1,0 +1,7 @@
+# Soft-anchor extension reads body leaf names from this file.
+# Force magnitudes live on the object fields in template.yaml so the
+# environment editor can edit them without a second role-level model slot.
+striking_target:
+  rigid_soft_anchor:
+    anchor_body: anchor
+    target_body: target

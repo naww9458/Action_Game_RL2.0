@@ -23,7 +23,7 @@ from script.role.abilities.articulation_control_config.profile_registry import (
 from script.role.policies.policy_bundle import PolicyBundleRegistry, load_policy_runner
 
 if TYPE_CHECKING:
-    from script.levels.levels import Levels
+    from script.environments.environment import Environment
 
 
 class Articulation_body_control_rl_assisted(Articulation_body_control):
@@ -54,7 +54,7 @@ class Articulation_body_control_rl_assisted(Articulation_body_control):
         self._command_bindings: Dict[str, AxisKeyBindings] = {}
 
     def configure_from_player_configs(
-        self, player_configs: List[Dict[str, Any]], level: "Levels"
+        self, player_configs: List[Dict[str, Any]], environment: "Environment"
     ) -> None:
         matched_config = find_player_config_for_ability(
             player_configs,
@@ -62,7 +62,7 @@ class Articulation_body_control_rl_assisted(Articulation_body_control):
             robot_pattern=self._scoped_robot_pattern(),
         )
         matched_object = dict(matched_config.get("object") or {})
-        super().configure_from_player_configs(player_configs, level)
+        super().configure_from_player_configs(player_configs, environment)
         self.policy_checkpoint = resolve_policy_checkpoint(matched_object)
 
         self._bundle_spec = PolicyBundleRegistry.get(
@@ -75,10 +75,10 @@ class Articulation_body_control_rl_assisted(Articulation_body_control):
         self.command_ranges = list(self._command_profile.command_ranges)
         self._pending_human_control = self._command_profile.human_control
 
-        self._build_player_env_mapping(level)
+        self._build_player_env_mapping(environment)
         self._obs_provider = PolicyBundleRegistry.create_obs_provider(
             self._bundle_spec.obs_provider,
-            num_env=level.num_env,
+            num_env=environment.num_env,
             device=GameConfig.DEVICE,
             articulation_body=self.articulation_body,
             pattern=self.pattern,
@@ -97,8 +97,8 @@ class Articulation_body_control_rl_assisted(Articulation_body_control):
             expected_action_dim=action_dim,
         )
 
-        if hasattr(level, "bind_assisted_provider"):
-            level.bind_assisted_provider(self._obs_provider)
+        if hasattr(environment, "bind_assisted_provider"):
+            environment.bind_assisted_provider(self._obs_provider)
 
         self._configured = True
         print(
@@ -108,10 +108,10 @@ class Articulation_body_control_rl_assisted(Articulation_body_control):
             f"checkpoint={self._policy_runner.checkpoint_path}"
         )
 
-    def configure_from_player_configs_post_indices(self, level: "Levels") -> None:
-        super().configure_from_player_configs_post_indices(level)
+    def configure_from_player_configs_post_indices(self, environment: "Environment") -> None:
+        super().configure_from_player_configs_post_indices(environment)
         if self._configured:
-            self._build_player_env_mapping(level)
+            self._build_player_env_mapping(environment)
 
     def apply_runtime_keymapping(self) -> None:
         if not self._pending_human_control or self.command_dim <= 0:
@@ -121,10 +121,10 @@ class Articulation_body_control_rl_assisted(Articulation_body_control):
             command_binding_names(self.command_dim),
         )
 
-    def _build_player_env_mapping(self, level: "Levels") -> None:
+    def _build_player_env_mapping(self, environment: "Environment") -> None:
         try:
-            ability_idx = level.players.abilities_instance_list.index(self)
-            ability_owners = level.players.abilities_owner_list[ability_idx]
+            ability_idx = environment.players.abilities_instance_list.index(self)
+            ability_owners = environment.players.abilities_owner_list[ability_idx]
         except ValueError:
             ability_owners = []
 
@@ -141,7 +141,7 @@ class Articulation_body_control_rl_assisted(Articulation_body_control):
                 f"'{self.pattern}'."
             )
 
-        mapping = level.players.index_obj_role_to_env_mapping
+        mapping = environment.players.index_obj_role_to_env_mapping
         self._rl_player_indices_cache = list(self._controlled_player_indices)
         self._player_env_indices = [
             mapping[player_idx] for player_idx in self._rl_player_indices_cache
@@ -160,7 +160,7 @@ class Articulation_body_control_rl_assisted(Articulation_body_control):
                 ) from exc
 
         action_rows = [
-            level.is_rl_player_mask[player_idx]
+            environment.is_rl_player_mask[player_idx]
             for player_idx in self._controlled_player_indices
         ]
         self._player_env_indices_gpu = wp.array(
@@ -289,3 +289,6 @@ class Articulation_body_control_rl_assisted(Articulation_body_control):
             hi = max(r[1] for r in self.command_ranges)
             self.action_space["range"] = [lo, hi]
         return self.action_space
+
+    def uses_command_as_rl_action(self) -> bool:
+        return int(self.command_dim or 0) > 0

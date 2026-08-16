@@ -45,9 +45,12 @@ Game 為整個模擬流程的入口，負責初始化環境、建立所有管理
 
 主要包含下列子模組：
 
-### Level
+### Environment
 
-負責建立與管理環境中的所有物件，包含角色、平台、實體、技能生成物件等。
+負責依 YAML 建立與管理場景中的所有物件，包含角色、平台、實體、工具、技能生成物件等。
+
+環境目錄：`game/script/environments/template|custom/{rl,play}/.../<env_id>/`。
+`Game` 以 `env_id`（YAML stem）或 `environment_config_path` 載入，不再使用數字索引。
 
 ### Physics Manager
 
@@ -89,13 +92,18 @@ Game 為整個模擬流程的入口，負責初始化環境、建立所有管理
 
 角色系統。
 
-負責定義玩家、平臺、實體和技能生成物件在内的不同角色，以及角色控制流程。
+負責定義玩家、工具、平臺、實體和技能生成物件在内的不同角色，以及角色控制流程。
 
 ---
 
 ## Trainer
 
-負責與強化學習框架（目前為 skrl）整合，管理：
+負責與強化學習框架整合。SKRL 與 RSL-RL 是對等框架，程式在 `game/rl_framework/`：
+
+- `rl_framework.skrl_script`：PPO、APG
+- `rl_framework.rsl_rl_script`：目前為 PPO
+
+由 preset 的 `trainer_module` / `policy_module` 選用，管理：
 
 - Policy
 - Algorithm
@@ -107,9 +115,9 @@ Game 為整個模擬流程的入口，負責初始化環境、建立所有管理
 
 ## WarpEnv
 
-WarpEnv 為專案與強化學習框架之間的橋樑。
+WarpEnv（`rl_framework.skrl_script.wrapperSKRL`）為專案與強化學習框架之間的橋樑。
 
-負責將 Game 封裝成符合 RL Framework 使用的 Environment Interface，提供 Observation、Action、Reward、Reset 等介面。
+負責將 Game 封裝成符合 RL Framework 使用的 Environment Interface，提供 Observation、Action、Reward、Reset 等介面。RSL-RL 再經 `rl_framework.rsl_rl_script.vec_env_wrapper` 接到 `rsl_rl` 的 VecEnv。
 
 ---
 

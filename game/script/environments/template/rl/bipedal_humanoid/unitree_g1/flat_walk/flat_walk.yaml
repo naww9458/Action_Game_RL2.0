@@ -1,0 +1,564 @@
+display_name: 平地行走
+intro: 複刻 mjlab Mjlab-Velocity-Flat-Unitree-G1 任務。
+environment_class: script.environments.template.rl.bipedal_humanoid.unitree_g1.flat_walk.flat_walk.FlatWalk
+environment_configs:
+  space_xyz:
+  - 3.0
+  - 3.0
+  - 3.0
+  interval_distance: 5.0
+  gravity:
+  - 0
+  - 0
+  - -9.81
+  damping:
+  - 0.1
+  - 0.1
+  fps_action: 50
+  sub_steps: 4
+  ground_shape_friction: 0.6
+  solver_config:
+    type: mujoco
+    separate_worlds: null
+    njmax: '2048'
+    nconmax: '1024'
+    iterations: '10'
+    ls_iterations: '20'
+    ccd_iterations: '50'
+    sdf_iterations: null
+    sdf_initpoints: null
+    solver: newton
+    integrator: implicitfast
+    cone: pyramidal
+    jacobian: null
+    impratio: null
+    tolerance: null
+    ls_tolerance: null
+    ccd_tolerance: null
+    density: null
+    viscosity: null
+    wind: null
+    magnetic: null
+    use_mujoco_cpu: false
+    enable_multiccd: false
+    disable_contacts: false
+    update_data_interval: 1
+    save_to_mjcf: null
+    use_mujoco_contacts: true
+    include_sites: true
+    skip_visual_only_geoms: true
+  observation_noise:
+    base_lin_vel: 0.5
+    base_ang_vel: 0.2
+    projected_gravity: 0.05
+    joint_pos: 0.01
+    joint_vel: 1.5
+  domain_randomization:
+    push_robot:
+      enabled: true
+      interval_range_s:
+      - 1.0
+      - 3.0
+      velocity_range:
+        x:
+        - -0.5
+        - 0.5
+        y:
+        - -0.5
+        - 0.5
+        z:
+        - -0.4
+        - 0.4
+        roll:
+        - -0.52
+        - 0.52
+        pitch:
+        - -0.52
+        - 0.52
+        yaw:
+        - -0.78
+        - 0.78
+    encoder_bias:
+      enabled: true
+      bias_range:
+      - -0.015
+      - 0.015
+    foot_friction:
+      enabled: true
+      range:
+      - 0.3
+      - 1.2
+      shared_random: true
+      body_patterns:
+      - left_ankle_roll_link
+      - right_ankle_roll_link
+    base_com:
+      enabled: true
+      offset_range:
+        x:
+        - -0.025
+        - 0.025
+        y:
+        - -0.025
+        - 0.025
+        z:
+        - -0.03
+        - 0.03
+    curriculum:
+      command_vel:
+      - step: 0
+        lin_vel_x:
+        - -1.0
+        - 1.0
+        ang_vel_z:
+        - -0.5
+        - 0.5
+      - step: 120000
+        lin_vel_x:
+        - -1.5
+        - 2.0
+        ang_vel_z:
+        - -0.7
+        - 0.7
+      - step: 240000
+        lin_vel_x:
+        - -2.0
+        - 3.0
+player_configs:
+- type: player
+  controller: RL
+  color:
+  - 200
+  - 200
+  - 200
+  default_position:
+  - - -0.5
+    - 0.5
+  - - -0.5
+    - 0.5
+  - - 0.77
+    - 0.81
+  default_rotation:
+  - - -180.0
+    - 180.0
+  - - 0.0
+    - 0.0
+  default_velocity:
+  - 0.0
+  - 0.0
+  - 0.0
+  default_angular_velocity:
+  - 0.0
+  - 0.0
+  - 0.0
+  abilities:
+    Articulation_body_control: {}
+  object:
+    pattern: unitree_g1
+    type: usd
+    object_friction: 0.6
+    object_elasticity: 0.5
+    file_name: usd/g1_29dof_with_hand_rev_1_0.usd
+    file_path_or_source: Action_Game_RL_Assets/assets/external_sources/newton-assets-main/unitree_g1/
+    floating: null
+    base_joint: null
+    parent_body: -1
+    only_load_enabled_rigid_bodies: false
+    only_load_enabled_joints: true
+    joint_drive_gains_scaling: 1
+    verbose: false
+    ignore_paths: null
+    collapse_fixed_joints: false
+    enable_self_collisions: true
+    apply_up_axis_from_stage: false
+    root_path: /
+    joint_ordering: dfs
+    bodies_follow_joint_ordering: true
+    skip_mesh_approximation: false
+    load_authored_normals: false
+    load_sites: true
+    load_visual_shapes: true
+    hide_collision_shapes: true
+    force_show_colliders: false
+    parse_mujoco_options: true
+    mesh_maxhullvert: null
+    schema_resolvers: null
+    force_position_velocity_actuation: false
+    override_root_xform: false
+    use_mujoco_policy_init: true
+    control_task: velocity_locomotion
+    control_policy_version: V1
+    body_collision_shape_overrides:
+      left_hip_roll_link:
+        type: capsule
+        radius: 0.06
+        fromto:
+        - - 0.02
+          - 0.0
+          - 0.0
+        - - 0.02
+          - 0.0
+          - -0.08
+      right_hip_roll_link:
+        type: capsule
+        radius: 0.06
+        fromto:
+        - - 0.02
+          - 0.0
+          - 0.0
+        - - 0.02
+          - 0.0
+          - -0.08
+      left_hip_yaw_link:
+        type: capsule
+        radius: 0.055
+        fromto:
+        - - 0.0
+          - 0.0
+          - -0.03
+        - - -0.06
+          - 0.0
+          - -0.17
+      right_hip_yaw_link:
+        type: capsule
+        radius: 0.055
+        fromto:
+        - - 0.0
+          - 0.0
+          - -0.03
+        - - -0.06
+          - 0.0
+          - -0.17
+      left_knee_link:
+        type: capsule
+        radius: 0.045
+        fromto:
+        - - 0.01
+          - 0.0
+          - 0.0
+        - - 0.01
+          - 0.0
+          - -0.15
+        also_add:
+        - type: capsule
+          radius: 0.03
+          fromto:
+          - - 0.01
+            - 0.0
+            - -0.2
+          - - 0.01
+            - 0.0
+            - -0.28
+      right_knee_link:
+        type: capsule
+        radius: 0.045
+        fromto:
+        - - 0.01
+          - 0.0
+          - 0.0
+        - - 0.01
+          - 0.0
+          - -0.15
+        also_add:
+        - type: capsule
+          radius: 0.03
+          fromto:
+          - - 0.01
+            - 0.0
+            - -0.2
+          - - 0.01
+            - 0.0
+            - -0.28
+      torso_link:
+        type: capsule
+        radius: 0.09
+        fromto:
+        - - 0.01
+          - 0.0
+          - 0.08
+        - - 0.01
+          - 0.0
+          - 0.2
+        also_add:
+        - type: sphere
+          radius: 0.06
+          pos:
+          - 0.0
+          - 0.0
+          - 0.43
+      head_link: disable
+      left_shoulder_yaw_link:
+        type: capsule
+        radius: 0.035
+        fromto:
+        - - 0.0
+          - 0.0
+          - -0.08
+        - - 0.0
+          - 0.0
+          - 0.05
+      right_shoulder_yaw_link:
+        type: capsule
+        radius: 0.035
+        fromto:
+        - - 0.0
+          - 0.0
+          - -0.08
+        - - 0.0
+          - 0.0
+          - 0.05
+      left_elbow_link:
+        type: capsule
+        radius: 0.035
+        fromto:
+        - - -0.01
+          - 0.0
+          - -0.01
+        - - 0.08
+          - 0.0
+          - -0.01
+      right_elbow_link:
+        type: capsule
+        radius: 0.035
+        fromto:
+        - - -0.01
+          - 0.0
+          - -0.01
+        - - 0.08
+          - 0.0
+          - -0.01
+      left_wrist_pitch_link:
+        type: capsule
+        radius: 0.035
+        fromto:
+        - - -0.01
+          - 0.0
+          - 0.0
+        - - 0.06
+          - 0.0
+          - 0.0
+      right_wrist_pitch_link:
+        type: capsule
+        radius: 0.035
+        fromto:
+        - - -0.01
+          - 0.0
+          - 0.0
+        - - 0.06
+          - 0.0
+          - 0.0
+      left_wrist_yaw_link:
+        type: capsule
+        radius: 0.035
+        fromto:
+        - - 0.07
+          - 0.0
+          - 0.0
+        - - 0.15
+          - -0.02
+          - 0.0
+      right_wrist_yaw_link:
+        type: capsule
+        radius: 0.035
+        fromto:
+        - - 0.07
+          - 0.0
+          - 0.0
+        - - 0.15
+          - 0.02
+          - 0.0
+      pelvis_contour_link: disable
+      pelvis:
+        add: true
+        type: sphere
+        radius: 0.07
+        pos:
+        - 0.0
+        - 0.0
+        - -0.08
+      left_hip_pitch_link: disable
+      right_hip_pitch_link: disable
+      left_ankle_pitch_link: disable
+      right_ankle_pitch_link: disable
+      left_ankle_roll_link:
+      - type: disable
+      - add: true
+        type: capsule
+        radius: 0.01
+        fromto:
+        - - 0.1
+          - -0.026
+          - -0.025
+        - - 0.05
+          - -0.027
+          - -0.025
+      - add: true
+        type: capsule
+        radius: 0.01
+        fromto:
+        - - -0.044
+          - -0.018
+          - -0.025
+        - - 0.123
+          - -0.018
+          - -0.025
+      - add: true
+        type: capsule
+        radius: 0.01
+        fromto:
+        - - -0.052
+          - -0.01
+          - -0.025
+        - - 0.13
+          - -0.01
+          - -0.025
+      - add: true
+        type: capsule
+        radius: 0.01
+        fromto:
+        - - -0.054
+          - 0.0
+          - -0.025
+        - - 0.132
+          - 0.0
+          - -0.025
+      - add: true
+        type: capsule
+        radius: 0.01
+        fromto:
+        - - -0.052
+          - 0.01
+          - -0.025
+        - - 0.13
+          - 0.01
+          - -0.025
+      - add: true
+        type: capsule
+        radius: 0.01
+        fromto:
+        - - -0.044
+          - 0.018
+          - -0.025
+        - - 0.123
+          - 0.018
+          - -0.025
+      - add: true
+        type: capsule
+        radius: 0.01
+        fromto:
+        - - 0.1
+          - 0.026
+          - -0.025
+        - - 0.05
+          - 0.026
+          - -0.025
+      right_ankle_roll_link:
+      - type: disable
+      - add: true
+        type: capsule
+        radius: 0.01
+        fromto:
+        - - 0.1
+          - -0.026
+          - -0.025
+        - - 0.05
+          - -0.026
+          - -0.025
+      - add: true
+        type: capsule
+        radius: 0.01
+        fromto:
+        - - -0.044
+          - -0.018
+          - -0.025
+        - - 0.123
+          - -0.018
+          - -0.025
+      - add: true
+        type: capsule
+        radius: 0.01
+        fromto:
+        - - -0.052
+          - -0.01
+          - -0.025
+        - - 0.13
+          - -0.01
+          - -0.025
+      - add: true
+        type: capsule
+        radius: 0.01
+        fromto:
+        - - -0.054
+          - 0.0
+          - -0.025
+        - - 0.132
+          - 0.0
+          - -0.025
+      - add: true
+        type: capsule
+        radius: 0.01
+        fromto:
+        - - -0.052
+          - 0.01
+          - -0.025
+        - - 0.13
+          - 0.01
+          - -0.025
+      - add: true
+        type: capsule
+        radius: 0.01
+        fromto:
+        - - -0.044
+          - 0.018
+          - -0.025
+        - - 0.123
+          - 0.018
+          - -0.025
+      - add: true
+        type: capsule
+        radius: 0.01
+        fromto:
+        - - 0.1
+          - 0.026
+          - -0.025
+        - - 0.05
+          - 0.026
+          - -0.025
+      left_wrist_roll_link: disable
+      right_wrist_roll_link: disable
+      left_hand_palm_link: disable
+      right_hand_palm_link: disable
+      left_hand_thumb_0_link: disable
+      left_hand_thumb_1_link: disable
+      left_hand_thumb_2_link: disable
+      right_hand_thumb_0_link: disable
+      right_hand_thumb_1_link: disable
+      right_hand_thumb_2_link: disable
+      left_hand_index_0_link: disable
+      left_hand_index_1_link: disable
+      right_hand_index_0_link: disable
+      right_hand_index_1_link: disable
+      left_hand_middle_0_link: disable
+      left_hand_middle_1_link: disable
+      right_hand_middle_0_link: disable
+      right_hand_middle_1_link: disable
+      logo_link: disable
+      left_shoulder_pitch_link: disable
+      right_shoulder_pitch_link: disable
+    body_collision_exclude_pairs:
+    - - left_elbow_link
+      - left_wrist_pitch_link
+    - - right_elbow_link
+      - right_wrist_pitch_link
+    - - pelvis
+      - left_hip_roll_link
+    - - pelvis
+      - right_hip_roll_link
+  team_id: 1
+  health: 4.8
+  id: ''
+  name: Player_1
+  possess_offset:
+  - 0.0
+  - 0.0
+  - 0.0

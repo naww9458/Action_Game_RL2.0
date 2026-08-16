@@ -1,0 +1,34 @@
+id: striking_target
+display_name: Striking Target（擊打目標）
+object_type: rigid_soft_anchor
+control_config_path: control_configs.yaml
+# Entity role: default_position / default_rotation apply to the kinematic
+# anchor cube. Keep separation at [1, 1, 1] (single instance).
+abilities: []
+object:
+  pattern: striking_target
+  type: rigid_soft_anchor
+  object_friction: 0.5
+  object_elasticity: 0.2
+  target_offset: [0.0, 0.0, -0.22]
+  max_linear_force: 20.0
+  linear_stiffness: 600.0
+  linear_damping: 40.0
+  anchor:
+    shape: box
+    size: [0.025, 0.025, 0.025]
+    radius: 0.025
+    filter_all_collisions: true
+    object_friction: 0.5
+    object_elasticity: 0.0
+    color: [255, 196, 37]
+  target:
+    shape: sphere
+    size: [0.12, 0.12, 0.12]
+    radius: 0.12
+    filter_all_collisions: false
+    object_friction: 0.8
+    object_elasticity: 0.35
+    object_mass: 0.8
+    lock_inertia: true
+    color: [217, 38, 31]

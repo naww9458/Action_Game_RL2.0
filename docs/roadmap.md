@@ -12,7 +12,7 @@
    6. (✅️finished) 當前技能冷卻是 time.time() 控制，當游戲在不同環境下以不同速度運行，會導致技能在非預期情況下冷卻完畢，太早或者太慢都會產生錯誤數據。
       應該修改爲由 step 數控制，比如當一個技能冷卻時間是一秒，那麽實際冷卻就是 1 * FPS
 
-   7. 改進加載不同 Level 的 config 的方式
+   7. (✅️finished) 改進加載不同環境 config 的方式（現為 `env_id` / 目錄 YAML，見第 47、54 項）
 
    8. (✅️finished) 解決 Level 3 模型訓練局部最優的問題
 
@@ -146,7 +146,39 @@
 
    46. (✅️finished) 添加方便用於編輯環境配置文件的 UI
 
-   47. 改進 UI 界面，將 Level 以及相關名稱並統一換成 “環境” 或 “environment”，并將部分環境改成基礎範例環境
+   47. (✅️finished) 改進 UI 界面，將 Level 以及相關名稱並統一換成 “環境” 或 “environment”，并將部分環境改成基礎範例環境
+       目錄改為 environments/template|custom/{rl,play} 巢狀系列／分類／環境；範本可刪除與複製到自定義，自定義可新增並上傳到範本。
+       運行時套件：`game/script/levels` → `game/script/environments`（與環境目錄同一套件；runtime 與 catalog 不再拆成 `script/environment`）。
+
+       環境身分是目錄／YAML stem（`env_id`），不再使用數字索引。下列為歷史 Level 編號對照，僅供閱讀舊紀錄，不在 YAML 或 API 中出現：
+
+       | 舊名稱 | env_id | 目錄（相對 `environments/template/`） | 類別 | 中文顯示名 | 英文 |
+       |---|---|---|---|---|---|
+       | Level 4.0 | `standing_target`         | `rl/apg_demo/standing_target`                 | `StandingTarget`     | Standing Target         | 站立打靶      |
+       | Level 4.1 | `dodge_duel`              | `rl/apg_demo/dodge_duel`                      | `DodgeDuel`          | Dodge Duel              | 閃避對抗      |
+       | Level 4.2 | `obstacle_duel`           | `rl/apg_demo/obstacle_duel`                   | `ObstacleDuel`       | Obstacle Duel           | 障礙物對抗    |
+       | Level 5.0 | `flat_walk`               | `rl/bipedal_humanoid/unitree_g1/flat_walk`    | `FlatWalk`           | Flat Walk               | 平地行走      |
+       | Level 5.1 | `striking_target_sandbox` | `play/object_plugins/striking_target_sandbox` | `DefaultEnvironment` | Striking Target Sandbox | 軟錨打靶      |
+       | Level 6.0 | `vbd_clothing`            | `play/solver_sandbox/vbd_clothing`            | `DefaultEnvironment` | VBD Clothing            | VBD 服裝軟體  |
+       | Level 6.1 | `g1_vbd_soft_ball`        | `play/solver_sandbox/g1_vbd_soft_ball`        | `DefaultEnvironment` | G1 + VBD Soft Ball      | G1 + VBD 軟球 |
+       | Level 6.2 | `g1_mpm_particles`        | `play/solver_sandbox/g1_mpm_particles`        | `G1MpmParticles`     | G1 + MPM Particles      | G1 + MPM 顆粒 |
+       | Level 6.3 | `mpm_mud`                 | `play/solver_sandbox/mpm_mud`                 | `DefaultEnvironment` | MPM Mud                 | MPM 泥沙      |
+       | Level 8.0 | `g1_empty_arena`          | `play/mixed_characters/g1_empty_arena`        | `DefaultEnvironment` | G1 Empty Arena          | G1 空場       |
+       | Level 8.1 | `g1_and_wheeled_armor`    | `play/mixed_characters/g1_and_wheeled_armor`  | `DefaultEnvironment` | G1 and Wheeled Armor    | G1 與輪式裝甲 |
+       | Level 9.0 | `basic_vehicle`           | `play/wheeled_armor/basic_vehicle`            | `DefaultEnvironment` | Basic Vehicle           | 基礎車輛      |
+       | Level 9.1 | `vehicle_turret`          | `play/wheeled_armor/vehicle_turret`           | `DefaultEnvironment` | Vehicle Turret          | 車輛炮塔      |
+       | Level 9.2 | `dual_vehicle_turret`     | `play/wheeled_armor/dual_vehicle_turret`      | `DefaultEnvironment` | Dual Vehicle Turret     | 雙車炮塔      |
+
+       訓練預設 id：
+
+       | 舊 id                                                        | 新 id                                  |
+       |--------------------------------------------------------------|----------------------------------------|
+       | `level4_0_skrl_ppo_state_based`                              | `standing_target_skrl_ppo_state_based` |
+       | `level4_0_skrl_apg_state_based`                              | `standing_target_skrl_apg_state_based` |
+       | `level4_1_skrl_ppo_state_based`                              | `dodge_duel_skrl_ppo_state_based`      |
+       | `level4_1_skrl_apg_state_based`                              | `dodge_duel_skrl_apg_state_based`      |
+       | `level5_0_skrl_ppo_state_based` / `level5_0_ppo_state_based` | `flat_walk_skrl_ppo_state_based`       |
+       | `level5_0_rsl_rl_ppo_state_based`                            | `flat_walk_rsl_rl_ppo_state_based`     |
 
    47. 重構初始化相關的代碼，讓系統能統一處理剛體，關節體（Unitree G1 模型）以及軟體 （暫時是不包含流體）
             a. (✅️finished) 環境初始化

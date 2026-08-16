@@ -47,8 +47,7 @@ if __name__ == '__main__':
                 platform_configs=platform_configs,
                 environment_configs=environment_configs,
                 num_env=10,
-                level=4, 
-                sub_level=1,
+                env_id="dodge_duel",
                 capture_per_second=None,
                 
                 requires_grad=True,

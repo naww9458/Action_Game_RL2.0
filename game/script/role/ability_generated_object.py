@@ -66,7 +66,7 @@ class AbilityGeneratedObject(BaseRole):
             a.ability_generated_object_name: a for a in self.abilities_instance_list
         }
         index_tools_offset_env_list = index_tools_offset_env_list or [0] * self._num_env
-        # 每個 env 內各 owner 類型的已分配計數（支持同一關卡混用 player/tool 子彈）
+        # 每個 env 內各 owner 類型的已分配計數（支持同一環境混用 player/tool 子彈）
         env_owner_counters = {"player": [0] * self._num_env, "tool": [0] * self._num_env}
 
         # 建立 玩家 -> 物件 的分配表

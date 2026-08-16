@@ -1,13 +1,16 @@
+"""
+PhysicsManager 只負責物理模擬。
+所有物件控制行爲屬於環境層面操作，不應在這裏執行。
+"""
+
 import newton
 import warp as wp
 import numpy as np
-import newton.solvers
 
 from script.simulate.mesh_builder import MeshBuilder
 from script.role.objects.base_object import ObjectRegistry
 from script.simulate.solvers.base_solver import SolverRegistry
 from script.game_config import GameConfig
-from script.exceptions import GameClosedException
 from script.sensors.contact_sensor import RoleContactSensor, build_shape_to_role_map
 from script.simulate.coupling_index_builder import CouplingIndexBuilder
 
@@ -20,10 +23,8 @@ if TYPE_CHECKING:
     from game.script.custom_viewergl import CustomViewerGL
 
 
-# =============================================================================
-# PHYSICS MANAGER CLASS
-# =============================================================================
 class PhysicsManager:
+    """Build the Newton model and advance one action-frame of physics."""
 
     def __init__(self, device, viewerGL: 'CustomViewerGL'=None):
         self.builder = newton.ModelBuilder()
@@ -50,14 +51,11 @@ class PhysicsManager:
 
         self.viewerGL = viewerGL
 
-        # Cuda graph capture is not allowed on the first run of simulate(). 
-        # The first run includes parameter resets and initialization operations; the normal simulation only begins on the second run. 
-        # Capturing on the first run will cause all objects to become misaligned and the system to freeze.
-        self.current_step = 0
+        # Hint for Game: skip CUDA-graph capture when a solver needs per-step
+        # allocations (e.g. MPM). Game owns capture/replay; this is not a graph.
         self.capture_graph_after_step = 1
-        self.pre_substep_callback: Optional[Callable[[int], None]] = None
+        # Temporary: Level5 contact sensors. See module docstring.
         self.post_substep_callback: Optional[Callable[[int], None]] = None
-        self.inspector_body_f = None
 
         self.contact_sensor: RoleContactSensor | None = None
         self._role_shape_ranges: list[tuple[int, int, int]] = []
@@ -116,6 +114,11 @@ class PhysicsManager:
                 "joint_start": add_result.get("joint_start"),
                 "joint_end": add_result.get("joint_end"),
             }
+            reserved = set(meta.keys())
+            for extra_key, extra_val in add_result.items():
+                if extra_key in reserved or str(extra_key).startswith("_"):
+                    continue
+                meta[extra_key] = extra_val
             self.object_metadata[label] = meta
             if role_object_id >= 0:
                 self.object_metadata_by_role[role_object_id] = meta
@@ -273,16 +276,13 @@ class PhysicsManager:
             wp.copy(self.state_default.body_q_prev, self.state_default.body_q)
 
             print("Successfully manually allocated body_q_prev.")
-            self.inspector_body_f = wp.zeros(n, dtype=wp.spatial_vector, device=self.device)
 
         # Set the model (this logs the static geometry)
         if self.viewerGL is not None:
             self.viewerGL.set_model(self.model)
 
-        # The control object is not used in this example, but we create it for completeness
+        # The control object is consumed by apply_controls / the solver.
         self.control = self.model.control()
-
-        self.graph = None
 
         # Simulation parameters
         fps = GameConfig.FPS_ACTION  # Frames per second for visualization
@@ -343,20 +343,6 @@ class PhysicsManager:
             # Clear forces in input state
             self.state_0.clear_forces()
 
-            if self.viewerGL is not None:
-                self.viewerGL.apply_forces(self.state_0)
-
-            if self.pre_substep_callback is not None:
-                self.pre_substep_callback(substep_idx)
-
-            if self.inspector_body_f is not None and substep_idx == 0:
-                wp.launch(
-                    add_inspector_body_forces_kernel,
-                    dim=len(self.state_0.body_f),
-                    inputs=[self.state_0.body_f, self.inspector_body_f],
-                    device=self.device,
-                )
-
             # Apply articulation-level updates
             self.articulation_body.apply_controls(
                 state=self.state_0,
@@ -390,6 +376,7 @@ class PhysicsManager:
             )
 
             if self.post_substep_callback is not None:
+                # Temporary Level5 sensor hook; do not add new callers. See module doc.
                 self.post_substep_callback(substep_idx)
 
             # Swap states (next becomes current)
@@ -434,9 +421,6 @@ class PhysicsManager:
     def cleanup(self):
         if self.viewerGL and hasattr(self.viewerGL, 'renderer'):
             self.viewerGL.close()
-        
-        # 2. 清理 CUDA Graph (雖然進程結束會自動釋放，但這是一個好習慣)
-        self.graph = None
 
     # CPU Action, only for debugging
     def check_collision(self, role_a, role_b):
@@ -492,102 +476,6 @@ class PhysicsManager:
             # 物理求解器後置位姿同步與歷史快取清理
             self.solver_handler.post_teleport_sync(self.state_0)
             self.solver_handler.reset_history()
-
-    def clear_inspector_body_f(self):
-        if self.inspector_body_f is not None:
-            self.inspector_body_f.zero_()
-
-    # =============================================================================
-    # WARP KERNEL: Omnipotent state update kernel
-    # =============================================================================
-    @wp.kernel
-    def apply_body_updates_kernel(
-        body_q: wp.array(dtype=wp.transform),
-        body_q_prev: wp.array(dtype=wp.transform),
-        solver_body_q_prev: wp.array(dtype=wp.transform),
-        
-        body_qd: wp.array(dtype=wp.spatial_vector),
-        body_f: wp.array(dtype=wp.spatial_vector),
-        dt: float,
-        linear_damping: float,
-        angular_damping: float,
-
-        body_inv_mass: wp.array(dtype=float),       # 質量倒數 (Newton 內部使用)
-
-        # --- 緩衝區輸入 ---
-        in_pos: wp.array(dtype=wp.vec3),
-        in_rot: wp.array(dtype=wp.quat),
-        in_vel: wp.array(dtype=wp.vec3),
-        in_omega: wp.array(dtype=wp.vec3),
-        in_force: wp.array(dtype=wp.vec3),
-        in_torque: wp.array(dtype=wp.vec3),
-        action_mask: wp.array(dtype=wp.int32)
-    ):
-        tid = wp.tid()
-
-        mask = action_mask[tid]
-        
-        # --- 阻尼 (連續函數，保留梯度) ---
-        qd = body_qd[tid]
-        l_fact = wp.exp(-linear_damping * dt)
-        a_fact = wp.exp(-angular_damping * dt)
-        
-        # 局部更新速度變量
-        curr_v = wp.vec3(qd[0] * l_fact, qd[1] * l_fact, qd[2] * l_fact)
-        curr_w = wp.vec3(qd[3] * a_fact, qd[4] * a_fact, qd[5] * a_fact)
-
-        # --- 離散傳送 (斷開梯度，用於重置) ---
-        # 定義：1:Pos, 2:Rot, 4:Vel, 8:Omega
-        if (mask & 1) != 0 or (mask & 2) != 0:
-            p = body_q[tid].p
-            q = body_q[tid].q
-            if (mask & 1) != 0: p = in_pos[tid]
-            if (mask & 2) != 0: q = in_rot[tid]
-            
-            new_xform = wp.transform(p, q)
-            body_q[tid] = new_xform
-            # 防止 XPBD 產生巨大的瞬間速度
-            body_q_prev[tid] = new_xform 
-            solver_body_q_prev[tid] = new_xform
-        
-        # --- 速度覆寫 ---
-        if (mask & 4) != 0:
-            curr_v = in_vel[tid]
-        if (mask & 8) != 0:
-            curr_w = in_omega[tid]
-
-        # 最後統一寫回速度
-        body_qd[tid] = wp.spatial_vector(
-            curr_v[0], curr_v[1], curr_v[2], 
-            curr_w[0], curr_w[1], curr_w[2]
-        )
-
-        if body_inv_mass[tid] == 0.0: 
-            return
-        
-        # --- 連續力/力矩 (BPTT 優化核心) ---
-        # 不使用 mask 判斷，讓網絡輸出 0 來代表不施力，確保梯度流暢
-        f = in_force[tid]
-        t = in_torque[tid]
-        curr_f = body_f[tid]
-        body_f[tid] = wp.spatial_vector(
-            curr_f[0] + f[0], curr_f[1] + f[1], curr_f[2] + f[2],
-            curr_f[3] + t[0], curr_f[4] + t[1], curr_f[5] + t[2]
-        )
-
-
-@wp.kernel
-def add_inspector_body_forces_kernel(
-    body_f: wp.array(dtype=wp.spatial_vector),
-    inspector_f: wp.array(dtype=wp.spatial_vector),
-):
-    tid = wp.tid()
-    curr = body_f[tid]
-    extra = inspector_f[tid]
-    body_f[tid] = wp.spatial_vector(
-        curr[0] + extra[0], curr[1] + extra[1], curr[2] + extra[2],
-        curr[3] + extra[3], curr[4] + extra[4], curr[5] + extra[5],
-    )
 
 
 @wp.kernel

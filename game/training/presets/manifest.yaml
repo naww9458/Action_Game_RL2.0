@@ -1,46 +1,37 @@
 presets:
-  - id: level5_0_skrl_ppo_state_based
-    file: level5_0_skrl_ppo_state_based.yaml
-    display_name: "G1 速度行走 PPO"
-    level: 5
-    sub_level: 0
+  - id: flat_walk_skrl_ppo_state_based
+    file: flat_walk_skrl_ppo_state_based.yaml
+    display_name: "G1 速度行走 SKRL PPO"
+    env_id: flat_walk
     framework: SKRL
     algorithm: PPO
-    use_for_level_defaults: true
-  - id: level4_0_skrl_ppo_state_based
-    file: level4_0_skrl_ppo_state_based.yaml
-    display_name: "Level 4 射擊 PPO"
-    level: 4
-    sub_level: 0
+  - id: standing_target_skrl_ppo_state_based
+    file: standing_target_skrl_ppo_state_based.yaml
+    display_name: "站立打靶 PPO"
+    env_id: standing_target
     framework: SKRL
     algorithm: PPO
-    use_for_level_defaults: true
-  - id: level4_1_skrl_ppo_state_based
-    file: level4_1_skrl_ppo_state_based.yaml
-    display_name: "Level 4.1 射擊 PPO (diff rewards)"
-    level: 4
-    sub_level: 1
+  - id: dodge_duel_skrl_ppo_state_based
+    file: dodge_duel_skrl_ppo_state_based.yaml
+    display_name: "閃避對決 PPO"
+    env_id: dodge_duel
     framework: SKRL
     algorithm: PPO
-    use_for_level_defaults: true
-  - id: level4_0_skrl_apg_state_based
-    file: level4_0_skrl_apg_state_based.yaml
-    display_name: "Level 4 射擊 APG"
-    level: 4
-    sub_level: 0
+  - id: standing_target_skrl_apg_state_based
+    file: standing_target_skrl_apg_state_based.yaml
+    display_name: "站立打靶 APG"
+    env_id: standing_target
     framework: SKRL
     algorithm: APG
-  - id: level4_1_skrl_apg_state_based
-    file: level4_1_skrl_apg_state_based.yaml
-    display_name: "Level 4.1 射擊 APG (diff rewards)"
-    level: 4
-    sub_level: 1
+  - id: dodge_duel_skrl_apg_state_based
+    file: dodge_duel_skrl_apg_state_based.yaml
+    display_name: "閃避對決 APG"
+    env_id: dodge_duel
     framework: SKRL
     algorithm: APG
-  - id: level5_0_rsl_rl_ppo_state_based
-    file: level5_0_rsl_rl_ppo_state_based.yaml
-    display_name: "G1 速度行走 PPO"
-    level: 5
-    sub_level: 0
+  - id: flat_walk_rsl_rl_ppo_state_based
+    file: flat_walk_rsl_rl_ppo_state_based.yaml
+    display_name: "G1 速度行走 RSL-RL PPO"
+    env_id: flat_walk
     framework: RSL_RL
     algorithm: PPO

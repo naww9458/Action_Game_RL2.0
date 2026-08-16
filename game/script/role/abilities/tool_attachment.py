@@ -17,7 +17,7 @@ from script.role.objects.object_template.tool_function_registry import (
 )
 
 if TYPE_CHECKING:
-    from script.levels.levels import Levels
+    from script.environments.environment import Environment
     from script.simulate.mount_joint_registry import MountJointRegistry
 
 
@@ -35,10 +35,10 @@ class Tool_attachment(Ability):
         self._tool_rl_action_dim = 0
         self._tool_rl_action_spec: dict = {"type": "box", "shape": 0, "range": [-1.0, 1.0]}
 
-    def configure_from_player_configs(self, player_configs, level: "Levels") -> None:
-        self.mount_registry: MountJointRegistry = getattr(level, "mount_joint_registry", None)
-        self._players = getattr(level, "players", None)
-        self._level = level
+    def configure_from_player_configs(self, player_configs, environment: "Environment") -> None:
+        self.mount_registry: MountJointRegistry = getattr(environment, "mount_joint_registry", None)
+        self._players = getattr(environment, "players", None)
+        self._environment = environment
         attach_cfg = get_tool_attachment_detail(Ability._default_configs)
         if attach_cfg is not None and attach_cfg.proximity_threshold is not None:
             self.proximity_threshold = float(attach_cfg.proximity_threshold)
@@ -59,7 +59,7 @@ class Tool_attachment(Ability):
                 if record.proximity_height_threshold <= 0:
                     record.proximity_height_threshold = self.proximity_height_threshold
 
-        tool_patterns = self._collect_level_tool_patterns(level)
+        tool_patterns = self._collect_environment_tool_patterns(environment)
         self._tool_rl_action_dim = resolve_max_rl_action_dim_for_patterns(tool_patterns)
         self._tool_rl_action_spec = resolve_rl_action_spec_for_max_pattern(tool_patterns)
 
@@ -71,8 +71,8 @@ class Tool_attachment(Ability):
         self._configured = True
 
     @staticmethod
-    def _collect_level_tool_patterns(level: "Levels") -> List[str]:
-        tool_configs = (getattr(level, "level_configs", None) or {}).get("tool_configs") or []
+    def _collect_environment_tool_patterns(environment: "Environment") -> List[str]:
+        tool_configs = (getattr(environment, "config", None) or {}).get("tool_configs") or []
         patterns: List[str] = []
         for entry in tool_configs:
             if not isinstance(entry, dict):

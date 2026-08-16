@@ -4,11 +4,11 @@
 # import numpy as np
 # import torch
 
-# from skrl_script.apg import APG_DEFAULT_CONFIG
+# from rl_framework.skrl_script.algorithm.apg.apg import APG_DEFAULT_CONFIG
 
 # from skrl.trainers.torch.sequential import SEQUENTIAL_TRAINER_DEFAULT_CONFIG
 # from gymnasium import spaces
-# from script.levels.rewards.player_reward_diff import PlayerFaceToTargetReward1_diff
+# from script.environments.rewards.player_reward_diff import PlayerFaceToTargetReward1_diff
 
 # class model_config:
 #     model_obs_type = "state_based" # "game_screen", "state_based", "mixed"
@@ -19,8 +19,7 @@
 #     state_obs_size = 18
 #     observation_space = spaces.Box(low=-1, high=1, shape=(state_obs_size,), dtype=np.float32)
 
-#     level = 4
-#     sub_level = 0
+#     env_id = "standing_target"
 
 #     cfg = APG_DEFAULT_CONFIG.copy()
 #     cfg["learning_rate"] = 1e-4  # 初始學習率

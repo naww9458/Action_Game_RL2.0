@@ -2,7 +2,7 @@ import sys
 import torch
 import time
 
-from skrl_script.wrapperSKRL import WarpEnv
+from rl_framework.skrl_script.wrapperSKRL import WarpEnv
 from training.loader import TrainingPresetLoader
 from utils.fps_calculator import fpsCalculator
 
@@ -12,7 +12,7 @@ if __name__ == '__main__':
 
     device = DEVICE
 
-    loaded = TrainingPresetLoader.load("level5_0_ppo_state_based")
+    loaded = TrainingPresetLoader.load("flat_walk_skrl_ppo_state_based")
     model_cfg = loaded.model_cfg
     train_cfg = loaded.train_cfg
     enable_window=True
@@ -20,7 +20,7 @@ if __name__ == '__main__':
     fps_calculator = fpsCalculator()
 
     # "cuda_graph", "differentiation"
-    env = WarpEnv(num_envs=2, device=device, model_cfg=model_cfg, train_cfg=train_cfg, level_config_path=None, is_training=True, step_mode="cuda_graph", enable_window=enable_window)
+    env = WarpEnv(num_envs=2, device=device, model_cfg=model_cfg, train_cfg=train_cfg, environment_config_path=None, is_training=True, step_mode="cuda_graph", enable_window=enable_window)
 
     tested_steps = 0
     num_step_for_test = 6000

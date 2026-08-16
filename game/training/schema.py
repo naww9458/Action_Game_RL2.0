@@ -12,6 +12,29 @@ FRAMEWORK_ALGORITHMS: Dict[str, frozenset[str]] = {
     FRAMEWORK_SKRL: frozenset({"PPO", "APG"}),
     FRAMEWORK_RSL_RL: frozenset({"PPO"}),
 }
+# Folder names under ``runs/``. Internal ids stay SKRL / RSL_RL.
+FRAMEWORK_RUN_FOLDER: Dict[str, str] = {
+    FRAMEWORK_SKRL: "SKRL",
+    FRAMEWORK_RSL_RL: "RSL-rl",
+}
+
+
+def framework_run_folder_name(framework: Optional[str]) -> str:
+    fw = str(framework or FRAMEWORK_SKRL).upper().replace("-", "_")
+    if fw not in FRAMEWORK_RUN_FOLDER and fw.startswith("RSL"):
+        fw = FRAMEWORK_RSL_RL
+    if fw not in FRAMEWORK_RUN_FOLDER:
+        fw = FRAMEWORK_SKRL
+    return FRAMEWORK_RUN_FOLDER[fw]
+
+
+def normalize_framework_id(framework: Optional[str]) -> str:
+    fw = str(framework or FRAMEWORK_SKRL).upper().replace("-", "_")
+    if fw not in FRAMEWORK_RUN_FOLDER and fw.startswith("RSL"):
+        return FRAMEWORK_RSL_RL
+    if fw in FRAMEWORK_RUN_FOLDER:
+        return fw
+    return FRAMEWORK_SKRL
 
 
 def coerce_framework_algorithm(data: Any) -> Any:
@@ -50,13 +73,12 @@ def validate_framework_algorithm(framework: str, algorithm: str) -> None:
 class PresetMetaConfig(BaseModel):
     id: str
     display_name: str = ""
-    level: int
-    sub_level: int
+    env_id: str
     obs_type: str = "state_based"
     framework: str = FRAMEWORK_SKRL
     algorithm: str = "PPO"
     policy_module: str
-    trainer_module: str = "skrl_script.trainer_PPO"
+    trainer_module: str = "rl_framework.skrl_script.trainer_PPO"
 
     @model_validator(mode="before")
     @classmethod
@@ -134,7 +156,7 @@ class TrainPresetConfig(BaseModel):
     reward_components: List[str] = Field(default_factory=list)
     reward_components_diff: List[str] = Field(default_factory=list)
     reward_parameters: Dict[str, Any] = Field(default_factory=dict)
-    # Per-player controller overrides applied on top of level YAML (Human / RL / Bot).
+    # Per-player controller overrides applied on top of environment YAML (Human / RL / Bot).
     player_ids: List[str] = Field(default_factory=list)
 
     @field_validator("player_ids", mode="before")
@@ -155,8 +177,7 @@ class ManifestEntry(BaseModel):
     id: str
     file: str
     display_name: str = ""
-    level: int = 0
-    sub_level: int = 0
+    env_id: str
     framework: str = FRAMEWORK_SKRL
     algorithm: str = "PPO"
 

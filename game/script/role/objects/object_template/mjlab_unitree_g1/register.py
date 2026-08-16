@@ -23,3 +23,9 @@ def register() -> None:
         "unitree_g1",
         create_g1_foot_critic_obs,
     )
+
+
+def setup(environment) -> None:
+    from .g1_policy_runtime import attach_if_present
+
+    attach_if_present(environment)

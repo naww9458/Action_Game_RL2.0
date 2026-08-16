@@ -18,7 +18,7 @@ from OpenGL.GLU import *
 from pathlib import Path
 from pydantic import BaseModel
 
-from script.levels.level_cfg import EnvironmentConfig
+from script.environments.environment_cfg import EnvironmentConfig
 
 from script.simulate.solvers.base_solver import SolverRegistry
 from script.simulate.solvers.coupled import (
@@ -36,8 +36,16 @@ from script.role.abilities.ability import Ability
 
 from utils.get_pydantic_default import get_pydantic_default
 from UI.pages.experiment_hub import ExperimentHubPage
+from UI.pages.env_browser import EnvTreeController, TemplateCatalogDialog
+from script.environments.env_catalog import ROOT_CUSTOM
 
-from typing import List, get_origin, get_args, Union
+DEFAULT_ENV_TREE_COLORS = {
+    "series": "#1565C0",
+    "category": "#6A1B9A",
+    "env": "#2E7D32",
+}
+
+from typing import List, Literal, get_origin, get_args, Union
 
 _MISSING_FIELD_DEFAULT = object()
 
@@ -81,6 +89,23 @@ def get_editor_field_default(field_info):
     if isinstance(value, BaseModel):
         return value.model_dump()
     return value
+
+
+def _unwrap_optional_type(field_type):
+    origin = get_origin(field_type)
+    args = get_args(field_type)
+    if origin is Union and type(None) in args:
+        non_none = [arg for arg in args if arg is not type(None)]
+        if len(non_none) == 1:
+            return non_none[0]
+    return field_type
+
+
+def _nested_basemodel_type(field_type):
+    anno = _unwrap_optional_type(field_type)
+    if inspect.isclass(anno) and issubclass(anno, BaseModel):
+        return anno
+    return None
 
 
 _ABILITIES_SCHEMA_CACHE = None
@@ -447,32 +472,6 @@ class TransMgr:
         return self.data.get(key, key)
 
 TR = TransMgr()
-
-
-
-
-
-# --- 2. 新增子關卡對話框 ---
-class NewSubLevelDialog(QDialog):
-    def __init__(self, series_list, parent=None):
-        super().__init__(parent)
-        self.setWindowTitle(TR.get("select_series_title"))
-        self.setFixedSize(350, 180)
-        layout = QVBoxLayout(self)
-        desc_label = QLabel(TR.get("select_series_desc"))
-        desc_label.setWordWrap(True)
-        layout.addWidget(desc_label)
-        self.combo = QComboBox()
-        self.combo.addItems(series_list)
-        layout.addWidget(self.combo)
-        layout.addStretch()
-        btns = QDialogButtonBox(QDialogButtonBox.StandardButton.Ok | QDialogButtonBox.StandardButton.Cancel)
-        btns.accepted.connect(self.accept)
-        btns.rejected.connect(self.reject)
-        layout.addWidget(btns)
-
-    def get_selected_series(self):
-        return self.combo.currentText()
 
 
 
@@ -1115,6 +1114,31 @@ class EditPage(BasePage):
         template_combo.currentIndexChanged.connect(on_template_selected)
         self.attr_form.addRow(f"    {TR.get('add_object_template')}:", template_combo)
 
+    def _render_object_model_fields(self, current_val, model_cls):
+        """Render one object-type Pydantic model, including nested part models."""
+        if not isinstance(current_val, dict) or model_cls is None:
+            return
+        for f_name, f_info in model_cls.model_fields.items():
+            if f_name == "type":
+                continue
+            f_val = current_val.get(f_name)
+            if f_val is None:
+                default_value = get_editor_field_default(f_info)
+                if default_value is not _MISSING_FIELD_DEFAULT:
+                    f_val = default_value
+                    current_val[f_name] = f_val
+            nested_cls = _nested_basemodel_type(f_info.annotation)
+            if nested_cls is not None:
+                self._add_section_header(f"--- {f_name} ---")
+                if not isinstance(f_val, dict):
+                    f_val = get_pydantic_default(nested_cls) or {}
+                    current_val[f_name] = f_val
+                self._render_object_model_fields(f_val, nested_cls)
+                continue
+            self.add_editable_row(
+                f_name, f_val, current_val, use_zebra=False, field_type=f_info.annotation
+            )
+
     def render_special_union_section(self, key, current_val, data_source):
         """渲染 object / solver_config 專用的 Dropdown 與彩色屬性區域"""
         # 標題與容器
@@ -1189,15 +1213,7 @@ class EditPage(BasePage):
         model_cls = type_map.get(current_type_name)
 
         if model_cls:
-            for f_name, f_info in model_cls.model_fields.items():
-                if f_name == "type": continue
-                f_val = current_val.get(f_name)
-                if f_val is None:
-                    default_value = get_editor_field_default(f_info)
-                    if default_value is not _MISSING_FIELD_DEFAULT:
-                        f_val = default_value
-                        current_val[f_name] = f_val
-                self.add_editable_row(f_name, f_val, current_val, use_zebra=False, field_type=f_info.annotation)
+            self._render_object_model_fields(current_val, model_cls)
 
         self.attr_form = original_form
         self.row_counter = original_zebra 
@@ -1479,19 +1495,38 @@ class EditPage(BasePage):
             label_text = TR.get(key) if key in ("controller", "start_attached", "host_player_id") else f"{key}:"
         update_call = self.preview_widget.update 
         # 修改：將 default_rotation 移出 generic 列表，單獨處理以支持 Random Range
-        vector_keys = ["space_xyz", "gravity", "default_velocity", "default_angular_velocity", "size", "color"]
+        vector_keys = ["space_xyz", "gravity", "default_velocity", "default_angular_velocity", "size", "color", "target_offset"]
         
         is_int = False
+        literal_choices = None
         if field_type:
             origin = get_origin(field_type)
             args = get_args(field_type)
+            unwrapped = _unwrap_optional_type(field_type)
+            unwrapped_origin = get_origin(unwrapped)
+            unwrapped_args = get_args(unwrapped)
             if field_type is int or (origin is list and args and args[0] is int):
                 is_int = True
+            if unwrapped_origin is Literal:
+                literal_choices = [str(choice) for choice in unwrapped_args]
         if key == "color": is_int = True 
 
         widget = None
 
-        if key == "controller":
+        if literal_choices:
+            widget = QComboBox()
+            widget.addItems(literal_choices)
+            current = str(data_source.get(key, literal_choices[0] if literal_choices else ""))
+            if current not in literal_choices and literal_choices:
+                current = literal_choices[0]
+                data_source[key] = current
+            widget.setCurrentText(current)
+            widget.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Preferred)
+            widget.currentTextChanged.connect(
+                lambda v: [data_source.update({key: v}), update_call()]
+            )
+
+        elif key == "controller":
             widget = QComboBox()
             widget.addItems(["Human", "RL", "Bot"])
             current = str(data_source.get(key, "Human"))
@@ -1699,10 +1734,10 @@ class SettingsPage(BasePage):
         self.preview_group = QFrame()
         self.preview_group.setStyleSheet("color: #888; font-size: 14px; padding: 5px;")
         preview_layout = QVBoxLayout(self.preview_group)
-        self.lbl_level_path = QLabel()
+        self.lbl_env_path = QLabel()
         self.lbl_shape_path = QLabel()
         self.lbl_reward_path = QLabel()
-        preview_layout.addWidget(self.lbl_level_path)
+        preview_layout.addWidget(self.lbl_env_path)
         preview_layout.addWidget(self.lbl_shape_path)
         preview_layout.addWidget(self.lbl_reward_path)
         self.layout.addWidget(self.preview_group)
@@ -1714,6 +1749,24 @@ class SettingsPage(BasePage):
         self.font_size_spin.setValue(18)
         self.font_size_spin.valueChanged.connect(self.main_app.apply_global_settings)
         self.layout.addWidget(self.font_size_spin)
+
+        self.tree_color_label = QLabel()
+        self.layout.addWidget(self.tree_color_label)
+        color_row = QHBoxLayout()
+        self.tree_color_btns = {}
+        for key in ("series", "category", "env"):
+            col = QVBoxLayout()
+            lbl = QLabel()
+            btn = QPushButton()
+            btn.setMinimumWidth(88)
+            btn.clicked.connect(lambda _checked=False, k=key: self._pick_tree_color(k))
+            col.addWidget(lbl)
+            col.addWidget(btn)
+            color_row.addLayout(col)
+            self.tree_color_btns[key] = (lbl, btn)
+        color_row.addStretch()
+        self.layout.addLayout(color_row)
+        self.set_tree_colors(DEFAULT_ENV_TREE_COLORS)
 
         self.lang_label = QLabel()
         self.layout.addWidget(self.lang_label)
@@ -1735,24 +1788,27 @@ class SettingsPage(BasePage):
     def get_project_path(self):
         return self.main_app.project_root
 
-    def get_level_path(self):
-        return os.path.join(self.get_project_path(), "game", "script", "levels")
+    def get_env_path(self):
+        return os.path.join(self.get_project_path(), "game", "script", "environments")
 
     def get_shape_path(self):
         return os.path.join(self.get_project_path(), "game", "script", "role", "shapes")
 
     def get_reward_path(self):
-        return os.path.join(self.get_project_path(), "game", "script", "levels", "rewards")
+        return os.path.join(self.get_project_path(), "game", "script", "environments", "rewards")
 
     def update_path_previews(self):
         """更新 UI 上的三行路徑文字"""
-        self.lbl_level_path.setText(f"{TR.get('calc_level_path')} {self.get_level_path()}")
+        self.lbl_env_path.setText(f"{TR.get('calc_env_path')} {self.get_env_path()}")
         self.lbl_shape_path.setText(f"{TR.get('calc_shape_path')} {self.get_shape_path()}")
         self.lbl_reward_path.setText(f"{TR.get('calc_reward_path')} {self.get_reward_path()}")
 
     def retranslate_ui(self):
         super().retranslate_ui()
         self.font_size_label.setText(TR.get("font_size"))
+        self.tree_color_label.setText(TR.get("tree_color_section"))
+        for key, (lbl, _btn) in self.tree_color_btns.items():
+            lbl.setText(TR.get(f"tree_color_{key}"))
         self.lang_label.setText(TR.get("language_select"))
         self.save_btn.setText(TR.get("save_back"))
         self.update_path_previews()
@@ -1761,10 +1817,50 @@ class SettingsPage(BasePage):
         TR.load_lang(self.lang_combo.currentData())
         self.main_app.retranslate_all()
 
+    def set_tree_colors(self, colors: dict) -> None:
+        for key, (_lbl, btn) in self.tree_color_btns.items():
+            hex_color = str(colors.get(key) or DEFAULT_ENV_TREE_COLORS[key])
+            self._paint_color_button(btn, hex_color)
+
+    def current_tree_colors(self) -> dict:
+        out = {}
+        for key, (_lbl, btn) in self.tree_color_btns.items():
+            hex_color = btn.property("hex_color") or DEFAULT_ENV_TREE_COLORS[key]
+            out[key] = str(hex_color)
+        return out
+
+    def _paint_color_button(self, btn: QPushButton, hex_color: str) -> None:
+        color = QColor(hex_color)
+        if not color.isValid():
+            color = QColor(DEFAULT_ENV_TREE_COLORS["env"])
+        hex_color = color.name().upper()
+        luma = 0.299 * color.red() + 0.587 * color.green() + 0.114 * color.blue()
+        fg = "#000000" if luma > 160 else "#FFFFFF"
+        btn.setProperty("hex_color", hex_color)
+        btn.setText(hex_color)
+        btn.setStyleSheet(
+            f"QPushButton {{ background-color: {hex_color}; color: {fg}; "
+            f"border: 1px solid #666; padding: 6px; }}"
+        )
+
+    def _pick_tree_color(self, key: str) -> None:
+        _lbl, btn = self.tree_color_btns[key]
+        current = QColor(btn.property("hex_color") or DEFAULT_ENV_TREE_COLORS[key])
+        picked = QColorDialog.getColor(current, self, TR.get(f"tree_color_{key}"))
+        if not picked.isValid():
+            return
+        self._paint_color_button(btn, picked.name())
+        self.main_app.global_config[f"tree_color_{key}"] = picked.name().upper()
+        self.main_app.apply_env_tree_colors()
+
     def save_and_back(self):
+        colors = self.current_tree_colors()
         config_data = {
             "font_size": self.font_size_spin.value(),
-            "language": self.lang_combo.currentData()
+            "language": self.lang_combo.currentData(),
+            "tree_color_series": colors["series"],
+            "tree_color_category": colors["category"],
+            "tree_color_env": colors["env"],
         }
         self.main_app.global_config.update(config_data)
         self.main_app.save_app_settings()
@@ -1847,13 +1943,13 @@ class TestPage(QWidget):
         btn_layout.addWidget(self.btn_start)
         self.layout.addLayout(btn_layout)
 
-        # 用於儲存當前關卡資訊
-        self.target_level = 0
-        self.target_sub_level = 0
+        # 用於儲存當前環境資訊
+        self.target_env_id = None
+        self.target_env_path = None
 
-    def set_target(self, level, sub_level):
-        self.target_level = level
-        self.target_sub_level = sub_level
+    def set_target(self, env_id=None, env_path=None):
+        self.target_env_id = env_id
+        self.target_env_path = env_path
 
     def run_test_process(self):
         # 獲取參數
@@ -1882,8 +1978,8 @@ class TestPage(QWidget):
             "capture_per_second": cps,
             "requires_grad": self.check_grad.isChecked(),
             "is_lock_fps": self.check_lock_fps.isChecked(),
-            "level": self.target_level,
-            "sub_level": self.target_sub_level
+            "env_id": self.target_env_id,
+            "environment_config_path": self.target_env_path,
         }
 
         try:
@@ -1926,8 +2022,8 @@ def execute_game_logic(cfg):
         platform_configs=None,
         environment_configs=None,
         num_env=cfg["num_env"],
-        level=cfg["level"], 
-        sub_level=cfg["sub_level"], 
+        env_id=cfg.get("env_id"),
+        environment_config_path=cfg.get("environment_config_path"),
         capture_per_second=cfg["capture_per_second"],
         requires_grad=cfg["requires_grad"],
     )
@@ -1969,7 +2065,9 @@ class MainWindow(QMainWindow):
         self.stack.addWidget(self.test_page)     # 4
         
         self.check_initial_config()
-        self.update_button_states() # 初始化按鈕狀態
+        self.update_button_states()
+        if hasattr(self, "env_browser"):
+            self.installEventFilter(self.env_browser)
 
     def init_main_ui(self):
         self.main_widget = QWidget()
@@ -1979,18 +2077,35 @@ class MainWindow(QMainWindow):
         self.set_btn.clicked.connect(lambda: self.switch_page(1))
         layout.addWidget(self.set_btn)
         
-        h = QHBoxLayout()
+        header = QHBoxLayout()
         self.list_label = QLabel()
-        self.add_btn = QPushButton("+")
-        self.add_btn.setFixedWidth(80)
-        self.add_btn.clicked.connect(self.show_add_menu)
-        h.addWidget(self.list_label); h.addStretch(); h.addWidget(self.add_btn)
-        layout.addLayout(h)
+        self.template_btn = QPushButton()
+        self.template_btn.clicked.connect(self.open_template_catalog)
+        header.addWidget(self.list_label)
+        header.addStretch()
+        header.addWidget(self.template_btn)
+        layout.addLayout(header)
         
         self.tree = QTreeWidget()
         self.tree.setHeaderHidden(True)
         self.tree.itemSelectionChanged.connect(self.update_button_states)
-        layout.addWidget(self.tree)
+        layout.addWidget(self.tree, 1)
+
+        self.env_intro_label = QLabel()
+        self.env_intro_label.setWordWrap(True)
+        self.env_intro_label.setAlignment(Qt.AlignmentFlag.AlignTop)
+        self.env_intro_label.setMinimumHeight(72)
+        layout.addWidget(self.env_intro_label)
+
+        self.env_browser = EnvTreeController(
+            self.tree,
+            self.env_intro_label,
+            TR.get,
+            self,
+            root_filter=ROOT_CUSTOM,
+            flatten_root=True,
+        )
+        self._template_dialog = None
         
         b = QHBoxLayout()
         self.edit_btn = QPushButton()
@@ -2007,92 +2122,114 @@ class MainWindow(QMainWindow):
         layout.addLayout(b)
 
     def update_button_states(self):
-        """根據選擇決定按鈕是否可用"""
-        s = self.tree.selectedItems()
-        # 只有選中子關卡（即有父節點的項）時，按鈕才啟用
-        is_sub_level = bool(s and s[0].parent())
-        self.edit_btn.setEnabled(is_sub_level)
-        self.train_btn.setEnabled(is_sub_level)
-        self.test_btn.setEnabled(is_sub_level)
+        payload = self.env_browser.selected_payload() if hasattr(self, "env_browser") else None
+        can_use = bool(
+            payload
+            and payload.get("node_type") == "env"
+            and payload.get("root") == ROOT_CUSTOM
+        )
+        self.edit_btn.setEnabled(can_use)
+        self.train_btn.setEnabled(can_use)
+        self.test_btn.setEnabled(can_use)
 
-    def get_selected_indices(self):
-        """解析選中項的 level index 和 sub_level index"""
-        s = self.tree.selectedItems()
-        if not s or not s[0].parent(): return None, None
-        
-        try:
-            sub_text = s[0].text(0) # "子關卡 0"
-            sub_idx = int(re.search(r'\d+', sub_text).group())
-            
-            series_name = s[0].parent().text(0) 
-            series_idx = int(re.search(r'\d+', series_name).group())
-            return series_idx, sub_idx
-        except:
-            return None, None
+    def _selected_env(self):
+        payload = self.env_browser.selected_payload() if hasattr(self, "env_browser") else None
+        if (
+            not payload
+            or payload.get("node_type") != "env"
+            or payload.get("root") != ROOT_CUSTOM
+        ):
+            return None
+        return payload
 
     def go_to_train(self):
-        lv, sub_lv = self.get_selected_indices()
-        if lv is not None:
-            self.train_page.set_target(lv, sub_lv)
-            self.switch_page(3)
+        payload = self._selected_env()
+        if payload is None:
+            return
+        self.train_page.set_target(
+            env_id=payload.get("env_id"),
+            env_path=payload.get("path"),
+        )
+        self.switch_page(3)
 
     def go_to_test(self):
-        lv, sub_lv = self.get_selected_indices()
-        if lv is not None:
-            self.test_page.set_target(lv, sub_lv)
-            self.switch_page(4)
+        payload = self._selected_env()
+        if payload is None:
+            return
+        self.test_page.set_target(
+            env_id=payload.get("env_id"),
+            env_path=payload.get("path"),
+        )
+        self.switch_page(4)
 
     def go_to_edit(self):
-        lv, sub_lv = self.get_selected_indices()
-        if lv is not None:
-            series_name = f"level{lv}"
-            path = os.path.join(self.settings_page.get_level_path(), series_name, f"level_{lv}_{sub_lv}_default_cfg.yaml")
-            self.edit_page.load_config(path)
-            self.switch_page(2)
+        payload = self._selected_env()
+        if payload is None:
+            return
+        self.open_env_editor(payload.get("path"))
 
-    def show_add_menu(self):
-        m = QMenu(self); a1 = m.addAction(TR.get("new_sub_level")); a2 = m.addAction(TR.get("new_level_series"))
-        a = m.exec(self.add_btn.mapToGlobal(self.add_btn.rect().bottomLeft()))
-        if a == a1: self.handle_new_sub_level()
-        elif a == a2: self.handle_new_series()
+    def open_env_editor(self, path: str):
+        if not path:
+            return
+        self.edit_page.load_config(path)
+        self.switch_page(2)
 
-    def handle_new_sub_level(self):
-        root = self.settings_page.get_level_path()
-        if not os.path.exists(root): os.makedirs(root, exist_ok=True)
-        dirs = sorted([d for d in os.listdir(root) if os.path.isdir(os.path.join(root, d)) and re.match(r'level\d+', d)])
-        if not dirs: return
-        d = NewSubLevelDialog(dirs, self)
-        if d.exec() == QDialog.DialogCode.Accepted:
-            sel = d.get_selected_series(); s_path = os.path.join(root, sel); s_idx = re.search(r'level(\d+)', sel).group(1)
-            subs = [int(re.search(fr'level_{s_idx}_(\d+)_default_cfg\.yaml', f).group(1)) for f in os.listdir(s_path) if re.search(fr'level_{s_idx}_(\d+)_default_cfg\.yaml', f)]
-            nxt = max(subs) + 1 if subs else 0
-            p = os.path.join(s_path, f"level_{s_idx}_{nxt}_default_cfg.yaml")
-            with open(p, 'w', encoding='utf-8') as f: yaml.dump({}, f)
-            self.update_level_list(root); self.edit_page.load_config(p); self.switch_page(2)
+    def reload_env_catalog(self):
+        if hasattr(self, "env_browser"):
+            self.env_browser.reload()
+            self.update_button_states()
 
-    def handle_new_series(self):
-        root = self.settings_page.get_level_path()
-        if not os.path.exists(root): os.makedirs(root, exist_ok=True)
-        idxs = [int(re.search(r'level(\d+)', d).group(1)) for d in os.listdir(root) if re.search(r'level(\d+)', d)]
-        nxt = max(idxs) + 1 if idxs else 0
-        s_path = os.path.join(root, f"level{nxt}"); os.makedirs(s_path, exist_ok=True)
-        p = os.path.join(s_path, f"level_{nxt}_0_default_cfg.yaml")
-        with open(p, 'w', encoding='utf-8') as f: yaml.dump({}, f)
-        self.update_level_list(root); self.edit_page.load_config(p); self.switch_page(2)
+    def open_template_catalog(self):
+        dlg = self._template_dialog
+        if dlg is not None:
+            try:
+                if dlg.isVisible():
+                    dlg.raise_()
+                    dlg.activateWindow()
+                    return
+            except RuntimeError:
+                self._template_dialog = None
+        self._template_dialog = TemplateCatalogDialog(TR.get, self, self)
+        self._template_dialog.finished.connect(self._on_template_dialog_finished)
+        self._template_dialog.show()
+
+    def _on_template_dialog_finished(self, *_args):
+        self._template_dialog = None
 
     def retranslate_all(self):
-        self.setWindowTitle(TR.get("window_title")); self.set_btn.setText(TR.get("sys_settings")); self.list_label.setText(TR.get("level_list")); self.add_btn.setText(f"{TR.get('add_new')} +")
-        self.edit_btn.setText(TR.get("edit")); 
-        self.train_btn.setText(TR.get("train"));
+        self.setWindowTitle(TR.get("window_title"))
+        self.set_btn.setText(TR.get("sys_settings"))
+        self.list_label.setText(TR.get("env_list"))
+        self.template_btn.setText(TR.get("env_templates"))
+        self.edit_btn.setText(TR.get("edit"))
+        self.train_btn.setText(TR.get("train"))
         self.test_btn.setText(TR.get("test"))
         for i in range(self.stack.count()):
             p = self.stack.widget(i)
-            if hasattr(p, "retranslate_ui"): p.retranslate_ui()
-            
-        r = self.settings_page.get_level_path()
-        if os.path.exists(r): self.update_level_list(r)
+            if hasattr(p, "retranslate_ui"):
+                p.retranslate_ui()
+        if hasattr(self, "env_browser"):
+            self.env_browser.reload()
 
     def apply_global_settings(self, size): self.setStyleSheet(f"QWidget {{ font-size: {size}px; }}")
+
+    def env_tree_colors(self) -> dict:
+        cfg = self.global_config or {}
+        return {
+            "series": str(cfg.get("tree_color_series") or DEFAULT_ENV_TREE_COLORS["series"]),
+            "category": str(cfg.get("tree_color_category") or DEFAULT_ENV_TREE_COLORS["category"]),
+            "env": str(cfg.get("tree_color_env") or DEFAULT_ENV_TREE_COLORS["env"]),
+        }
+
+    def apply_env_tree_colors(self):
+        if hasattr(self, "env_browser"):
+            self.env_browser.reload()
+        dlg = getattr(self, "_template_dialog", None)
+        if dlg is not None:
+            try:
+                dlg.browser.reload()
+            except RuntimeError:
+                self._template_dialog = None
 
     def check_initial_config(self):
         config_path = os.path.join(self.project_root, "app_settings.yaml")
@@ -2124,23 +2261,17 @@ class MainWindow(QMainWindow):
                     TR.load_lang(d.get("language", "zh"))
                     self.settings_page.font_size_spin.setValue(d.get("font_size", 18))
                     self.apply_global_settings(d.get("font_size", 18))
+                    self.settings_page.set_tree_colors(self.env_tree_colors())
                     if "splitter_main" in d: self.edit_page.main_splitter.setSizes(d["splitter_main"])
                     if "splitter_right" in d: self.edit_page.right_splitter.setSizes(d["splitter_right"])
                     self.retranslate_all(); self.switch_page(0)
         except: self.retranslate_all(); self.switch_page(1)
 
-    def switch_page(self, i): self.stack.setCurrentIndex(i)
-
-    def update_level_list(self, root):
-        self.tree.clear()
-        if not os.path.exists(root): return
-        for subdir in sorted([d for d in os.listdir(root) if os.path.isdir(os.path.join(root, d))]):
-            m = re.fullmatch(r'level(\d+)', subdir)
-            if m:
-                p = QTreeWidgetItem(self.tree, [subdir]); s_idx = m.group(1)
-                subs = sorted([int(re.match(fr'level_{s_idx}_(\d+)_default_cfg\.yaml', f).group(1)) for f in os.listdir(os.path.join(root, subdir)) if re.match(fr'level_{s_idx}_(\d+)_default_cfg\.yaml', f)])
-                for idx in subs: QTreeWidgetItem(p, [f"{TR.get('sub_item')} {idx}"])
-                p.setExpanded(False)
+    def switch_page(self, i):
+        self.stack.setCurrentIndex(i)
+        if i == 0 and hasattr(self, "env_browser"):
+            self.env_browser.reload()
+            self.update_button_states()
 
 
 

@@ -79,6 +79,7 @@ class ObjectInspectorSpec:
     joints: List[JointParamSpec] = field(default_factory=list)
     particle_count: int = 1
     player_action: Optional[PlayerActionSpec] = None
+    accepts_commands: bool = False
 
 
 class InspectorCatalog:
@@ -144,6 +145,7 @@ class InspectorCatalog:
             catalog.specs[catalog_key] = spec
             catalog.specs_by_role[local_role_idx] = spec
             spec.player_action = _resolve_player_action(game, local_role_idx)
+            spec.accepts_commands = _resolve_accepts_commands(game, local_role_idx, spec.pattern)
 
         return catalog
 
@@ -376,7 +378,7 @@ def _resolve_player_action(game: "Game", local_role_idx: int) -> Optional[Player
     rl_row = -1
     try:
         role_list_idx = players.index_obj_role.index(local_role_idx)
-        mask = getattr(game.level, "is_rl_player_mask", None)
+        mask = getattr(game.environment, "is_rl_player_mask", None)
         if mask is not None and role_list_idx < len(mask):
             rl_row = int(mask[role_list_idx])
     except ValueError:
@@ -403,3 +405,41 @@ def _resolve_player_action(game: "Game", local_role_idx: int) -> Optional[Player
         rl_action_row=rl_row,
         abilities=abilities,
     )
+
+
+def _role_owns_ability(owners: List[int], local_role_idx: int, num_objects_env: int) -> bool:
+    if num_objects_env <= 0:
+        return local_role_idx in owners
+    return any(int(owner) % num_objects_env == local_role_idx for owner in owners)
+
+
+def _resolve_accepts_commands(game: "Game", local_role_idx: int, pattern: str) -> bool:
+    """True when this character uses the env command buffer as a side channel.
+
+    If an owned ability already maps commands onto the RL action vector, those
+    values stay on the RL Action tab.
+    """
+    environment = game.environment
+    if getattr(environment, "commands", None) is None:
+        return False
+    if not getattr(environment, "command_labels", None):
+        return False
+
+    from script.role.abilities.articulation_control_config.robot_pattern import (
+        normalize_robot_pattern,
+    )
+
+    consumers = getattr(environment, "command_consumer_patterns", None) or ()
+    if normalize_robot_pattern(pattern) not in consumers:
+        return False
+
+    players = game.players
+    num_objects_env = int(game.num_objects_env)
+    for ability_idx, owners in enumerate(players.abilities_owner_list):
+        if not _role_owns_ability(owners, local_role_idx, num_objects_env):
+            continue
+        ability = players.abilities_instance_list[ability_idx]
+        if callable(getattr(ability, "uses_command_as_rl_action", None)):
+            if ability.uses_command_as_rl_action():
+                return False
+    return True

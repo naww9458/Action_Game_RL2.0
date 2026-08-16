@@ -76,7 +76,7 @@ def _set_nested_value(data: dict, path: list[str], key: str, value: Any) -> None
 def _reward_component_options() -> list[str]:
     try:
         from training.reward_imports import ensure_all_rewards_registered
-        from script.levels.rewards.reward_calculator import RewardComponent
+        from script.environments.rewards.reward_calculator import RewardComponent
 
         ensure_all_rewards_registered()
         return RewardComponent.get_registered_names()

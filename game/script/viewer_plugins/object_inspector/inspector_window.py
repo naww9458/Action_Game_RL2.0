@@ -534,7 +534,7 @@ class InspectorWindow(QMainWindow):
             self.info_label.setText("No object selected")
             self._player_action = None
             self.tabs.setTabEnabled(2, False)
-            self.tabs.setTabEnabled(3, len(self._command_labels) > 0)
+            self._set_commands_tab_enabled(False)
             return
         self.world_spin.blockSignals(True)
         self.world_spin.setMaximum(max(0, 999))
@@ -561,7 +561,7 @@ class InspectorWindow(QMainWindow):
         self.tabs.setTabEnabled(1, len(spec.joints) > 0)
         self._player_action = spec.player_action
         self.tabs.setTabEnabled(2, spec.player_action is not None)
-        self.tabs.setTabEnabled(3, len(self._command_labels) > 0)
+        self._set_commands_tab_enabled(bool(spec.accepts_commands and self._command_labels))
         self._rebuild_body_panel()
         self._rebuild_joint_panel()
         self._rebuild_rl_action_panel()
@@ -701,8 +701,14 @@ class InspectorWindow(QMainWindow):
 
     def set_command_labels(self, labels: List[str]):
         self._command_labels = list(labels)
-        self.tabs.setTabEnabled(3, len(self._command_labels) > 0)
+        spec = self._spec
+        self._set_commands_tab_enabled(bool(spec is not None and spec.accepts_commands and self._command_labels))
         self._rebuild_commands_panel()
+
+    def _set_commands_tab_enabled(self, enabled: bool):
+        self.tabs.setTabEnabled(3, enabled)
+        if not enabled and self.tabs.currentIndex() == 3:
+            self.tabs.setCurrentIndex(0)
 
     def flush_pinned_storage(self):
         self._save_body_field_values()
@@ -1190,7 +1196,7 @@ class InspectorWindow(QMainWindow):
             "commands_layout",
         )
         if not self._command_labels:
-            commands_layout.addWidget(QLabel("This level has no command inputs."))
+            commands_layout.addWidget(QLabel("This character has no command inputs."))
             return
         title = QLabel("Velocity command for selected env")
         title.setStyleSheet("font-weight: bold;")

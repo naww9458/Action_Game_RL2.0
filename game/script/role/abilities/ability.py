@@ -20,7 +20,7 @@ from script.role.abilities.articulation_control_config.profile_registry import (
 if TYPE_CHECKING:
     import numpy as np
     # 將導致循環導入的 import 語句移到這裡
-    from script.levels.levels import Levels
+    from script.environments.environment import Environment
     from script.simulate.physics_manager import PhysicsManager
     from script.role.bodies.articulation_body import ArticulationBody
     from script.role.bodies.deformable_body import DeformableBody
@@ -355,10 +355,10 @@ class Ability(ABC):
         if getattr(self, "pattern", None):
             self._primary_view_ctx = self.resolve_pattern_view(self.pattern)
 
-    def configure_from_player_configs_post_indices(self, level: "Levels") -> None:
+    def configure_from_player_configs_post_indices(self, environment: "Environment") -> None:
         try:
-            ability_idx = level.players.abilities_instance_list.index(self)
-            owners = level.players.abilities_owner_list[ability_idx]
+            ability_idx = environment.players.abilities_instance_list.index(self)
+            owners = environment.players.abilities_owner_list[ability_idx]
         except ValueError:
             owners = []
         self.cache_action_pattern_views(owners)
@@ -370,7 +370,7 @@ class Ability(ABC):
         pass
 
     def configure_from_player_configs(
-        self, player_configs: List[Dict[str, Any]], level: "Levels"
+        self, player_configs: List[Dict[str, Any]], environment: "Environment"
     ) -> None:
         from script.role.abilities.articulation_control_config.robot_pattern import (
             normalize_robot_pattern,
@@ -472,6 +472,10 @@ class Ability(ABC):
             return
         self.index_player_offset_env_gpu = offset
         self.num_player_each_env = num
+
+    def uses_command_as_rl_action(self) -> bool:
+        """True when this ability's RL action vector is the command vector."""
+        return False
 
     def get_action_spec(self) -> dict:
         """

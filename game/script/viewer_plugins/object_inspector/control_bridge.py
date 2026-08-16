@@ -96,9 +96,12 @@ class ControlBridge:
             return
 
         if spec.body_kind == "articulation":
-            if body.is_base_body and (pinned.pos or pinned.quat or pinned.lin_vel or pinned.ang_vel):
-                self._apply_articulation_body_control(spec, world_idx, body, values, pinned)
-            elif not body.is_base_body and (pinned.lin_vel or pinned.ang_vel):
+            slot = self._cartesian_slot(spec, body)
+            if slot is not None and (pinned.pos or pinned.quat or pinned.lin_vel or pinned.ang_vel):
+                if body.is_base_body or not (pinned.pos or pinned.quat):
+                    self._apply_articulation_body_control(spec, world_idx, body, values, pinned, slot=slot)
+                    return
+            if not body.is_base_body and (pinned.lin_vel or pinned.ang_vel):
                 self._write_body_qd_pinned(global_idx, values, pinned)
             return
 
@@ -122,32 +125,20 @@ class ControlBridge:
         if global_idx < 0:
             return
 
-        if spec.body_kind == "articulation" and body.is_base_body:
+        if spec.body_kind == "articulation":
             pattern = spec.pattern
-            if pattern in self.ab.control_force_gpus:
-                w, o, b = world_idx, spec.view_obj_idx, body.body_in_obj_idx
+            slot = self._cartesian_slot(spec, body)
+            if slot is not None and pattern in self.ab.control_force_gpus:
+                w, o = world_idx, spec.view_obj_idx
                 if apply_force:
                     host_f = self.ab.control_force_gpus[pattern].numpy()
-                    host_f[w, o, b] = values.force
+                    host_f[w, o, slot] = values.force
                     self.ab.control_force_gpus[pattern].assign(host_f)
                 if apply_torque and pattern in self.ab.control_torque_gpus:
                     host_t = self.ab.control_torque_gpus[pattern].numpy()
-                    host_t[w, o, b] = values.torque
+                    host_t[w, o, slot] = values.torque
                     self.ab.control_torque_gpus[pattern].assign(host_t)
             return
-
-        if not apply_force and not apply_torque:
-            return
-        if self.pm.inspector_body_f is None:
-            return
-        inspector_f = self.pm.inspector_body_f.numpy()
-        if global_idx >= len(inspector_f):
-            return
-        if apply_force:
-            inspector_f[global_idx, 0:3] += values.force
-        if apply_torque:
-            inspector_f[global_idx, 3:6] += values.torque
-        self.pm.inspector_body_f.assign(inspector_f)
 
     def apply_joint_pinned(
         self,
@@ -196,6 +187,22 @@ class ControlBridge:
         mask_np = self.ab.control_joint_mask_gpus[pattern].numpy()
         mask_np[w, o, d] |= 1
         self.ab.control_joint_mask_gpus[pattern].assign(mask_np)
+
+    def _cartesian_slot(self, spec: ObjectInspectorSpec, body: BodyParamSpec) -> Optional[int]:
+        pattern = spec.pattern
+        bpo = int(getattr(self.ab, "bodies_per_object", {}).get(pattern, 1) or 1)
+        slot_fn = getattr(self.ab, "cartesian_body_slot", None)
+        if callable(slot_fn):
+            local_body = int(body.global_body_index)
+            stride = int(getattr(self.ab, "num_rigid_bodies_env", 0) or 0)
+            if stride > 0:
+                local_body = local_body % stride
+            slot = int(slot_fn(pattern, spec.view_obj_idx, local_body))
+            if 0 <= slot < bpo:
+                return slot
+        if 0 <= int(body.body_in_obj_idx) < bpo:
+            return int(body.body_in_obj_idx)
+        return None
 
     def _global_body_index(self, body_index_in_env0: int, world_idx: int) -> int:
         num_env = max(self.game.num_env, 1)
@@ -330,13 +337,16 @@ class ControlBridge:
         body: BodyParamSpec,
         values: BodyState,
         pinned: PinnedBodyFields,
+        slot: Optional[int] = None,
     ):
         pattern = spec.pattern
         if pattern not in self.ab.control_mask_gpus:
             return
         w, o = world_idx, spec.view_obj_idx
-        b = body.body_in_obj_idx
+        b = int(slot) if slot is not None else int(body.body_in_obj_idx)
         mask_arr = self.ab.control_mask_gpus[pattern]
+        if b < 0 or b >= int(mask_arr.shape[2]):
+            return
         mask_np = mask_arr.numpy()
         if pinned.pos and body.can_edit_position:
             host = self.ab.control_pos_gpus[pattern].numpy()
@@ -405,23 +415,23 @@ class ControlBridge:
         self.pm.set_runtime_gravity(gravity)
 
     def has_commands(self) -> bool:
-        level = self.game.level
-        return level.commands is not None and len(level.command_labels) > 0
+        environment = self.game.environment
+        return environment.commands is not None and len(environment.command_labels) > 0
 
     def read_commands(self, world_idx: int) -> Dict[int, float]:
-        level = self.game.level
-        if level.commands is None:
+        environment = self.game.environment
+        if environment.commands is None:
             return {}
-        host = level.commands.numpy()
+        host = environment.commands.numpy()
         if world_idx < 0 or world_idx >= len(host):
             return {}
-        return {idx: float(host[world_idx, idx]) for idx in range(min(len(level.command_labels), host.shape[1]))}
+        return {idx: float(host[world_idx, idx]) for idx in range(min(len(environment.command_labels), host.shape[1]))}
 
     def apply_command_pins(self, world_idx: int, values: Dict[int, float], pinned_indices: List[int]):
-        level = self.game.level
-        if level.commands is None or not pinned_indices:
+        environment = self.game.environment
+        if environment.commands is None or not pinned_indices:
             return
-        host = level.commands.numpy()
+        host = environment.commands.numpy()
         if world_idx < 0 or world_idx >= len(host):
             return
         changed = False
@@ -433,7 +443,7 @@ class ControlBridge:
             host[world_idx, dim_index] = values[dim_index]
             changed = True
         if changed:
-            level.commands.assign(host)
+            environment.commands.assign(host)
 
     def resolve_rl_action_row(self, local_role_idx: int, world_idx: int) -> int:
         num_objects_env = self.game.num_objects_env
@@ -442,7 +452,7 @@ class ControlBridge:
             role_list_idx = self.game.players.index_obj_role.index(global_role_idx)
         except ValueError:
             return -1
-        mask = getattr(self.game.level, "is_rl_player_mask", None)
+        mask = getattr(self.game.environment, "is_rl_player_mask", None)
         if mask is None or role_list_idx >= len(mask):
             return -1
         return int(mask[role_list_idx])

@@ -67,7 +67,7 @@ def cmd_eval(args: argparse.Namespace) -> int:
             loaded = None
 
     if loaded is None:
-        from skrl_script.trainer_base import Trainer_base
+        from rl_framework.skrl_script.trainer_base import Trainer_base
         try:
             _, _, _, loaded = Trainer_base().load_config_from_checkpoint(str(checkpoint_path))
         except Exception:
@@ -82,7 +82,7 @@ def cmd_eval(args: argparse.Namespace) -> int:
     if run_info and run_info.algorithm.upper() == "APG":
         trainer_module = getattr(loaded.Trainer, "__module__", "")
         if "trainer_APG" not in trainer_module:
-            from skrl_script.trainer_base import Trainer_base
+            from rl_framework.skrl_script.trainer_base import Trainer_base
             _, _, _, loaded = Trainer_base().load_config_from_checkpoint(str(checkpoint_path))
 
     Trainer = loaded.Trainer
@@ -121,7 +121,7 @@ def cmd_list_runs(args: argparse.Namespace) -> int:
     runs = RunsManager(project_root=_default_project_root())
     for run in runs.list_runs():
         ckpts = ", ".join(c.name for c in run.checkpoints[:3])
-        print(f"{run.name} | preset={run.preset_id} | checkpoints=[{ckpts}]")
+        print(f"{run.name} | {run.framework}/{run.algorithm} | preset={run.preset_id} | dir={run.path} | checkpoints=[{ckpts}]")
     return 0
 
 
@@ -130,7 +130,7 @@ def cmd_list_presets(args: argparse.Namespace) -> int:
     from training.registry import TrainingPresetRegistry
 
     for preset in TrainingPresetRegistry.list_presets():
-        line = f"{preset['id']} | {preset.get('framework', 'SKRL')}/{preset['algorithm']} | level={preset['level']}_{preset['sub_level']} | {preset['display_name']}"
+        line = f"{preset['id']} | {preset.get('framework', 'SKRL')}/{preset['algorithm']} | env={preset.get('env_id', '')} | {preset['display_name']}"
         print(line.encode("utf-8", errors="replace").decode("utf-8"))
     return 0
 
@@ -173,8 +173,6 @@ def build_parser() -> argparse.ArgumentParser:
     eval_p.add_argument("--episodes", type=int, default=50)
     eval_p.add_argument("--enable-window", action="store_true")
     eval_p.add_argument("--window-envs", type=int, default=1, help="Environments to display when window is enabled")
-    eval_p.add_argument("--level", type=int, default=5)
-    eval_p.add_argument("--sub-level", type=int, default=0)
     eval_p.add_argument("--obs-type", default="state_based")
     eval_p.set_defaults(func=cmd_eval)
 

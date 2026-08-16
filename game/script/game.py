@@ -31,14 +31,14 @@ if project_root not in sys.path:
     sys.path.insert(0, project_root)
  
 from queue import Full, Empty
-from script.levels.get_levels import get_level
-from script.levels.levels import Levels
+from script.environments.get_environment import get_environment
+from script.environments.environment import Environment
 from script.simulate.physics_manager import PhysicsManager
 
 from script.role.bodies.articulation_body import ArticulationBody
 from script.role.bodies.deformable_body import DeformableBody
 
-from script.levels.rewards.reward_calculator import RewardCalculator
+from script.environments.rewards.reward_calculator import RewardCalculator
 from script.training_log import TrainingLogCollector
 from script.game_config import GameConfig
 from script.renderer.renderer import get_renderer, isRendererImplemented
@@ -73,10 +73,9 @@ class Game:
                  player_configs: dict = None, 
                  platform_configs: dict = None, 
                  environment_configs: dict = None, 
-                 level_config_path: str = None, 
+                 environment_config_path: str = None,
                  num_env: int = 1, 
-                 level: int = None, 
-                 sub_level: int = 0, 
+                 env_id: str = None, 
                  capture_per_second: int = None, 
                  requires_grad: bool = False,
                  player_controllers: list[str] | None = None,
@@ -142,11 +141,10 @@ class Game:
         self.step_total_rewards = None
         self.current_step = wp.zeros(shape=self.num_env, dtype=wp.int32)
 
-        self.level: Levels = get_level(
-            level=level, 
-            sub_level=sub_level,
+        self.environment: Environment = get_environment(
+            env_id=env_id, 
             game=self,
-            level_config_path=level_config_path,
+            environment_config_path=environment_config_path,
             player_configs=player_configs, 
             platform_configs=platform_configs, 
             environment_configs=environment_configs,
@@ -165,18 +163,21 @@ class Game:
         self.entities: BaseRole
         self.ability_generated_objects: AbilityGeneratedObject = None
         self.reward_calculator: RewardCalculator
-        self.players, self.platforms, self.entities, self.ability_generated_objects, self.reward_calculator = self.level.setup()
+        self.players, self.platforms, self.entities, self.ability_generated_objects, self.reward_calculator = self.environment.setup()
         self.num_players = self.players.num_total_object_role
 
         self.num_objects_total = BaseRole._num_objects_total
         self.num_objects_env = BaseRole._num_objects_env
 
-        # Game state tracking
+        # Game state tracking. Graph capture lives here, not on PhysicsManager;
+        # MPM setup may raise capture_graph_after_step so this path is skipped.
         self.graph = None
-        self.capture_graph_after_step = 1
+        self.capture_graph_after_step = int(
+            getattr(self.physics_manager, "capture_graph_after_step", 1)
+        )
         self.is_graph_capture_begin = False
         self.game_over = False
-        self.episode_total_rewards = np.zeros(shape=self.level.num_objects_total, dtype=np.float32) # Total Score for each player
+        self.episode_total_rewards = np.zeros(shape=self.environment.num_objects_total, dtype=np.float32) # Total Score for each player
 
         # Create folders for captures if needed
         # CURRENT_DIR = os.path.dirname(os.path.abspath(__file__))
@@ -217,7 +218,7 @@ class Game:
         # terms). Captured inside the step because ``reset()`` zeroes done
         # flags before frameworks read ``get_training_log()``.
         self._train_log = TrainingLogCollector(
-            action_dim=int(getattr(self.level, "rl_action_dim", GameConfig.ACTION_SHAPE_OFFSET)),
+            action_dim=int(getattr(self.environment, "rl_action_dim", GameConfig.ACTION_SHAPE_OFFSET)),
         )
 
     def _prepare_step_actions(self, actions: torch.Tensor | None) -> wp.array2d:
@@ -236,7 +237,7 @@ class Game:
         """Unified per-step training-log interface (framework-agnostic)."""
         return self._train_log.collect(
             reward_calculator=getattr(self, "reward_calculator", None),
-            level=self.level,
+            environment=self.environment,
         )
 
     def get_training_diagnostics(self) -> list:
@@ -266,7 +267,7 @@ class Game:
             )
 
             # Ensure type is int32 for Kernel use
-            self.obj_to_env_mapping_torch = wp.to_torch(self.level._index_obj_to_env_mapping_gpu).to(torch.int32)
+            self.obj_to_env_mapping_torch = wp.to_torch(self.environment._index_obj_to_env_mapping_gpu).to(torch.int32)
             body_q_torch = wp.to_torch(self.physics_manager.state_0.body_q)
 
             # === Build local_to_global_mapping tensor, handle interleaved role sorting ===
@@ -335,7 +336,7 @@ class Game:
             body_q_torch = wp.to_torch(self.physics_manager.state_0.body_q)
             self.renderer.compute_v_clip(
                 body_q=body_q_torch,
-                follow_indices=self.level.index_rl_players_torch,  # Use pre-processed Torch Tensor to avoid per-frame conversion
+                follow_indices=self.environment.index_rl_players_torch,  # Use pre-processed Torch Tensor to avoid per-frame conversion
                 obj_to_env_mapping=self.obj_to_env_mapping_torch,
                 local_to_global_mapping=self.local_to_global_mapping_torch # Pass mapping table to renderer
             )
@@ -349,7 +350,7 @@ class Game:
     def reset(self): 
         """Reset the game state and return the initial observation"""
         # Reset physics objects
-        self.level.reset_env(terminated=self.terminated, current_step=self.current_step)
+        self.environment.reset_env(terminated=self.terminated, current_step=self.current_step)
         self.reward_calculator.reset_reward()
 
         # Reset game state
@@ -397,10 +398,10 @@ class Game:
 
         # Curriculum hook: host-side, outside the CUDA-graph capture region so
         # device buffers (e.g. velocity-command ranges) update before replay.
-        self.level.update_curriculum()
+        self.environment.update_curriculum()
+        self._apply_pre_simulate_controls()
 
         if self.graph is not None:
-            self._apply_inspector_pinned_controls()
             wp.capture_launch(self.graph)
             self._apply_inspector_commands()
         else:
@@ -413,10 +414,10 @@ class Game:
             # if actions is not None:
             #     self.players.rl_action(actions=actions)
     
-            self.players.bot_action(index_obj_to_env_mapping_gpu=self.level._index_obj_to_env_mapping_gpu)
+            self.players.bot_action(index_obj_to_env_mapping_gpu=self.environment._index_obj_to_env_mapping_gpu)
             self.physics_manager.simulate()
 
-            self.level.update_game_status(physics_manager=self.physics_manager, reward_calculator=self.reward_calculator, num_env=self.num_env, current_step=self.current_step)
+            self.environment.update_game_status(physics_manager=self.physics_manager, reward_calculator=self.reward_calculator, num_env=self.num_env, current_step=self.current_step)
 
             self._apply_inspector_commands()
             
@@ -424,11 +425,11 @@ class Game:
                 current_step=self.current_step, 
                 actions=self._step_actions_wp, 
                 max_episode_step=self.max_episode_step, 
-                command_vel=self.level.commands,
+                command_vel=self.environment.commands,
                 truncated=self.truncated,
             )
-            if hasattr(self.level, "on_step_actions"):
-                self.level.on_step_actions(self._step_actions_wp)
+            if hasattr(self.environment, "on_step_actions"):
+                self.environment.on_step_actions(self._step_actions_wp)
             self.step_total_rewards = self.reward_calculator.step_total_rewards_rl
             self.handle_update_sub_step()
 
@@ -441,7 +442,7 @@ class Game:
 
                 self.renderer.compute_v_clip(
                     body_q=body_q_torch,
-                    follow_indices=self.level.index_rl_players_torch,  # Use pre-processed Torch Tensor to avoid per-frame conversion
+                    follow_indices=self.environment.index_rl_players_torch,  # Use pre-processed Torch Tensor to avoid per-frame conversion
                     obj_to_env_mapping=self.obj_to_env_mapping_torch,
                     local_to_global_mapping=self.local_to_global_mapping_torch # Pass mapping table to renderer
                 )
@@ -470,7 +471,7 @@ class Game:
 
         # print("self.step_total_rewards: ", self.step_total_rewards)
         # print("self.obs: ", self.obs)
-        # print("self.level.commands: ", self.level.commands)
+        # print("self.environment.commands: ", self.environment.commands)
         # print(" ")
 
         self._train_log.on_rewards_done(self.terminated, self.truncated)
@@ -490,12 +491,13 @@ class Game:
         self.players.rl_action(actions=actions_wp)
 
         # Curriculum hook (host-side; step_Diff runs without a CUDA graph).
-        self.level.update_curriculum()
+        self.environment.update_curriculum()
+        self._apply_pre_simulate_controls()
 
-        self.players.bot_action(index_obj_to_env_mapping_gpu=self.level._index_obj_to_env_mapping_gpu)
+        self.players.bot_action(index_obj_to_env_mapping_gpu=self.environment._index_obj_to_env_mapping_gpu)
         self.physics_manager.simulate()
 
-        self.level.update_game_status(
+        self.environment.update_game_status(
             physics_manager=self.physics_manager, 
             reward_calculator=self.reward_calculator, 
             num_env=self.num_env, 
@@ -508,11 +510,11 @@ class Game:
             current_step=self.current_step, 
             actions=actions_wp, 
             max_episode_step=self.max_episode_step, 
-            command_vel=self.level.commands,
+            command_vel=self.environment.commands,
             truncated=self.truncated,
         )
-        if hasattr(self.level, "on_step_actions"):
-            self.level.on_step_actions(actions_wp)
+        if hasattr(self.environment, "on_step_actions"):
+            self.environment.on_step_actions(actions_wp)
         self.step_total_rewards = self.reward_calculator.step_total_rewards_rl
         self.step_total_rewards_diff = self.reward_calculator.step_total_rewards_rl_diff
         # print("self.step_total_rewards: ", self.step_total_rewards)
@@ -526,7 +528,7 @@ class Game:
 
             self.renderer.compute_v_clip(
                 body_q=body_q_torch,
-                follow_indices=self.level.index_rl_players_torch,  # Use pre-processed Torch Tensor to avoid per-frame conversion
+                follow_indices=self.environment.index_rl_players_torch,  # Use pre-processed Torch Tensor to avoid per-frame conversion
                 obj_to_env_mapping=self.obj_to_env_mapping_torch,
                 local_to_global_mapping=self.local_to_global_mapping_torch # Pass mapping table to renderer
             )
@@ -561,7 +563,7 @@ class Game:
 
     def _get_observation_state_based(self) -> 'torch.Tensor':
         """Public method to get the current observation without taking a step"""
-        obs = self.level._get_observation_state_based()
+        obs = self.environment._get_observation_state_based()
 
         return obs
 
@@ -571,10 +573,20 @@ class Game:
         Falls back to the policy observation when the level does not provide a
         separate critic observation (symmetric critic).
         """
-        getter = getattr(self.level, "_get_critic_observation", None)
+        getter = getattr(self.environment, "_get_critic_observation", None)
         if getter is None:
             return self._get_observation_state_based()
         return getter()
+
+    def _apply_pre_simulate_controls(self):
+        """Object-template / inspector / viewer writes into control buffers before simulate()."""
+        apply_fn = getattr(self.environment, "apply_object_template_actions", None)
+        if callable(apply_fn):
+            apply_fn()
+        self._apply_inspector_pinned_controls()
+        viewer = self.physics_manager.viewerGL
+        if viewer is not None:
+            viewer.apply_forces(self.physics_manager.state_0)
 
     def _apply_inspector_pinned_controls(self):
         viewer = self.physics_manager.viewerGL
@@ -812,7 +824,7 @@ class Game:
             self.ability_generated_objects.update_lifetimes()
         for ability in self.players.abilities_instance_list:
             ability.update_cooldown()
-        tools: Tool = getattr(self.level, "tools", None)
+        tools: Tool = getattr(self.environment, "tools", None)
         if tools is not None:
             for ability in tools.abilities_instance_list:
                 ability.update_cooldown()

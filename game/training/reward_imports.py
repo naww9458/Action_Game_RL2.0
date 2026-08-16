@@ -6,8 +6,7 @@ from pathlib import Path
 
 
 REWARD_PACKAGE_CANDIDATES = (
-    "script.levels.rewards",
-    "levels.rewards",
+    "script.environments.rewards",
 )
 
 
@@ -48,7 +47,7 @@ def import_reward_modules() -> tuple[str, ...]:
 
 
 def ensure_reward_registered(name: str) -> None:
-    from script.levels.rewards.reward_calculator import RewardComponent
+    from script.environments.rewards.reward_calculator import RewardComponent
 
     if name in RewardComponent._registry:
         return

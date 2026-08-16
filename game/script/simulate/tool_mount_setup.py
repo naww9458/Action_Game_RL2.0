@@ -1,4 +1,4 @@
-"""Level-time setup for tool mount metadata and build-time joint slots."""
+"""Environment-time setup for tool mount metadata and build-time joint slots."""
 
 from __future__ import annotations
 
@@ -18,13 +18,13 @@ from script.simulate.mount_joint_builder import (
 )
 from script.simulate.mount_joint_registry import MountJointRegistry, ToolMountRecord
 
-# Schema defaults are the single source for values a level may omit
-# (LevelConfig.tool_configs: List[ToolModel] always fills them via model_dump);
+# Schema defaults are the single source for values an environment may omit
+# (EnvironmentDefinition.tool_configs: List[ToolModel] always fills them via model_dump);
 # these references keep runtime safety without re-typing the constants here.
 _MOUNT_SCHEMA_DEFAULTS = ToolModel()
 
 if TYPE_CHECKING:
-    from script.levels.levels import Levels
+    from script.environments.environment import Environment
 
 
 def _normalize_optional_str_candidates(
@@ -33,7 +33,7 @@ def _normalize_optional_str_candidates(
 ) -> List[str]:
     """Normalize a str / list[str]/None into a concrete candidate list.
 
-    Empty result means neither the level config nor the template provided a value.
+    Empty result means neither the environment config nor the template provided a value.
     """
     if value is None:
         return [default_value] if default_value else []
@@ -98,27 +98,27 @@ def _host_spawn_distance_sq(host: dict, player_configs: List[dict], tool_cfg: di
     return dx * dx + dy * dy
 
 
-def setup_tool_mount_joints(level: "Levels") -> Optional[MountJointRegistry]:
-    tool_configs: List[dict] = level.level_configs.get("tool_configs") or []
+def setup_tool_mount_joints(environment: "Environment") -> Optional[MountJointRegistry]:
+    tool_configs: List[dict] = environment.config.get("tool_configs") or []
     if not tool_configs:
-        # No tools → no mount registry (avoid empty create/bind on non-tool levels).
-        level.mount_joint_registry = None
+        # No tools → no mount registry (avoid empty create/bind on non-tool environments).
+        environment.mount_joint_registry = None
         return None
 
     max_per_env = compute_max_mount_joints_per_env(tool_configs)
     registry = MountJointRegistry(
         max_mount_joints_per_env=max_per_env,
-        num_env=getattr(level, "num_env", 1),
+        num_env=getattr(environment, "num_env", 1),
     )
 
-    tools = getattr(level, "tools", None)
-    players = level.players
-    physics_manager = level.physics_manager
+    tools = getattr(environment, "tools", None)
+    players = environment.players
+    physics_manager = environment.physics_manager
     builder = physics_manager.builder_env
 
-    player_configs = level.level_configs.get("player_configs") or []
+    player_configs = environment.config.get("player_configs") or []
     solver_type = str(
-        (level.level_configs.get("environment_configs") or {})
+        (environment.config.get("environment_configs") or {})
         .get("solver_config", {})
         .get("type", "")
     )
@@ -215,7 +215,7 @@ def setup_tool_mount_joints(level: "Levels") -> Optional[MountJointRegistry]:
         # collect every compatible host and bind to the one whose default spawn
         # is nearest to the tool's spawn. Without this, each tool binds to the
         # first compatible player, so a second armored vehicle never sees the
-        # mount prompt (level8-1 / level9-2 have two vehicles + two turrets).
+        # mount prompt (vehicle turret environments have two vehicles + two turrets).
         valid_hosts: List[dict] = []
         last_key_error: Optional[Exception] = None
         for host_player_index in host_player_index_candidates:
@@ -310,7 +310,7 @@ def setup_tool_mount_joints(level: "Levels") -> Optional[MountJointRegistry]:
                 internal_joint_names = list(template_internal)
 
         # Load the tool's attached-tool action (lazy: only imported when a
-        # level actually uses this object pattern).
+        # environment actually uses this object pattern).
         action = create_tool_action(pattern_str)
         if action is not None:
             action.configure(tool_cfg, tool_template)
@@ -408,7 +408,7 @@ def setup_tool_mount_joints(level: "Levels") -> Optional[MountJointRegistry]:
             + (f" [bound to player {resolved_host['host_player_index']}]" if tool_cfg.get("host_player_id") else "")
         )
 
-    level.mount_joint_registry = registry
+    environment.mount_joint_registry = registry
     return registry
 
 

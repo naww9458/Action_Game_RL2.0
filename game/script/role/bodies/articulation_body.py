@@ -61,13 +61,19 @@ def apply_articulation_updates_kernel(
     
     mask = action_mask[world, obj_idx, body_in_obj_idx]
     
-    # --- 阻尼更新 (保持連續性與可微性) ---
+    # Extra cartesian damping stays on the root slot only. Non-root slots exist
+    # so plugins can write forces/torques; applying the same damping to every
+    # link would change multi-body robot behavior.
     qd = body_qd[global_body_idx]
-    l_fact = wp.exp(-linear_damping * dt)
-    a_fact = wp.exp(-angular_damping * dt)
-    
-    curr_v = wp.vec3(qd[0] * l_fact, qd[1] * l_fact, qd[2] * l_fact)
-    curr_w = wp.vec3(qd[3] * a_fact, qd[4] * a_fact, qd[5] * a_fact)
+    apply_root_damping = body_in_obj_idx == 0
+    if apply_root_damping:
+        l_fact = wp.exp(-linear_damping * dt)
+        a_fact = wp.exp(-angular_damping * dt)
+        curr_v = wp.vec3(qd[0] * l_fact, qd[1] * l_fact, qd[2] * l_fact)
+        curr_w = wp.vec3(qd[3] * a_fact, qd[4] * a_fact, qd[5] * a_fact)
+    else:
+        curr_v = wp.vec3(qd[0], qd[1], qd[2])
+        curr_w = wp.vec3(qd[3], qd[4], qd[5])
     
     # --- 離散傳送 (斷開梯度，用於 Reset) ---
     if (mask & 1) != 0 or (mask & 2) != 0:
@@ -89,10 +95,11 @@ def apply_articulation_updates_kernel(
     if (mask & 8) != 0:
         curr_w = in_omega[world, obj_idx, body_in_obj_idx]
         
-    body_qd[global_body_idx] = wp.spatial_vector(
-        curr_v[0], curr_v[1], curr_v[2], 
-        curr_w[0], curr_w[1], curr_w[2]
-    )
+    if apply_root_damping or (mask & 12) != 0:
+        body_qd[global_body_idx] = wp.spatial_vector(
+            curr_v[0], curr_v[1], curr_v[2], 
+            curr_w[0], curr_w[1], curr_w[2]
+        )
     
     if body_inv_mass[global_body_idx] == 0.0:
         return
@@ -241,6 +248,20 @@ def apply_joint_actuation_kernel(
         joint_target_pos[global_dof_idx] = in_joint_pos[world, obj_idx, dof_in_obj_idx]
 
 
+@wp.kernel
+def add_external_body_f_kernel(
+    body_f: wp.array(dtype=wp.spatial_vector),
+    extra_f: wp.array(dtype=wp.spatial_vector),
+):
+    tid = wp.tid()
+    curr = body_f[tid]
+    extra = extra_f[tid]
+    body_f[tid] = wp.spatial_vector(
+        curr[0] + extra[0], curr[1] + extra[1], curr[2] + extra[2],
+        curr[3] + extra[3], curr[4] + extra[4], curr[5] + extra[5],
+    )
+
+
 # =============================================================================
 # ARTICULATION BODY 類實現
 # =============================================================================
@@ -251,6 +272,11 @@ class ArticulationBody(BaseBody):
         self.view_object_indices_gpus: Dict[str, wp.array] = {}
         # Newton root-body indices (local to one world), used for state.body_* access.
         self.view_body_local_indices_gpus: Dict[str, wp.array] = {}
+        # All bodies in each articulation, layout [obj0_b0, obj0_b1, ..., objN_bK].
+        # apply_controls uses this so cartesian forces can hit non-root links.
+        self.view_cartesian_body_local_indices_gpus: Dict[str, wp.array] = {}
+        self.cartesian_body_local_indices: Dict[str, List[int]] = {}
+        self.bodies_per_object: Dict[str, int] = {}
         # High-level object indices, used only for BaseBody randomization buffers.
         self.view_random_object_local_indices_gpus: Dict[str, wp.array] = {}
         self.num_rigid_bodies_env = 0
@@ -269,6 +295,9 @@ class ArticulationBody(BaseBody):
         self.control_force_gpus: Dict[str, wp.array] = {}
         self.control_torque_gpus: Dict[str, wp.array] = {}
         self.control_mask_gpus: Dict[str, wp.array] = {}
+        # World-indexed wrench overlay (e.g. viewer picking). Written before
+        # simulate(); apply_controls folds it into state.body_f after clear_forces.
+        self.external_body_f: Optional[wp.array] = None
 
         # 關節馬達控制 Buffer (Joint Space)
         self.view_joint_dof_indices_gpus: Dict[str, wp.array] = {}
@@ -310,6 +339,40 @@ class ArticulationBody(BaseBody):
             joint_idx = joint_count - 1
         return max(joint_idx, 0)
 
+    @staticmethod
+    def _bodies_in_articulation(
+        articulation_id: int,
+        articulation_start_np: np.ndarray,
+        joint_child_np: np.ndarray,
+        root_body_idx: int,
+    ) -> List[int]:
+        start_joint = int(articulation_start_np[articulation_id])
+        end_joint = int(articulation_start_np[articulation_id + 1])
+        bodies: List[int] = []
+        seen = set()
+        for joint_idx in range(start_joint, end_joint):
+            child = int(joint_child_np[joint_idx])
+            if child < 0 or child in seen:
+                continue
+            seen.add(child)
+            bodies.append(child)
+        if not bodies:
+            return [int(root_body_idx)]
+        if bodies[0] != int(root_body_idx):
+            bodies = [int(root_body_idx)] + [b for b in bodies if b != int(root_body_idx)]
+        return bodies
+
+    def cartesian_body_slot(self, pattern: str, view_obj_idx: int, local_body_idx: int) -> int:
+        """Map an env-0 body index to the cartesian control slot of a view object."""
+        bpo = int(self.bodies_per_object.get(pattern, 1) or 1)
+        cart = self.cartesian_body_local_indices.get(pattern) or []
+        start = int(view_obj_idx) * bpo
+        for slot in range(bpo):
+            idx = start + slot
+            if idx < len(cart) and int(cart[idx]) == int(local_body_idx):
+                return slot
+        return 0
+
     def add_object(self, 
                    label: str, 
                    index: int, 
@@ -349,12 +412,9 @@ class ArticulationBody(BaseBody):
                     f"registered={registered_count}, view={view.count_per_world}"
                 )
 
-            # Body-space controls target the root body. This is also valid for a
-            # cube/sphere whose only FREE root joint was excluded from the view.
-            bodies_per_world = view.count_per_world
-            bodies_per_object = 1
-            shape = (view.world_count, view.count_per_world, bodies_per_object)
-
+            # Root indices stay 1-per-object for abilities / reset. Cartesian
+            # control buffers cover every body in the articulation so plugins
+            # can write forces to non-root links (same path as player action).
             articulation_ids_cpu = np.asarray(view.articulation_ids.numpy())
             expected_articulation_shape = (view.world_count, view.count_per_world)
             if articulation_ids_cpu.shape != expected_articulation_shape:
@@ -374,6 +434,28 @@ class ArticulationBody(BaseBody):
                         f"{root_body_idx} not in [0, {model.body_count})"
                     )
                 root_body_local_indices.append(root_body_idx)
+
+            cartesian_body_local_indices: List[int] = []
+            bodies_per_object = 1
+            for obj_idx, articulation_id_value in enumerate(articulation_ids_cpu[0]):
+                bodies = self._bodies_in_articulation(
+                    int(articulation_id_value),
+                    articulation_start_np,
+                    joint_child_np,
+                    root_body_local_indices[obj_idx],
+                )
+                if obj_idx == 0:
+                    bodies_per_object = max(len(bodies), 1)
+                elif len(bodies) != bodies_per_object:
+                    raise ValueError(
+                        f"Non-uniform body count for '{pattern}' object {obj_idx}: "
+                        f"{len(bodies)} != {bodies_per_object}"
+                    )
+                cartesian_body_local_indices.extend(bodies)
+
+            self.bodies_per_object[pattern] = bodies_per_object
+            self.cartesian_body_local_indices[pattern] = list(cartesian_body_local_indices)
+            shape = (view.world_count, view.count_per_world, bodies_per_object)
 
             # Verify that every world has the same body layout before kernels use
             # world * stride + local_index.
@@ -630,6 +712,9 @@ class ArticulationBody(BaseBody):
             self.view_body_local_indices_gpus[pattern] = wp.array(
                 root_body_local_indices, dtype=int, device=self.device
             )
+            self.view_cartesian_body_local_indices_gpus[pattern] = wp.array(
+                cartesian_body_local_indices, dtype=int, device=self.device
+            )
             self.view_random_object_local_indices_gpus[pattern] = wp.array(
                 self.patterns_local_indices[pattern], dtype=int, device=self.device
             )
@@ -663,11 +748,22 @@ class ArticulationBody(BaseBody):
                 device=self.device,
             )
 
+        if model.body_count > 0:
+            self.external_body_f = wp.zeros(
+                model.body_count,
+                dtype=wp.spatial_vector,
+                device=self.device,
+                requires_grad=GameConfig.requires_grad,
+            )
+        else:
+            self.external_body_f = None
+
         build_ms = (time.perf_counter() - build_t0) * 1000.0
         print(
             f"[ArticulationBody] build_view done in {build_ms:.1f} ms: "
             f"patterns={len(self.patterns)}, views={len(self.views)}, "
-            f"bodies_env={self.num_rigid_bodies_env}, joint_dofs_env={self.num_joint_dofs_env}"
+            f"bodies_env={self.num_rigid_bodies_env}, joint_dofs_env={self.num_joint_dofs_env}, "
+            f"cartesian_slots={self.bodies_per_object}"
         )
 
     def _apply_inspector_root_teleport(
@@ -764,8 +860,12 @@ class ArticulationBody(BaseBody):
             )
 
             # 執行剛體級（Body Space）笛卡爾更新
-            bodies_per_world = view.count_per_world
-            bodies_per_object = 1
+            bodies_per_object = int(self.bodies_per_object.get(pattern, 1) or 1)
+            cartesian_indices = self.view_cartesian_body_local_indices_gpus.get(pattern)
+            if cartesian_indices is None:
+                cartesian_indices = self.view_body_local_indices_gpus[pattern]
+                bodies_per_object = 1
+            bodies_per_world = view.count_per_world * bodies_per_object
             total_body_count = bodies_per_world * view.world_count
             
             wp.launch(
@@ -774,7 +874,7 @@ class ArticulationBody(BaseBody):
                 inputs=[
                     state.body_q, body_q_prev, solver_body_q_prev,
                     state.body_qd, state.body_f,
-                    self.view_body_local_indices_gpus[pattern],
+                    cartesian_indices,
                     self.num_rigid_bodies_env,
                     bodies_per_world,
                     bodies_per_object,
@@ -821,6 +921,15 @@ class ArticulationBody(BaseBody):
                     device=self.device
                 )
 
+        extra_f = self.external_body_f
+        if extra_f is not None and state.body_f is not None and extra_f.shape[0] == state.body_f.shape[0]:
+            wp.launch(
+                kernel=add_external_body_f_kernel,
+                dim=extra_f.shape[0],
+                inputs=[state.body_f, extra_f],
+                device=self.device,
+            )
+
     def clear_controls(self):
         """
         重置控制緩衝區，確保每幀輸入是瞬時力，避免殘留
@@ -841,6 +950,8 @@ class ArticulationBody(BaseBody):
                 self.control_joint_torque_gpus[pattern].zero_()
                 self.control_joint_vel_gpus[pattern].zero_()
                 self.control_joint_pos_gpus[pattern].zero_() # 清除位置緩衝區
+        if self.external_body_f is not None:
+            self.external_body_f.zero_()
 
     def reset_obj(self, state: State, control, reset_mask_gpu, offset_random_gpu, seed):
         """

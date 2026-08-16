@@ -59,7 +59,6 @@ class ObjectInspectorPlugin:
         self._window.set_camera_move_speed_changed_callback(self._on_camera_move_speed_changed)
         if labels:
             self._select_catalog_key(labels[0], 0)
-        game.physics_manager.pre_substep_callback = self._on_pre_substep
         self._window.setup_controls_tab(
             simulation_control=viewer.simulation_control,
             viewer_controls_cfg=viewer.viewer_controls_cfg,
@@ -70,7 +69,7 @@ class ObjectInspectorPlugin:
             on_show_role_name_labels_changed=self._on_show_role_name_labels_changed,
         )
         if self._bridge.has_commands():
-            self._window.set_command_labels(list(game.level.command_labels))
+            self._window.set_command_labels(list(game.environment.command_labels))
         self._window.setup_debug_geometry_controls(
             config=viewer.viewer_controls_cfg.debug_geometry,
             on_changed=self._on_debug_geometry_style_changed,
@@ -126,10 +125,6 @@ class ObjectInspectorPlugin:
             break
         return bindings
 
-    def _on_pre_substep(self, substep_idx: int):
-        if self.is_visible:
-            self.apply_pinned_controls(substep_idx=substep_idx)
-
     def _ensure_qt(self):
         if QApplication.instance() is None:
             self._app = QApplication(sys.argv if hasattr(sys, "argv") else [])
@@ -171,7 +166,7 @@ class ObjectInspectorPlugin:
         if not self._bridge or not self._window or not self.is_visible or not self._game or not self._catalog:
             return
         self._window.flush_pinned_storage()
-        self._game.physics_manager.clear_inspector_body_f()
+        del substep_idx
 
         for spec, world, body, values, pinned in self._window.iter_stored_body_pins(self._catalog):
             self._bridge.apply_body_pinned(spec, world, body, values, pinned)
@@ -185,7 +180,7 @@ class ObjectInspectorPlugin:
         world = self._window.current_world()
         body = self._window.current_body()
         joint = self._window.current_joint()
-        if self._pending_impulse and substep_idx == 0:
+        if self._pending_impulse:
             impulse = self._pending_impulse
             self._pending_impulse = None
             if impulse.get("joint") and joint is not None:
@@ -414,7 +409,7 @@ class ObjectInspectorPlugin:
         num_objects_env = self._game.num_objects_env
         global_role_id = world_idx * num_objects_env + spec.local_role_idx
 
-        registry = getattr(self._game.level, "mount_joint_registry", None)
+        registry = getattr(self._game.environment, "mount_joint_registry", None)
         if registry is not None:
             forward = registry.get_tool_forward_local(global_role_id)
             if forward is not None:
@@ -494,6 +489,6 @@ class ObjectInspectorPlugin:
             self._window.set_rl_action_values(rl_values, force=resync_rl)
             if resync_rl:
                 self._window._save_rl_action_values()
-        if self._bridge.has_commands():
+        if spec.accepts_commands and self._bridge.has_commands():
             cmd_values = self._bridge.read_commands(world)
             self._window.set_command_values(cmd_values, force=False)

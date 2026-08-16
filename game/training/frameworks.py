@@ -1,8 +1,8 @@
 """Training-framework registry (SKRL and RSL-RL are peers).
 
 SKRL currently exposes PPO and APG. RSL-RL currently exposes PPO only.
-Algorithm builders for SKRL live under ``skrl_script.algorithm``; RSL-RL
-builds its runner config in ``rsl_rl_script.trainer`` from ``model.ppo``.
+Algorithm builders for SKRL live under ``rl_framework.skrl_script.algorithm``; RSL-RL
+builds its runner config in ``rl_framework.rsl_rl_script.trainer`` from ``model.ppo``.
 """
 
 from __future__ import annotations
@@ -26,7 +26,7 @@ def build_agent_cfg(preset: TrainingPresetConfig) -> dict:
     algorithm = str(preset.meta.algorithm).upper()
     validate_framework_algorithm(framework, algorithm)
     if framework == FRAMEWORK_SKRL:
-        from skrl_script.algorithm import build_agent_cfg_for_algorithm
+        from rl_framework.skrl_script.algorithm import build_agent_cfg_for_algorithm
 
         return build_agent_cfg_for_algorithm(algorithm, preset)
     if framework == FRAMEWORK_RSL_RL:

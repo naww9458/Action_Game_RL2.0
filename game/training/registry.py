@@ -31,13 +31,20 @@ def resolve_class_ref(registry: Dict[str, Optional[Type]], type_name: Optional[s
     return registry[type_name]
 
 
+def import_rl_module(module_name: str):
+    name = str(module_name or "")
+    if name.startswith(("skrl_script.", "rsl_rl_script.")):
+        name = f"rl_framework.{name}"
+    return importlib.import_module(name)
+
+
 def import_policy_classes(policy_module: str) -> Tuple[Type, Type]:
-    mod = importlib.import_module(policy_module)
+    mod = import_rl_module(policy_module)
     return mod.Policy, mod.Value if hasattr(mod, "Value") else None # TODO 
 
 
 def import_trainer_class(trainer_module: str) -> Type:
-    mod = importlib.import_module(trainer_module)
+    mod = import_rl_module(trainer_module)
     return mod.Trainer
 
 
@@ -77,8 +84,7 @@ class TrainingPresetRegistry:
                 "id": entry.id,
                 "file": entry.file,
                 "display_name": entry.display_name or entry.id,
-                "level": entry.level,
-                "sub_level": entry.sub_level,
+                "env_id": entry.env_id,
                 "framework": entry.framework,
                 "algorithm": entry.algorithm,
                 "path": str(cls._presets_dir / entry.file),
@@ -125,8 +131,7 @@ class TrainingPresetRegistry:
                 "id": preset.meta.id,
                 "file": path.name,
                 "display_name": preset.meta.display_name or preset.meta.id,
-                "level": preset.meta.level,
-                "sub_level": preset.meta.sub_level,
+                "env_id": preset.meta.env_id,
                 "framework": preset.meta.framework,
                 "algorithm": preset.meta.algorithm,
             })

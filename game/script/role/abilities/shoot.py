@@ -16,7 +16,7 @@ from utils.warp_math import sigmoid, quat_local_x
 
 from typing import TYPE_CHECKING
 if TYPE_CHECKING:
-    from script.levels.levels import Levels
+    from script.environments.environment import Environment
 
 
 @wp.func
@@ -67,7 +67,7 @@ class ShootFireConfig:
     """Per-owner firing parameters for the Shoot ability.
 
     Sources (highest priority first):
-      1. The role config's ``abilities.Shoot`` dict (environment level YAML).
+      1. The role config's ``abilities.Shoot`` dict (environment YAML).
       2. The tool template's ``control_configs.yaml`` ``shoot`` section
          (for tool owners, e.g. turret_110mm).
       3. The global ``abilities_default_cfg.yaml`` ``Shoot`` section.
@@ -199,18 +199,18 @@ class Shoot(Ability):
             config.get("collision_filter_owner_bodies") or []
         )
 
-    def configure_from_tool_configs(self, tool_configs, level: "Levels") -> None:
+    def configure_from_tool_configs(self, tool_configs, environment: "Environment") -> None:
         """Configure Shoot for tool owners (e.g. turret_110mm).
 
         Reads per-pattern shoot parameters (muzzle offset, forward/recoil force,
         cooldown) from the tool template's control_configs.yaml, then overlays
-        the tool role's ``abilities.Shoot`` dict (level config). Per-pattern
+        the tool role's ``abilities.Shoot`` dict (environment config). Per-pattern
         side-effects (e.g. recoil) are applied by the tool's own action module,
         not by the ability.
         """
         if not tool_configs:
             return
-        tools = getattr(level, "tools", None)
+        tools = getattr(environment, "tools", None)
         if tools is None:
             return
         for tool_index, tool_cfg in enumerate(tool_configs):
@@ -264,8 +264,8 @@ class Shoot(Ability):
             return cfg
         return self._default_fire_config
 
-    def configure_from_player_configs_post_indices(self, level: "Levels") -> None:
-        super().configure_from_player_configs_post_indices(level)
+    def configure_from_player_configs_post_indices(self, environment: "Environment") -> None:
+        super().configure_from_player_configs_post_indices(environment)
         pattern = self.generated_object_pattern
         self._generated_object_view_ctx = (
             self.resolve_pattern_view(pattern) if pattern else None

@@ -13,7 +13,8 @@
         右邊有 3D 預覽區域但目前只能顯示長方體和球體（未能顯示 USD 等模型）
 
     實驗中心：
-        你可以在主頁選擇環境後到這裏進行編輯訓練配置/評估/訓練模型，或是啓動 Tensorboard 來查看訓練日志
+        你可以在主頁選擇環境後到這裏進行編輯訓練配置/評估/訓練模型，或是啓動 Tensorboard 來查看訓練日志。
+        列表只顯示**目前這個環境**的 preset 與 run（依 `env_id` 過濾）；沒有訓練 preset 的娛樂環境會是空列表。
 
     測試頁面：
         你可以在主頁選擇環境後到這裏進行環境測試，參數介紹：
@@ -33,6 +34,18 @@
             注意：在本專案中自動微分暫時和 CUDA Graph 處於衝突狀態，如果暫時不需要自動微分功能建議關閉此選項來使用 CUDA Graph 加速，可大幅提升幀率。
 
         6. 鎖定幀率：是否將環境模擬速度和現實時間同步。
+
+    環境目錄與身分：
+        環境放在 `game/script/environments/template|custom/{rl,play}/.../<env_id>/<env_id>.yaml`。
+        身分是目錄／YAML 檔名（`env_id`），例如 `dodge_duel`、`obstacle_duel`、`flat_walk`。
+        啟動用 `Game(..., env_id="dodge_duel")` 或 `environment_config_path`；不再使用數字編號。
+
+    訓練框架：
+        SKRL 與 RSL-RL 的程式在 `game/rl_framework/`（`skrl_script`、`rsl_rl_script`）。
+        Preset 的 `policy_module` / `trainer_module` 為
+        `rl_framework.skrl_script...` 或 `rl_framework.rsl_rl_script...`。
+        Preset id 格式：`{env_id}_{framework}_{algorithm}_{obs}`，
+        例如 `flat_walk_skrl_ppo_state_based`、`dodge_duel_skrl_apg_state_based`。
 
 
 2. 環境初始化以及訓練循環的運行模組
@@ -77,11 +90,11 @@
 
         7. tool_attachment
             設計目的是讓 **玩家（載具）** 在運行時掛載/拆卸可分離工具（如炮塔），并在掛載後用 **相機視角** 驅動炮塔瞄準。
-            掛在 **玩家** 的能力列表上（不是 Tool 角色本身）；關卡需在 `tool_configs` 中配置工具實例，且關卡需有 `mount_joint_registry` 才會生效。
+            掛在 **玩家** 的能力列表上（不是 Tool 角色本身）；環境需在 `tool_configs` 中配置工具實例，且環境需有 `mount_joint_registry` 才會生效。
             Human 操作：
                 - 跟隨載具角色且靠近未掛載炮塔時，畫面中央顯示掛載提示
                 - 按 **U** 切換掛載/拆卸（再次按 U 可從載具上拆下）
-                - 掛載後，鼠標/相機 yaw/pitch 通過 PD 扭矩驅動炮塔水平偏航與俯仰（MuJoCo 關卡使用 weld 約束驅動偏航）
+                - 掛載後，鼠標/相機 yaw/pitch 通過 PD 扭矩驅動炮塔水平偏航與俯仰（MuJoCo 環境使用 weld 約束驅動偏航）
             Bot / RL：`rl_action` 與 `bot_action` 尚未實現；attach 離散動作空間已在配置中預留。
 
     角色範例：
@@ -94,11 +107,11 @@
         4. 史萊姆：沒有專屬模型文件，采用全粒子加流體模擬，以一個主粒子爲核心通過内聚力吸引下屬粒子，并通過數個範圍内自主移動的分粒子實現觸手/形變能力 (未實現)
 
 ### 工具（Tool）：
-    新增角色類型，用於 **可從載具上拆裝的模塊化裝備**（炮塔、武器等）。在關卡 YAML 的 `tool_configs` 中按 **list** 配置（每個工具一條），與 `player_configs` / `platform_configs` 并列。
+    新增角色類型，用於 **可從載具上拆裝的模塊化裝備**（炮塔、武器等）。在環境 YAML 的 `tool_configs` 中按 **list** 配置（每個工具一條），與 `player_configs` / `platform_configs` 并列。
 
     與玩家的關係：
         - **Player**：宿主（host），負責駕駛與掛載操作；需配置 `Tool_attachment` 能力
-        - **Tool**：被掛載物，關卡加載時通常以 **FREE 關節浮置** 於場景中，靠近宿主後由 `Tool_attachment` 啟用 mount joint / weld 約束完成掛載
+        - **Tool**：被掛載物，環境加載時通常以 **FREE 關節浮置** 於場景中，靠近宿主後由 `Tool_attachment` 啟用 mount joint / weld 約束完成掛載
 
     統一 ID 規則：
         - 所有角色物件以 **物件 ID** 作為唯一識別：list 容器角色（player/platform/tool）用 `id` 欄位；
@@ -107,7 +120,7 @@
           而非唯一的物件 ID（因此不與欄位 `id` 同步）
         - `name` 只是可重複的顯示名稱，不再作為識別符
 
-    掛載相關配置（可在關卡 `tool_configs` 或 `object_template/<pattern>/template.yaml` 中定義）：
+    掛載相關配置（可在環境 `tool_configs` 或 `object_template/<pattern>/template.yaml` 中定義）：
         - `mount_anchor_name` / `host_anchor_name`：工具與車體 USD 錨點 prim 名
         - `host_body_prim_suffix` / `tool_base_body_prim_suffix`：錨點所屬剛體後綴
         - `host_player_index`：綁定哪個玩家索引為宿主（可省略以自動嘗試）
@@ -124,9 +137,9 @@
         - 俯仰關節：USD 葉子名 `RevoluteJoint`（須在配置中與 `pitch_joint_name` 一致）
 
     運行時模塊（代碼概要）：
-        - `setup_tool_mount_joints`：關卡初始化時解析錨點、預建禁用狀態的 mount joint，寫入 `MountJointRegistry`
+        - `setup_tool_mount_joints`：環境初始化時解析錨點、預建禁用狀態的 mount joint，寫入 `MountJointRegistry`
         - `Tool_attachment.human_control_interface`：近距離檢測、U 鍵掛載/拆卸、掛載後 `apply_attached_aim`
-        - 無 `tool_configs` 的關卡不創建 registry，無額外開銷
+        - 無 `tool_configs` 的環境不創建 registry，無額外開銷
 
 ### 平臺：
     主要用於地板/墻壁等不應該被移動的靜態環境物品
@@ -178,7 +191,9 @@
             此頁面主要用於測試模型輸出到物件反應是否符合預期
 
         4. Commands
-            當模型支持 Commands 輸入（比如控制 Unitree G1 行走的模型）則可以通過此頁面發出指令
+            僅在「環境 command 緩衝是側通道、不是 RL Action」時出現。
+            例如 play 場景裏用 command 驅動 G1 行走；若該角色的能力把 command 當成 RL Action
+            （`articulation_body_control_rl_assisted` 的 command_dim，或車輛 command expander），則不顯示此頁。
 
         5. Controls
             記錄控制按鍵控制/修改環境重力加速度

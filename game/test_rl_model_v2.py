@@ -6,7 +6,7 @@ if __name__ == "__main__":
         raise SystemExit(main())
     raise SystemExit(main([
         "eval",
-        "--run", "runs/26-06-15_12-22-00-155810_PPO_Level5-0",
+        "--run", "runs/SKRL/26-06-15_12-22-00-155810_SKRL_PPO_flat_walk",
         "--checkpoint", "best_agent",
         "--enable-window",
     ]))
