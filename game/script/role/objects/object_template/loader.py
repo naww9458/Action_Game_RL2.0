@@ -9,6 +9,7 @@ import yaml
 _TEMPLATE_ROOT = Path(__file__).parent
 _TEMPLATES_REGISTERED = False
 _TEMPLATE_SETUP_FNS: List[Callable[[Any], None]] = []
+_TEMPLATE_PREPARE_FNS: List[Callable[[Any], None]] = []
 
 
 def load_object_templates() -> Dict[str, Dict[str, Any]]:
@@ -77,6 +78,9 @@ def _register_template_folder(folder: Path, template_data: Dict[str, Any]) -> No
         setup_fn = getattr(module, "setup", None)
         if callable(setup_fn):
             _TEMPLATE_SETUP_FNS.append(setup_fn)
+        prepare_fn = getattr(module, "prepare_object", None)
+        if callable(prepare_fn):
+            _TEMPLATE_PREPARE_FNS.append(prepare_fn)
         return
 
     articulation = dict(template_data.get("articulation") or {})
@@ -120,3 +124,16 @@ def run_object_template_setups(environment: Any) -> None:
     ensure_object_templates_registered()
     for setup_fn in _TEMPLATE_SETUP_FNS:
         setup_fn(environment)
+
+
+def prepare_object_config(object_cfg: Any) -> None:
+    """Let loaded object templates write their own fields onto an object config.
+
+    Each template's ``register.prepare_object`` no-ops when the object is not
+    theirs. Callers do not know which files a template reads.
+    """
+    if object_cfg is None:
+        return
+    ensure_object_templates_registered()
+    for prepare_fn in _TEMPLATE_PREPARE_FNS:
+        prepare_fn(object_cfg)

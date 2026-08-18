@@ -1,6 +1,6 @@
 display_name: G1 + MPM 顆粒
 intro: MuJoCo G1 與 MPM 顆粒耦合；重置時清 MPM 內部變形狀態。
-environment_class: script.environments.template.play.solver_sandbox.g1_mpm_particles.g1_mpm_particles.G1MpmParticles
+environment_class: script.environments.custom.play.solver_sandbox.g1_mpm_particles.g1_mpm_particles.G1MpmParticles
 environment_configs:
   space_xyz:
   - 20

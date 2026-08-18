@@ -188,6 +188,7 @@ class UsdObject(BaseObject):
                 joint_start,
                 builder_env.joint_count,
                 task_name=data.get("control_task"),
+                control_policy_version=data.get("control_policy_version"),
             )
             if not data.get("skip_mesh_approximation", False):
                 try:

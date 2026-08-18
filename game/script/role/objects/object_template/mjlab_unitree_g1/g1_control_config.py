@@ -11,7 +11,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Dict, List, Optional, Tuple
+from typing import Any, Dict, List, Optional, Tuple
 
 import yaml
 from newton import JointTargetMode
@@ -29,11 +29,175 @@ from .g1_actuator_model import (
     resolve_joint_physics,
 )
 
-G1_CONTROL_CONFIG_PATH = Path(__file__).resolve().parent / "control_configs.yaml"
+TEMPLATE_DIR = Path(__file__).resolve().parent
 G1_ROBOT_NAME = "unitree_g1"
 G1_DEFAULT_TASK = "velocity_locomotion"
 
-_TASK_CONFIG_CACHE: Dict[Tuple[str, str], "G1TaskConfig"] = {}
+_TASK_CONFIG_CACHE: Dict[Tuple[str, str, str], "G1TaskConfig"] = {}
+
+
+def resolve_g1_version_dir(
+    *,
+    control_policy_version: Optional[str] = None,
+    task_name: Optional[str] = None,
+) -> Path:
+    """Return ``models/<version>/`` for this robot.
+
+    Prefers ``control_policy_version``, then a version whose ``control_task``
+    matches ``task_name``. Version id must come from object / preset config.
+    """
+    models_root = TEMPLATE_DIR / "models"
+    if control_policy_version:
+        candidate = models_root / str(control_policy_version)
+        if (candidate / "control_configs.yaml").is_file() or (candidate / "control_policy.yaml").is_file():
+            return candidate
+        raise FileNotFoundError(
+            f"G1 control-policy version '{control_policy_version}' has no folder "
+            f"under {models_root}"
+        )
+    if task_name:
+        for folder in sorted(models_root.iterdir() if models_root.is_dir() else []):
+            if not folder.is_dir() or folder.name.startswith("_"):
+                continue
+            policy_path = folder / "control_policy.yaml"
+            if not policy_path.is_file():
+                continue
+            data = yaml.safe_load(policy_path.read_text(encoding="utf-8")) or {}
+            if str(data.get("control_task") or "") == str(task_name):
+                return folder
+    raise FileNotFoundError(
+        f"No G1 model version folder under {models_root}. "
+        "Set object.control_policy_version or object.control_task."
+    )
+
+
+_COLLISION_CACHE: Dict[str, Dict[str, Any]] = {}
+
+
+def _cfg_get(cfg: Any, key: str, default: Any = None) -> Any:
+    if isinstance(cfg, dict):
+        return cfg.get(key, default)
+    getter = getattr(cfg, "get", None)
+    if callable(getter):
+        try:
+            return getter(key, default)
+        except TypeError:
+            pass
+    return getattr(cfg, key, default)
+
+
+def _cfg_set(cfg: Any, key: str, value: Any) -> None:
+    if isinstance(cfg, dict):
+        cfg[key] = value
+        return
+    try:
+        cfg[key] = value
+        return
+    except Exception:
+        setattr(cfg, key, value)
+
+
+def load_g1_collision(
+    *,
+    control_policy_version: Optional[str] = None,
+    task_name: Optional[str] = None,
+) -> Optional[Dict[str, Any]]:
+    """Load the complete collision table for this G1 model.
+
+    Prefer ``models/<version>/collision.yaml``; if that file is absent, use
+    ``collision.yaml`` next to this template. The chosen file is the whole
+    table — callers replace object collision fields with it, they do not merge.
+    """
+    paths: List[Path] = []
+    try:
+        version_dir = resolve_g1_version_dir(
+            control_policy_version=control_policy_version,
+            task_name=task_name,
+        )
+        paths.append(version_dir / "collision.yaml")
+    except FileNotFoundError:
+        pass
+    paths.append(TEMPLATE_DIR / "collision.yaml")
+
+    seen: set[str] = set()
+    for path in paths:
+        resolved = str(path.resolve()) if path.exists() else str(path)
+        if resolved in seen:
+            continue
+        seen.add(resolved)
+        if not path.is_file():
+            continue
+        cached = _COLLISION_CACHE.get(resolved)
+        if cached is not None:
+            return cached
+        raw = yaml.safe_load(path.read_text(encoding="utf-8")) or {}
+        if not isinstance(raw, dict):
+            continue
+        _COLLISION_CACHE[resolved] = raw
+        return raw
+    return None
+
+
+def apply_g1_collision(object_cfg: Any) -> None:
+    """Write this model's complete collision.yaml onto a G1 object config."""
+    from script.role.abilities.articulation_control_config.robot_pattern import (
+        normalize_robot_pattern,
+    )
+
+    pattern = _cfg_get(object_cfg, "pattern")
+    if not pattern or normalize_robot_pattern(str(pattern)) != G1_ROBOT_NAME:
+        return
+    collision = load_g1_collision(
+        control_policy_version=_cfg_get(object_cfg, "control_policy_version"),
+        task_name=_cfg_get(object_cfg, "control_task"),
+    )
+    if not collision:
+        return
+    shapes = collision.get("body_collision_shape_overrides")
+    pairs = collision.get("body_collision_exclude_pairs")
+    _cfg_set(
+        object_cfg,
+        "body_collision_shape_overrides",
+        dict(shapes) if isinstance(shapes, dict) else None,
+    )
+    _cfg_set(
+        object_cfg,
+        "body_collision_exclude_pairs",
+        list(pairs) if pairs else None,
+    )
+
+
+def _control_configs_path(version_dir: Path) -> Path:
+    path = version_dir / "control_configs.yaml"
+    if not path.is_file():
+        raise FileNotFoundError(f"Missing control_configs.yaml for G1 model at {version_dir}")
+    return path
+
+
+def _parse_task_mapping(raw: Dict[str, Any], *, task_name: str, path: Path) -> Dict[str, Any]:
+    """Read ``unitree_g1.<task>`` (and robot-level ``foot_sensor``) from control_configs.yaml."""
+    robot_cfg = raw.get(G1_ROBOT_NAME, {})
+    if isinstance(robot_cfg, dict):
+        nested = robot_cfg.get(task_name)
+        if isinstance(nested, dict):
+            mapping = dict(nested)
+            if "foot_sensor" in robot_cfg and "foot_sensor" not in mapping:
+                mapping["foot_sensor"] = robot_cfg.get("foot_sensor")
+            return mapping
+    raise KeyError(f"Task '{task_name}' not found in {path}")
+
+
+def _require_key(mapping: Dict[str, Any], key: str, *, path: Path, ctx: str) -> Any:
+    if not isinstance(mapping, dict) or key not in mapping:
+        raise KeyError(f"Missing '{ctx}.{key}' in {path}")
+    return mapping[key]
+
+
+def _require_vec(mapping: Dict[str, Any], key: str, n: int, *, path: Path, ctx: str) -> Tuple[float, ...]:
+    raw = _require_key(mapping, key, path=path, ctx=ctx)
+    if not isinstance(raw, (list, tuple)) or len(raw) != n:
+        raise ValueError(f"{path}: '{ctx}.{key}' must have {n} values")
+    return tuple(float(v) for v in raw)
 
 
 @dataclass
@@ -51,55 +215,69 @@ class G1TaskConfig:
         cls,
         task_name: str = G1_DEFAULT_TASK,
         config_path: Optional[Path] = None,
+        control_policy_version: Optional[str] = None,
     ) -> "G1TaskConfig":
-        cache_key = (str(config_path or G1_CONTROL_CONFIG_PATH), task_name)
+        if config_path is None:
+            version_dir = resolve_g1_version_dir(
+                control_policy_version=control_policy_version,
+                task_name=task_name,
+            )
+            path = _control_configs_path(version_dir)
+        else:
+            path = Path(config_path)
+        cache_key = (str(path), str(task_name or ""), str(control_policy_version or ""))
         cached = _TASK_CONFIG_CACHE.get(cache_key)
         if cached is not None:
             return cached
 
-        path = config_path or G1_CONTROL_CONFIG_PATH
         with path.open("r", encoding="utf-8") as fh:
             raw_data = yaml.safe_load(fh) or {}
+        if not isinstance(raw_data, dict):
+            raise ValueError(f"Invalid YAML mapping: {path}")
+        task_cfg = _parse_task_mapping(raw_data, task_name=task_name, path=path)
 
-        robot_cfg = raw_data.get(G1_ROBOT_NAME, {})
-        task_cfg = robot_cfg.get(task_name, {})
-        if not isinstance(task_cfg, dict):
-            raise KeyError(f"Task '{task_name}' not found in {path}")
-
-        init_state = task_cfg.get("init_state", {})
-        keyframe = str(init_state.get("keyframe", "knees_bent")).lower()
+        init_state = task_cfg.get("init_state")
+        if not isinstance(init_state, dict):
+            raise KeyError(f"Missing '{task_name}.init_state' in {path}")
+        keyframe = str(_require_key(init_state, "keyframe", path=path, ctx="init_state")).lower()
         if keyframe == "home":
-            root_pos_raw = task_cfg.get("home_init_state", {}).get(
-                "root_pos", init_state.get("root_pos", [0.0, 0.0, 0.783675])
-            )
-            root_rot_raw = task_cfg.get("home_init_state", {}).get(
-                "root_rot", init_state.get("root_rot", [0.0, 0.0, 0.7071, 0.7071])
-            )
-            joint_pos_overrides = dict(task_cfg.get("home_joint_pos", {}))
+            home_state = task_cfg.get("home_init_state")
+            if not isinstance(home_state, dict):
+                raise KeyError(f"Missing '{task_name}.home_init_state' in {path}")
+            root_pos_raw = _require_vec(home_state, "root_pos", 3, path=path, ctx="home_init_state")
+            root_rot_raw = _require_vec(home_state, "root_rot", 4, path=path, ctx="home_init_state")
+            joint_pos_overrides = dict(task_cfg.get("home_joint_pos") or {})
+            if not joint_pos_overrides:
+                raise KeyError(f"Missing '{task_name}.home_joint_pos' in {path}")
         else:
-            keyframe = "knees_bent"
-            root_pos_raw = init_state.get("root_pos", [0.0, 0.0, 0.76])
-            root_rot_raw = init_state.get("root_rot", [0.0, 0.0, 0.7071, 0.7071])
-            joint_pos_overrides = dict(task_cfg.get("joint_pos", {}))
+            root_pos_raw = _require_vec(init_state, "root_pos", 3, path=path, ctx="init_state")
+            root_rot_raw = _require_vec(init_state, "root_rot", 4, path=path, ctx="init_state")
+            joint_pos_overrides = dict(task_cfg.get("joint_pos") or {})
 
         hand_cfg = task_cfg.get("hand_joints", {})
         if isinstance(hand_cfg, dict) and hand_cfg:
             configure_hand_joints(
-                names=hand_cfg.get("names"),
-                stiffness=float(hand_cfg.get("stiffness", 10.0)),
-                damping=float(hand_cfg.get("damping", 2.0)),
-                armature=float(hand_cfg.get("armature", 0.1)),
-                nominal=float(hand_cfg.get("nominal", 0.0)),
+                names=_require_key(hand_cfg, "names", path=path, ctx="hand_joints"),
+                stiffness=float(_require_key(hand_cfg, "stiffness", path=path, ctx="hand_joints")),
+                damping=float(_require_key(hand_cfg, "damping", path=path, ctx="hand_joints")),
+                armature=float(_require_key(hand_cfg, "armature", path=path, ctx="hand_joints")),
+                nominal=float(_require_key(hand_cfg, "nominal", path=path, ctx="hand_joints")),
             )
+
+        non_rl = _require_key(task_cfg, "non_rl_patterns", path=path, ctx=task_name)
+        if not isinstance(non_rl, (list, tuple)) or not non_rl:
+            raise ValueError(f"{path}: '{task_name}.non_rl_patterns' must be a non-empty list")
 
         instance = cls(
             task_name=task_name,
-            soft_limit_factor=float(task_cfg.get("soft_limit_factor", 0.9)),
+            soft_limit_factor=float(
+                _require_key(task_cfg, "soft_limit_factor", path=path, ctx=task_name)
+            ),
             keyframe=keyframe,
             root_pos=tuple(float(v) for v in root_pos_raw),
             root_rot=tuple(float(v) for v in root_rot_raw),
             joint_pos_overrides=joint_pos_overrides,
-            non_rl_patterns=tuple(task_cfg.get("non_rl_patterns", ["finger", "thumb", "hand"])),
+            non_rl_patterns=tuple(str(p) for p in non_rl),
         )
         _TASK_CONFIG_CACHE[cache_key] = instance
         return instance
@@ -204,5 +382,11 @@ class G1TaskConfig:
         )
 
 
-def get_g1_task_config(task_name: str = G1_DEFAULT_TASK) -> G1TaskConfig:
-    return G1TaskConfig.from_yaml(task_name=task_name)
+def get_g1_task_config(
+    task_name: str = G1_DEFAULT_TASK,
+    control_policy_version: Optional[str] = None,
+) -> G1TaskConfig:
+    return G1TaskConfig.from_yaml(
+        task_name=task_name,
+        control_policy_version=control_policy_version,
+    )

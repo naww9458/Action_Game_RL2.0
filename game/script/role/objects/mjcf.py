@@ -126,6 +126,8 @@ class MjcfObject(BaseObject):
                 start_q_idx,
                 joint_start,
                 builder_env.joint_count,
+                task_name=data.get("control_task"),
+                control_policy_version=data.get("control_policy_version"),
             )
             if data.get("approximate_meshes", True):
                 # Scope the approximation to shapes added by this MJCF import only,

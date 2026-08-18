@@ -44,6 +44,63 @@ def apply_player_controller_overrides(
         item["controller"] = normalize_controller(parse_controller_override(raw))
 
 
+def _object_accepts_control_policy(obj: Dict[str, Any]) -> bool:
+    """True when this player object can take a control-policy version override."""
+    if "control_policy_version" in obj and not obj.get("control_policy_version"):
+        return False
+    if obj.get("control_policy_version"):
+        return True
+    pattern = obj.get("pattern")
+    if not pattern:
+        return False
+    try:
+        from script.role.policies.policy_bundle import PolicyBundleRegistry
+
+        return PolicyBundleRegistry.has_policy_versions(str(pattern))
+    except Exception:
+        return False
+
+
+def apply_control_policy_version_override(
+    data: Dict[str, Any], version: Optional[str]
+) -> None:
+    """Override player ``object.control_policy_version`` from a training preset.
+
+    Preset wins over the environment YAML. Objects that explicitly set
+    ``control_policy_version: null`` (no policy) are left unchanged.
+    """
+    if not version:
+        return
+    version = str(version).strip()
+    if not version:
+        return
+
+    players = data.get("player_configs") or []
+    if not players:
+        raise ValueError(
+            "Cannot apply control_policy_version override: player_configs is empty."
+        )
+
+    applied = 0
+    for item in players:
+        if not isinstance(item, dict):
+            continue
+        obj = item.get("object")
+        if not isinstance(obj, dict):
+            continue
+        if not _object_accepts_control_policy(obj):
+            continue
+        obj["control_policy_version"] = version
+        applied += 1
+
+    if applied == 0:
+        raise ValueError(
+            "Cannot apply control_policy_version override: no player object "
+            "accepts a control policy (set control_policy_version or a robot pattern "
+            "that has registered policy versions)."
+        )
+
+
 # --- 環境與總配置 ---
 class EnvironmentConfig(BaseModel):
     space_xyz: List[float] = [20, 20, 20]
@@ -111,20 +168,29 @@ class EnvironmentDefinition(BaseModel):
         config_path: Path,
         overrides: Dict[str, Any] = None,
         player_controllers: List[str] | None = None,
+        control_policy_version: str | None = None,
     ) -> 'EnvironmentDefinition':
         path = cls.resolve_path(config_path)
+        from script.environments.env_catalog import (
+            apply_custom_environment_class,
+            prefer_custom_env_path,
+        )
+        path = prefer_custom_env_path(path)
 
         with open(path, 'r', encoding='utf-8') as f:
             # 自動處理 YAML/JSON 格式
             data = yaml.safe_load(f) if path.suffix in ['.yaml', '.yml'] else json.load(f)
 
         if data:
-            if player_controllers:
-                apply_player_controller_overrides(data, player_controllers)
+            apply_custom_environment_class(data, path)
             if overrides:
                 for key, value in overrides.items():
                     if value is not None:
                         data[key] = value
+            if player_controllers:
+                apply_player_controller_overrides(data, player_controllers)
+            if control_policy_version:
+                apply_control_policy_version_override(data, control_policy_version)
 
         return cls.model_validate(data)
 

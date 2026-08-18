@@ -4,13 +4,14 @@ Layout::
 
     game/script/environments/
       environment.py, get_environment.py, env_catalog.py, rewards/
-      template/{rl,play}/<series>/[<category>/...]/<env>/<env>.yaml
-      custom/{rl,play}/...
+      template/{rl,play}/...   # backup / reference only
+      custom/{rl,play}/...     # executable environments
 
 Series and category folders have ``_category.yaml``. Each environment is its
-own folder (no ``_category.yaml``) holding ``<env>.yaml`` and optional
-``<env>.py``. Catalog scan indexes YAML + ``_category.yaml``; Python files
-are copied with the env folder.
+own folder holding ``<env>.yaml`` and optional ``<env>.py``.
+
+``environment_class`` and env Python imports always persist the custom module
+path. Template exists so official tasks can be copied; runtime prefers custom.
 """
 
 from __future__ import annotations
@@ -453,6 +454,71 @@ def destination_for(path: Path) -> Optional[Path]:
     return ENVIRONMENTS_ROOT.joinpath(dest_root, parsed["bucket"], *parsed["rest"])
 
 
+def prefer_custom_env_path(path: Path) -> Path:
+    """Prefer the custom counterpart when it exists.
+
+    ``template/`` is backup/reference; only ``custom/`` is the executable tree.
+    If no custom copy exists yet, ``path`` is returned unchanged.
+    """
+    raw = Path(path)
+    parsed = parse_catalog_path(raw)
+    if parsed is None or parsed["root"] != ROOT_TEMPLATE:
+        return raw
+    dest = destination_for(raw)
+    if dest is None:
+        return raw
+    if dest.is_file():
+        return dest
+    if dest.is_dir():
+        found = resolve_env_yaml(dest)
+        if found is not None:
+            return found
+        return dest
+    return raw
+
+
+def canonicalize_environment_class(raw: str, yaml_path: Path) -> str:
+    """Return ``environment_class`` rewritten to ``script.environments.custom.*``.
+
+    Template YAMLs still persist the custom import path because template is only
+    a backup; the executable module always lives under custom.
+    """
+    custom_prefix = f"script.environments.{ROOT_CUSTOM}."
+    template_prefix = f"script.environments.{ROOT_TEMPLATE}."
+    text = str(raw)
+    if text.startswith(template_prefix):
+        return custom_prefix + text[len(template_prefix):]
+    if text.startswith(custom_prefix):
+        return text
+
+    class_name = _class_name_from_environment_class(text)
+    if not class_name:
+        return text
+    companion = env_script_path(yaml_path)
+    try:
+        rel = yaml_path.resolve().relative_to(ENVIRONMENTS_ROOT.resolve())
+    except ValueError:
+        if companion.is_file():
+            module = env_script_module_name(companion).replace(
+                f".{ROOT_TEMPLATE}.", f".{ROOT_CUSTOM}."
+            )
+            return f"{module}.{class_name}"
+        return text
+    parts = list(rel.with_suffix("").parts)
+    if parts and parts[0] in STRUCTURAL_ROOTS:
+        parts[0] = ROOT_CUSTOM
+    module = "script.environments." + ".".join(parts)
+    return f"{module}.{class_name}"
+
+
+def apply_custom_environment_class(data: Dict[str, Any], yaml_path: Path) -> None:
+    """Rewrite ``environment_class`` on a loaded env dict to the custom module path."""
+    raw = data.get("environment_class")
+    if not isinstance(raw, str) or not raw:
+        return
+    data["environment_class"] = canonicalize_environment_class(raw, yaml_path)
+
+
 def _copy_category_file(src_dir: Path, dst_dir: Path) -> None:
     dst_dir.mkdir(parents=True, exist_ok=True)
     src_meta = src_dir / CATEGORY_FILENAME
@@ -465,17 +531,16 @@ def _class_name_from_environment_class(raw: str) -> str:
     return str(raw).replace(":", ".").rsplit(".", 1)[-1]
 
 
-def _retarget_environment_class_value(raw: str, yaml_path: Path, src_root: str, dst_root: str) -> Optional[str]:
-    src_prefix = f"script.environments.{src_root}."
-    dst_prefix = f"script.environments.{dst_root}."
-    if raw.startswith(src_prefix):
-        return dst_prefix + raw[len(src_prefix):]
-    companion = env_script_path(yaml_path)
-    if companion.is_file():
-        class_name = _class_name_from_environment_class(raw)
-        if class_name:
-            return f"{env_script_module_name(companion)}.{class_name}"
-    return None
+def _retarget_python_environment_imports(py_path: Path) -> None:
+    """Rewrite ``script.environments.template.`` imports to ``custom``."""
+    if not py_path.is_file():
+        return
+    text = py_path.read_text(encoding="utf-8")
+    old = f"script.environments.{ROOT_TEMPLATE}."
+    new = f"script.environments.{ROOT_CUSTOM}."
+    if old not in text:
+        return
+    py_path.write_text(text.replace(old, new), encoding="utf-8")
 
 
 def _set_yaml_environment_class(yaml_path: Path, new_value: str) -> None:
@@ -496,7 +561,7 @@ def _set_yaml_environment_class(yaml_path: Path, new_value: str) -> None:
         yaml_path.write_text("".join(out), encoding="utf-8")
 
 
-def _retarget_yaml_environment_class(yaml_path: Path, src_root: str, dst_root: str) -> None:
+def _persist_custom_environment_class(yaml_path: Path) -> None:
     try:
         data = yaml.safe_load(yaml_path.read_text(encoding="utf-8")) or {}
     except Exception:
@@ -506,8 +571,8 @@ def _retarget_yaml_environment_class(yaml_path: Path, src_root: str, dst_root: s
     raw = data.get("environment_class")
     if not isinstance(raw, str) or not raw:
         return
-    new_value = _retarget_environment_class_value(raw, yaml_path, src_root, dst_root)
-    if new_value and new_value != raw:
+    new_value = canonicalize_environment_class(raw, yaml_path)
+    if new_value != raw:
         _set_yaml_environment_class(yaml_path, new_value)
 
 
@@ -521,9 +586,11 @@ def _copy_companion_script(src_yaml: Path, dest_yaml: Path, *, overwrite: bool) 
     shutil.copy2(src_py, dest_py)
 
 
-def _retarget_copied_tree(dest: Path, src_root: str, dst_root: str) -> None:
+def _retarget_copied_tree(dest: Path) -> None:
+    """Force copied env YAML/Python to persist custom module paths."""
     if dest.is_file() and dest.suffix.lower() in (".yaml", ".yml"):
-        _retarget_yaml_environment_class(dest, src_root, dst_root)
+        _persist_custom_environment_class(dest)
+        _retarget_python_environment_imports(env_script_path(dest))
         _ensure_python_packages(dest.parent)
         return
     if not dest.is_dir():
@@ -531,7 +598,9 @@ def _retarget_copied_tree(dest: Path, src_root: str, dst_root: str) -> None:
     for yaml_path in dest.rglob("*.yaml"):
         if yaml_path.name in RESERVED_FILENAMES:
             continue
-        _retarget_yaml_environment_class(yaml_path, src_root, dst_root)
+        _persist_custom_environment_class(yaml_path)
+    for py_path in dest.rglob("*.py"):
+        _retarget_python_environment_imports(py_path)
     _ensure_python_packages(dest)
 
 
@@ -549,7 +618,8 @@ def copy_catalog_node(src: Path, *, overwrite: bool = False) -> Path:
     """Copy a series / category / env across template ↔ custom.
 
     Ancestor folders are reused; sibling nodes are not copied. ``overwrite``
-    replaces the destination leaf only.
+    replaces the destination leaf only. Copied YAML/Python always keep the
+    custom module path (template is backup only).
     """
     parsed = parse_catalog_path(src)
     if parsed is None:
@@ -573,7 +643,6 @@ def copy_catalog_node(src: Path, *, overwrite: bool = False) -> Path:
     dst_kind = ENVIRONMENTS_ROOT / counterpart_root(root_id) / bucket_id
     dst_kind.mkdir(parents=True, exist_ok=True)
 
-    dst_root_id = counterpart_root(root_id)
     if src.is_file():
         parent_rest = rest[:-1]
         _copy_ancestors(src_kind, dst_kind, parent_rest)
@@ -586,7 +655,7 @@ def copy_catalog_node(src: Path, *, overwrite: bool = False) -> Path:
             raise FileExistsError(str(dest_py))
         shutil.copy2(src, dest)
         _copy_companion_script(src, dest, overwrite=overwrite)
-        _retarget_copied_tree(dest, root_id, dst_root_id)
+        _retarget_copied_tree(dest)
         return dest
 
     if not src.is_dir():
@@ -605,7 +674,7 @@ def copy_catalog_node(src: Path, *, overwrite: bool = False) -> Path:
         dest,
         ignore=shutil.ignore_patterns("__pycache__", "*.pyc", "*.pyo"),
     )
-    _retarget_copied_tree(dest, root_id, dst_root_id)
+    _retarget_copied_tree(dest)
     return dest
 
 

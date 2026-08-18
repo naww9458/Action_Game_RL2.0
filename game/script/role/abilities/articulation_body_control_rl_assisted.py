@@ -38,7 +38,7 @@ class Articulation_body_control_rl_assisted(Articulation_body_control):
 
         self._bundle_spec = None
         self._command_profile = None
-        self._obs_provider = None
+        self._obs_actor = None
         self._policy_runner = None
         self._human_control_applied = False
 
@@ -76,35 +76,36 @@ class Articulation_body_control_rl_assisted(Articulation_body_control):
         self._pending_human_control = self._command_profile.human_control
 
         self._build_player_env_mapping(environment)
-        self._obs_provider = PolicyBundleRegistry.create_obs_provider(
-            self._bundle_spec.obs_provider,
+        self._obs_actor = PolicyBundleRegistry.create_obs_actor(
+            self._bundle_spec.obs_actor,
             num_env=environment.num_env,
             device=GameConfig.DEVICE,
             articulation_body=self.articulation_body,
             pattern=self.pattern,
+            history_len=int(self._bundle_spec.history_len),
             instance_world_indices=self._player_env_indices,
             instance_view_indices=self._player_view_indices,
         )
         action_dim = _resolve_rl_action_dim(self.articulation_body, self.pattern)
-        self._obs_provider.validate_dims(expected_low_level_action_dim=action_dim)
+        self._obs_actor.validate_dims(expected_low_level_action_dim=action_dim)
 
         self._policy_runner = load_policy_runner(
             self.control_policy_version,
             robot_pattern=self.pattern,
             device=self.policy_device,
             checkpoint_override=self.policy_checkpoint,
-            expected_obs_dim=self._obs_provider.obs_dim,
+            expected_obs_dim=self._obs_actor.obs_dim,
             expected_action_dim=action_dim,
         )
 
         if hasattr(environment, "bind_assisted_provider"):
-            environment.bind_assisted_provider(self._obs_provider)
+            environment.bind_assisted_provider(self._obs_actor)
 
         self._configured = True
         print(
             f"[{self.__class__.__name__}] mjlab act path enabled: "
             f"policy={self.control_policy_version}, pattern={self.pattern}, "
-            f"obs_dim={self._obs_provider.obs_dim}, action_dim={action_dim}, "
+            f"obs_dim={self._obs_actor.obs_dim}, action_dim={action_dim}, "
             f"checkpoint={self._policy_runner.checkpoint_path}"
         )
 
@@ -220,7 +221,7 @@ class Articulation_body_control_rl_assisted(Articulation_body_control):
         return 0
 
     def _apply_commands(self, instance_idx: int, values: Sequence[float]) -> None:
-        cmd_torch = wp.to_torch(self._obs_provider.commands)
+        cmd_torch = wp.to_torch(self._obs_actor.commands)
         for i, val in enumerate(values):
             cmd_torch[instance_idx, i] = val
 
@@ -229,7 +230,7 @@ class Articulation_body_control_rl_assisted(Articulation_body_control):
         if not self._controlled_player_indices:
             return
 
-        obs = self._obs_provider.get_observation(self.physics_manager)
+        obs = self._obs_actor.get_observation(self.physics_manager)
         low_level_all_envs = self._policy_runner.predict(obs, deterministic=True)
         expected_shape = (
             len(self._controlled_player_indices),
@@ -241,7 +242,7 @@ class Articulation_body_control_rl_assisted(Articulation_body_control):
                 f"expected {expected_shape} for assisted G1 instances."
             )
         self._low_level_actions_torch.copy_(low_level_all_envs)
-        self._obs_provider.store_low_level_actions(self._low_level_actions_wp)
+        self._obs_actor.store_low_level_actions(self._low_level_actions_wp)
 
         self._action_applier.launch_to_targets(
             self._low_level_actions_wp,
@@ -256,7 +257,7 @@ class Articulation_body_control_rl_assisted(Articulation_body_control):
             return
 
         self._ensure_configured()
-        self._obs_provider.write_commands_from_rl_actions(
+        self._obs_actor.write_commands_from_rl_actions(
             actions,
             self.action_shape_offset,
             self._controlled_player_action_rows_gpu,
@@ -279,7 +280,7 @@ class Articulation_body_control_rl_assisted(Articulation_body_control):
     def bot_action(self, **kwargs):
         self._ensure_configured()
         dt = 1.0 / float(GameConfig.FPS_ACTION)
-        self._obs_provider.update_velocity_commands(self.physics_manager, dt)
+        self._obs_actor.update_velocity_commands(self.physics_manager, dt)
         self._run_policy_and_apply()
 
     def get_action_spec(self) -> dict:

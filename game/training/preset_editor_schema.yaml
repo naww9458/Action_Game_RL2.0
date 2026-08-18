@@ -455,3 +455,12 @@ sections:
         unique: false
         description_zh: "玩家控制器覆寫 ID 列表，例如 RL、Bot"
         description_en: "Player controller override ids, e.g. RL, Bot"
+
+      - key: control_policy_version
+        type: enum_nullable
+        required: false
+        nullable: true
+        allow_custom: true
+        options_source: control_policy_versions
+        description_zh: "控制策略版本（覆寫環境 YAML 的 control_policy_version；留空則用環境配置）"
+        description_en: "Control-policy version override (wins over env YAML; empty keeps the environment value)"

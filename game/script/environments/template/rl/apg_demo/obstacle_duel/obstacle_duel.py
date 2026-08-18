@@ -15,7 +15,7 @@ from script.environments.environment import Environment
 try:
     from ..standing_target.standing_target import StandingTarget
 except ImportError:
-    from script.environments.template.rl.apg_demo.standing_target.standing_target import StandingTarget
+    from script.environments.custom.rl.apg_demo.standing_target.standing_target import StandingTarget
 
 from typing import TYPE_CHECKING
 if TYPE_CHECKING:

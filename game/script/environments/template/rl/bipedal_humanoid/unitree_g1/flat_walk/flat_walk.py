@@ -8,22 +8,8 @@ from script.environments.rewards.reward_calculator import RewardCalculator
 from script.environments.rewards.game_end_reward import G1LocomotionTerminator
 from training.env_defaults import get_default_train_cfg
 from script.environments.environment import Environment
-from script.role.objects.object_template.mjlab_unitree_g1.g1_foot_sensor_cfg import (
-    load_g1_foot_sensor_config,
-    resolve_g1_foot_body_mapping,
-)
-from script.role.policies.critic_obs_provider import CriticObsProviderRegistry
 
-try:
-    from sensors.foot_contact_sensor import FootContactSensor
-    from sensors.contact_sensor import SelfCollisionSensor
-except ImportError:
-    from script.sensors.foot_contact_sensor import FootContactSensor
-    from script.sensors.contact_sensor import SelfCollisionSensor
-
-from typing import TYPE_CHECKING, Optional
-if TYPE_CHECKING:
-    from script.simulate.physics_manager import PhysicsManager
+from typing import Optional
 
 
 @wp.kernel
@@ -132,18 +118,16 @@ class FlatWalk(Environment):
         self.obs_torch = None
         self.obs_wp = None
         self.obs_dim = 0
-        self.rl_action_dim = 29
-        self.history_len = 1
+        self.rl_action_dim = 0
+        self.history_len = 0
         self.flat_obs_dim = 0
         self.single_obs_wp = None
 
-        # Asymmetric critic: discovered from the robot's object template via
-        # ``CriticObsProviderRegistry``. ``None`` (no registered extension)
-        # degrades to the symmetric critic (policy obs only).
+        # Asymmetric critic: attached by the G1 object-template runtime when
+        # observation.obs_critic is declared. None degrades to the symmetric critic.
         self.critic_obs_provider = None
 
-        # Observation/command provider discovered via PolicyBundleRegistry
-        # (object_template register.py + control_policy.yaml observation.provider).
+        # Observation/command provider attached by object-template register.setup.
         self.g1_provider = None
         self.foot_sensor = None
         self.self_collision_sensor = None
@@ -153,18 +137,14 @@ class FlatWalk(Environment):
         self.push_enabled = False
         self.push_vel_out = None
         self.push_mask_2d = None
-        self._push_interval = (1.0, 3.0)
-        self._push_lin = ((-0.5, 0.5), (-0.5, 0.5), (-0.4, 0.4))
-        self._push_ang = ((-0.52, 0.52), (-0.52, 0.52), (-0.78, 0.78))
+        self._push_interval = (0.0, 0.0)
+        self._push_lin = ((0.0, 0.0), (0.0, 0.0), (0.0, 0.0))
+        self._push_ang = ((0.0, 0.0), (0.0, 0.0), (0.0, 0.0))
 
         # mjlab common_step_counter: global policy-step count driving curriculum.
         self._global_step_count = 0
         self._curriculum_stages: list[dict] = []
-        self._curriculum_base_ranges: dict[str, tuple[float, float]] = {
-            "lin_vel_x": (-1.0, 1.0),
-            "lin_vel_y": (-1.0, 1.0),
-            "ang_vel_z": (-0.5, 0.5),
-        }
+        self._curriculum_base_ranges: dict[str, tuple[float, float]] = {}
         self._curriculum_ranges_applied: Optional[dict] = None
 
         # Log units: mjlab logs Episode_Reward per-second (sum/20); the game logs
@@ -205,20 +185,38 @@ class FlatWalk(Environment):
         # C2: push_robot (mjlab interval event). Buffers are persistent and the
         # kernel is seed-driven so CUDA-graph replay stays deterministic.
         push_cfg = dr_cfg.get("push_robot") or {}
-        self.push_enabled = bool(push_cfg.get("enabled", True))
+        if "enabled" not in push_cfg:
+            raise KeyError("environment_configs.domain_randomization.push_robot.enabled is required")
+        self.push_enabled = bool(push_cfg["enabled"])
         if self.push_enabled:
-            interval = push_cfg.get("interval_range_s") or [1.0, 3.0]
+            if "interval_range_s" not in push_cfg:
+                raise KeyError(
+                    "environment_configs.domain_randomization.push_robot.interval_range_s "
+                    "is required when enabled"
+                )
+            interval = push_cfg["interval_range_s"]
             self._push_interval = (float(interval[0]), float(interval[1]))
-            vr = push_cfg.get("velocity_range") or {}
+            vr = push_cfg.get("velocity_range")
+            if not isinstance(vr, dict):
+                raise KeyError(
+                    "environment_configs.domain_randomization.push_robot.velocity_range "
+                    "is required when enabled"
+                )
+            missing_axes = [axis for axis in ("x", "y", "z", "roll", "pitch", "yaw") if axis not in vr]
+            if missing_axes:
+                raise KeyError(
+                    "environment_configs.domain_randomization.push_robot.velocity_range "
+                    f"missing {missing_axes}"
+                )
             self._push_lin = (
-                self._range_of(vr.get("x"), (-0.5, 0.5)),
-                self._range_of(vr.get("y"), (-0.5, 0.5)),
-                self._range_of(vr.get("z"), (-0.4, 0.4)),
+                self._require_range_pair(vr["x"], "push_robot.velocity_range.x"),
+                self._require_range_pair(vr["y"], "push_robot.velocity_range.y"),
+                self._require_range_pair(vr["z"], "push_robot.velocity_range.z"),
             )
             self._push_ang = (
-                self._range_of(vr.get("roll"), (-0.52, 0.52)),
-                self._range_of(vr.get("pitch"), (-0.52, 0.52)),
-                self._range_of(vr.get("yaw"), (-0.78, 0.78)),
+                self._require_range_pair(vr["roll"], "push_robot.velocity_range.roll"),
+                self._require_range_pair(vr["pitch"], "push_robot.velocity_range.pitch"),
+                self._require_range_pair(vr["yaw"], "push_robot.velocity_range.yaw"),
             )
             self.push_vel_out = wp.zeros(
                 (self.num_env, 1), dtype=wp.spatial_vector, device=GameConfig.DEVICE
@@ -241,11 +239,17 @@ class FlatWalk(Environment):
 
         # C3: command-velocity curriculum (mjlab commands_vel stages). Applied
         # by ``update_curriculum`` against the global policy-step counter.
+        self._curriculum_base_ranges = dict(self.g1_provider.get_command_velocity_ranges())
         cur_cfg = dr_cfg.get("curriculum") or {}
         stages_raw = cur_cfg.get("command_vel") or []
         self._curriculum_stages = []
         for s in stages_raw:
-            stage = {"step": int(s.get("step", 0))}
+            if "step" not in s:
+                raise KeyError(
+                    "environment_configs.domain_randomization.curriculum.command_vel "
+                    "entries require 'step'"
+                )
+            stage = {"step": int(s["step"])}
             for key in ("lin_vel_x", "lin_vel_y", "ang_vel_z"):
                 val = s.get(key)
                 if val is not None:
@@ -254,69 +258,8 @@ class FlatWalk(Environment):
         self._curriculum_stages.sort(key=lambda s: s["step"])
         self._curriculum_ranges_applied = None
 
-        foot_cfg = load_g1_foot_sensor_config()
-        foot_mapping = resolve_g1_foot_body_mapping(
-            self.physics_manager, GameConfig.DEVICE, body_suffixes=foot_cfg.bodies
-        )
-        self.foot_sensor = FootContactSensor(
-            self.num_env,
-            device=GameConfig.DEVICE,
-            primary_newton_bodies=foot_mapping.ankle_newton_bodies_wp,
-            num_feet=foot_cfg.num_feet,
-            ground_geom_id=foot_cfg.ground_geom_id,
-            ground_height=foot_cfg.ground_height,
-            foot_height_site_offset=foot_cfg.foot_height_site_offset,
-        )
-        self.foot_sensor.bind_solver_constants(
-            ngeom=foot_mapping.ngeom,
-            njmax=foot_mapping.njmax,
-            nbody_mj=foot_mapping.nbody_mj,
-            naconmax=foot_mapping.naconmax,
-            opt_cone=foot_mapping.opt_cone,
-        )
-
-        # Self-collision sensor (mjlab ``self_collision`` contact sensor): tracks
-        # max robot-on-robot contact force per substep for SelfCollisionCostReward.
-        # history width is read from the preset so reward iteration count matches.
-        reward_params = getattr(GameConfig, "reward_parameters", None) or {}
-        sc_cfg = reward_params.get("SelfCollisionCostReward")
-        if isinstance(sc_cfg, dict):
-            sc_history = int(sc_cfg.get("num_history", 4))
-        else:
-            sc_history = 4
-        self.self_collision_sensor = SelfCollisionSensor(
-            self.num_env,
-            device=GameConfig.DEVICE,
-            history_length=sc_history,
-            ground_geom_id=foot_cfg.ground_geom_id,
-        )
-        self.self_collision_sensor.bind_solver_constants(
-            ngeom=foot_mapping.ngeom,
-            njmax=foot_mapping.njmax,
-            nbody_mj=foot_mapping.nbody_mj,
-            naconmax=foot_mapping.naconmax,
-            opt_cone=foot_mapping.opt_cone,
-        )
-        self.physics_manager.post_substep_callback = self._record_self_collision_substep
         if getattr(self, "view", None) is None:
             self.view = self.g1_provider.view
-
-        # Asymmetric critic extension: the Unitree G1 object template registers
-        # a foot-state critic-obs provider under the robot pattern. When it is
-        # missing, the environment gracefully falls back to the symmetric critic.
-        self.critic_obs_provider = CriticObsProviderRegistry.create(
-            pattern,
-            num_instances=self.g1_provider.num_instances,
-            policy_obs_dim=self.flat_obs_dim,
-            foot_sensor=self.foot_sensor,
-            physics_manager=self.physics_manager,
-            device=GameConfig.DEVICE,
-        )
-        if self.critic_obs_provider is not None:
-            print(
-                f"[FlatWalk] asymmetric critic extension active: "
-                f"critic_obs_dim={self.critic_obs_provider.critic_obs_dim}"
-            )
 
         self._apply_foot_friction_randomization()
 
@@ -324,9 +267,11 @@ class FlatWalk(Environment):
         self.physics_manager.simulate()
         # Seed real contact buffers after the post-reset physics step so the
         # first reward / critic read is coherent.
-        self._update_foot_sensor(
-            self.physics_manager, 1.0 / float(GameConfig.FPS_ACTION)
-        )
+        runtime_hooks = getattr(self, "_object_template_runtime_hooks", None) or []
+        for hook in runtime_hooks:
+            refresher = getattr(hook, "refresh_contact_policy_step", None)
+            if callable(refresher):
+                refresher(self.physics_manager, 1.0 / float(GameConfig.FPS_ACTION))
         self.obs_buf_gpu = wp.zeros(
             shape=(self.players.num_rl_players, self.flat_obs_dim), dtype=float, device=GameConfig.DEVICE
         )
@@ -399,7 +344,12 @@ class FlatWalk(Environment):
         model = self.physics_manager.model
         if not hasattr(model, "shape_material_mu") or not hasattr(model, "shape_body"):
             return
-        rng_range = fr_cfg.get("range") or [0.3, 1.2]
+        rng_range = fr_cfg.get("range")
+        if rng_range is None:
+            raise KeyError(
+                "environment_configs.domain_randomization.foot_friction.range "
+                "is required when enabled"
+            )
         lo, hi = float(rng_range[0]), float(rng_range[1])
         shared = bool(fr_cfg.get("shared_random", True))
         patterns = {str(p).rsplit("/", 1)[-1].lower() for p in (fr_cfg.get("body_patterns") or [])}
@@ -453,10 +403,10 @@ class FlatWalk(Environment):
         current_step[tid] += 1
 
     @staticmethod
-    def _range_of(value, default):
+    def _require_range_pair(value, context: str):
         """Normalise a YAML [min, max] pair to a (float, float) tuple."""
-        if value is None:
-            return (float(default[0]), float(default[1]))
+        if not isinstance(value, (list, tuple)) or len(value) != 2:
+            raise ValueError(f"{context} must be a [min, max] pair")
         return (float(value[0]), float(value[1]))
 
     def on_step_actions(self, actions_wp):
@@ -522,93 +472,8 @@ class FlatWalk(Environment):
             # Invalidate the cached Curriculum/* metric tensors.
             self._curriculum_metric_tensors = None
 
-    def reset_env(self, terminated, current_step):
-        super().reset_env(terminated=terminated, current_step=current_step)
-
-        if isinstance(terminated, torch.Tensor):
-            terminated_int = terminated.to(dtype=torch.int32, device=GameConfig.DEVICE)
-        else:
-            terminated_int = torch.tensor(terminated, dtype=torch.int32, device=GameConfig.DEVICE)
-        terminated_wp = wp.from_torch(terminated_int, dtype=wp.int32)
-
-        if self.foot_sensor is not None:
-            self.foot_sensor.reset_envs(
-                terminated_wp, body_q=self.physics_manager.state_0.body_q
-            )
-
-        if self.self_collision_sensor is not None:
-            self.self_collision_sensor.reset_history(terminated_wp)
-
-    def _update_foot_sensor(self, physics_manager, dt: float) -> None:
-        """Policy-step foot-sensor refresh.
-
-        Air-time / contact-time accumulation happens per physics substep in
-        ``_record_self_collision_substep`` (mjlab granularity). Here we only
-        recompute the first-contact / first-air windows at the policy-step dt
-        (mjlab ``compute_first_contact(dt=step_dt)``) and refresh kinematics.
-        """
-        if self.foot_sensor is None:
-            return
-        self.foot_sensor.refresh_policy_step(
-            body_q=physics_manager.state_0.body_q,
-            body_qd=physics_manager.state_0.body_qd,
-            dt=dt,
-        )
-
-    def _update_angular_momentum(self) -> None:
-        """Refresh whole-robot subtree angular momentum (mjlab subtreeangmom).
-
-        mujoco-warp only computes ``subtree_angmom`` during ``sensor_vel`` when
-        the model declares a ``subtreeangmom`` sensor; the game's USD-derived
-        model does not, so call ``smooth.subtree_vel`` explicitly once per step
-        before ``AngularMomentumPenaltyReward`` reads the buffer.
-        """
-        solver = getattr(getattr(self.physics_manager, "solver_handler", None), "solver", None)
-        if solver is None or not hasattr(solver, "mjw_data"):
-            return
-        try:
-            from mujoco_warp._src.smooth import subtree_vel
-        except ImportError:
-            return
-        subtree_vel(solver.mjw_model, solver.mjw_data)
-
-    def _record_self_collision_substep(self, substep_idx: int) -> None:
-        """Per-substep hook: decode self-collision force + foot contact state.
-
-        Runs inside ``physics_manager.simulate()`` (also under CUDA-graph
-        capture). The self-collision sensor accumulates a per-step max-force
-        history; the foot sensor accumulates air/contact times at physics-dt
-        granularity (mjlab updates its contact sensors every substep).
-        """
-        solver = getattr(getattr(self.physics_manager, "solver_handler", None), "solver", None)
-        if solver is None or not hasattr(solver, "mjw_data"):
-            return
-        if substep_idx == 0 and self.self_collision_sensor is not None:
-            self.self_collision_sensor.begin_step()
-        mj_data = solver.mjw_data
-        if self.self_collision_sensor is not None:
-            self.self_collision_sensor.record_substep(
-                contact=mj_data.contact,
-                efc_force=mj_data.efc.force,
-                nacon=mj_data.nacon,
-                geom_bodyid=solver.mjw_model.geom_bodyid,
-                mjc_body_to_newton=solver.mjc_body_to_newton,
-            )
-        if self.foot_sensor is not None:
-            self.foot_sensor.update_substep_from_solver(
-                contact=mj_data.contact,
-                efc_force=mj_data.efc.force,
-                nacon=mj_data.nacon,
-                geom_bodyid=solver.mjw_model.geom_bodyid,
-                mjc_body_to_newton=solver.mjc_body_to_newton,
-                dt=self.physics_manager.sim_dt,
-            )
-
     def update_game_status(self, physics_manager, reward_calculator, num_env, current_step):
-        dt = 1.0 / float(GameConfig.FPS_ACTION)
         super().update_game_status(physics_manager, reward_calculator, num_env, current_step)
-        self._update_foot_sensor(physics_manager, dt)
-        self._update_angular_momentum()
 
         wp.launch(
             kernel=self.update_game_status_gpu,

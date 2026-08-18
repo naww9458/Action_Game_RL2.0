@@ -80,6 +80,10 @@ def _resolve_view_link_index(view, body_name: str) -> int:
 
 def _bind_g1_environment_resources(reward, environment) -> None:
     reward.foot_sensor = getattr(environment, "foot_sensor", None)
+    if reward.foot_sensor is not None:
+        n_feet = getattr(reward.foot_sensor, "NUM_FEET", None)
+        if n_feet is not None:
+            reward.num_feet = int(n_feet)
     # ``policy_actions`` holds the action of the previous step (a_{t-1}) at reward
     # computation time, matching mjlab's ``action_manager.prev_action``.
     reward.policy_actions = getattr(environment, "policy_actions", None)
@@ -444,14 +448,11 @@ class AngularMomentumPenaltyReward(RewardComponent):
         _init_mjlab_scaling(self, "AngularMomentumPenaltyReward")
 
     def bind_environment(self, environment):
-        from script.role.objects.object_template.mjlab_unitree_g1.g1_foot_sensor_cfg import (
-            resolve_g1_body_mj_id,
-        )
-
+        resolver = getattr(environment, "resolve_body_mj_id", None)
         pm = getattr(environment, "physics_manager", None)
-        if pm is None:
+        if resolver is None or pm is None:
             return
-        self.root_mj_body_id = resolve_g1_body_mj_id(pm, self.root_body_name)
+        self.root_mj_body_id = resolver(pm, self.root_body_name)
 
     def calculate(
         self,
@@ -600,7 +601,7 @@ class FeetAirTimeReward(RewardComponent):
         super().__init__(**kwargs)
         self.device = device
         self.foot_sensor = None
-        self.num_feet = 2
+        self.num_feet = 0
         cfg = _component_params(self.params, "FeetAirTimeReward")
         self.threshold_min = float(cfg.get("threshold_min", 0.05))
         self.threshold_max = float(cfg.get("threshold_max", 0.5))
@@ -683,7 +684,7 @@ class FeetClearanceReward(RewardComponent):
         super().__init__(**kwargs)
         self.device = device
         self.foot_sensor = None
-        self.num_feet = 2
+        self.num_feet = 0
         cfg = _component_params(self.params, "FeetClearanceReward")
         self.target_height = float(cfg.get("target_height", 0.1))
         self.command_threshold = float(cfg.get("command_threshold", 0.05))
@@ -767,7 +768,7 @@ class FeetSlipReward(RewardComponent):
         super().__init__(**kwargs)
         self.device = device
         self.foot_sensor = None
-        self.num_feet = 2
+        self.num_feet = 0
         cfg = _component_params(self.params, "FeetSlipReward")
         self.command_threshold = float(cfg.get("command_threshold", 0.05))
         _init_mjlab_scaling(self, "FeetSlipReward")
@@ -856,7 +857,7 @@ class FeetSwingHeightReward(RewardComponent):
         self.device = device
         self.foot_sensor = None
         self.num_env = GameConfig.NUM_PLAYERS
-        self.num_feet = 2
+        self.num_feet = 0
         cfg = _component_params(self.params, "FeetSwingHeightReward")
         self.target_height = float(cfg.get("target_height", 0.1))
         self.command_threshold = float(cfg.get("command_threshold", 0.05))
@@ -865,6 +866,8 @@ class FeetSwingHeightReward(RewardComponent):
 
     def bind_environment(self, environment):
         _bind_g1_environment_resources(self, environment)
+        if self.foot_sensor is None or self.num_feet <= 0:
+            return
         if self.peak_heights is None:
             self.peak_heights = wp.zeros(
                 (self.num_env, self.num_feet), dtype=wp.float32, device=self.device
@@ -1084,20 +1087,47 @@ class SelfCollisionCostReward(RewardComponent):
         self.device = device
         self.self_collision_sensor = None
         cfg = _component_params(self.params, "SelfCollisionCostReward")
-        self.num_history = int(cfg.get("num_history", 4))
-        self.force_threshold = float(cfg.get("force_threshold", 10.0))
+        if "num_history" not in cfg:
+            raise KeyError(
+                "Missing reward_parameters.SelfCollisionCostReward.num_history"
+            )
+        if "force_threshold" not in cfg:
+            raise KeyError(
+                "Missing reward_parameters.SelfCollisionCostReward.force_threshold"
+            )
+        self.num_history = int(cfg["num_history"])
+        self.force_threshold = float(cfg["force_threshold"])
         self.use_force_history = self.num_history > 0
         _init_mjlab_scaling(self, "SelfCollisionCostReward")
 
     def bind_environment(self, environment):
-        """Bind the environment's per-substep self-collision sensor (mjlab semantics).
+        """Attach or create the per-substep self-collision sensor.
 
-        The sensor keeps a rolling ``force_history`` of the max robot-on-robot
-        contact force over the last ``history_length`` substeps (index 0 = most
-        recent), matching mjlab's ``self_collision`` ContactSensor with
-        ``history_length`` set to the decimation value.
+        ``num_history`` / ``force_threshold`` come from the training preset.
+        Solver constants are copied from the environment's foot sensor when present.
         """
-        self.self_collision_sensor = getattr(environment, "self_collision_sensor", None)
+        existing = getattr(environment, "self_collision_sensor", None)
+        if existing is not None:
+            self.self_collision_sensor = existing
+            return
+        foot = getattr(environment, "foot_sensor", None)
+        constants_fn = getattr(foot, "solver_constants", None) if foot is not None else None
+        constants = constants_fn() if callable(constants_fn) else None
+        if not constants:
+            return
+        try:
+            from sensors.contact_sensor import SelfCollisionSensor
+        except ImportError:
+            from script.sensors.contact_sensor import SelfCollisionSensor
+        sensor = SelfCollisionSensor(
+            int(environment.num_env),
+            device=self.device,
+            history_length=self.num_history,
+            ground_geom_id=int(foot.ground_geom_id),
+        )
+        sensor.bind_solver_constants(**constants)
+        environment.self_collision_sensor = sensor
+        self.self_collision_sensor = sensor
 
     def calculate(
         self,
@@ -1198,7 +1228,7 @@ class SoftLandingReward(RewardComponent):
         super().__init__(**kwargs)
         self.device = device
         self.foot_sensor = None
-        self.num_feet = 2
+        self.num_feet = 0
         cfg = _component_params(self.params, "SoftLandingReward")
         self.command_threshold = float(cfg.get("command_threshold", 0.05))
         _init_mjlab_scaling(self, "SoftLandingReward")

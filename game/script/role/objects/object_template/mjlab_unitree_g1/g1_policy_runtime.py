@@ -18,11 +18,9 @@ from script.role.abilities.articulation_control_config.profile_registry import (
 from script.role.abilities.articulation_control_config.robot_pattern import (
     normalize_robot_pattern,
 )
-from script.role.policies.policy_bundle import PolicyBundleRegistry
+from script.role.policies.policy_bundle import PolicyBundleRegistry, PolicyBundleSpec
 
 from .g1_control_config import G1_ROBOT_NAME
-
-_HISTORY_LEN = 1
 
 
 def _player_object_cfg(player_cfg: dict) -> dict:
@@ -39,29 +37,53 @@ def _find_g1_player(environment: Any) -> Optional[dict]:
     return None
 
 
-def _range_pair(value, default) -> tuple[float, float]:
-    if value is None:
-        return (float(default[0]), float(default[1]))
+def _require_range_pair(value: Any, *, context: str) -> tuple[float, float]:
+    if not isinstance(value, (list, tuple)) or len(value) != 2:
+        raise ValueError(f"{context} must be a [min, max] pair")
     return (float(value[0]), float(value[1]))
 
 
 def _encoder_bias_range(dr_cfg: dict) -> Optional[tuple[float, float]]:
     enc_cfg = dr_cfg.get("encoder_bias")
-    if not isinstance(enc_cfg, dict) or not enc_cfg.get("enabled", True):
+    if not isinstance(enc_cfg, dict):
         return None
-    br = enc_cfg.get("bias_range") or [-0.015, 0.015]
-    return (float(br[0]), float(br[1]))
+    if "enabled" not in enc_cfg:
+        raise KeyError("domain_randomization.encoder_bias.enabled is required")
+    if not enc_cfg["enabled"]:
+        return None
+    if "bias_range" not in enc_cfg:
+        raise KeyError(
+            "domain_randomization.encoder_bias.bias_range is required when enabled"
+        )
+    return _require_range_pair(
+        enc_cfg["bias_range"],
+        context="domain_randomization.encoder_bias.bias_range",
+    )
 
 
 def _base_com_offset_range(dr_cfg: dict) -> Optional[dict]:
     com_cfg = dr_cfg.get("base_com")
-    if not isinstance(com_cfg, dict) or not com_cfg.get("enabled", True):
+    if not isinstance(com_cfg, dict):
         return None
-    cr = com_cfg.get("offset_range") or {}
+    if "enabled" not in com_cfg:
+        raise KeyError("domain_randomization.base_com.enabled is required")
+    if not com_cfg["enabled"]:
+        return None
+    cr = com_cfg.get("offset_range")
+    if not isinstance(cr, dict):
+        raise KeyError(
+            "domain_randomization.base_com.offset_range is required when enabled"
+        )
+    missing = [axis for axis in ("x", "y", "z") if axis not in cr]
+    if missing:
+        raise KeyError(
+            "domain_randomization.base_com.offset_range missing axes "
+            f"{missing}"
+        )
     return {
-        "x": _range_pair(cr.get("x"), (-0.025, 0.025)),
-        "y": _range_pair(cr.get("y"), (-0.025, 0.025)),
-        "z": _range_pair(cr.get("z"), (-0.03, 0.03)),
+        "x": _require_range_pair(cr["x"], context="base_com.offset_range.x"),
+        "y": _require_range_pair(cr["y"], context="base_com.offset_range.y"),
+        "z": _require_range_pair(cr["z"], context="base_com.offset_range.z"),
     }
 
 
@@ -99,7 +121,65 @@ def _bind_provider_on_environment(environment: Any, provider: Any) -> None:
     environment.policy_actions = provider.policy_actions
     environment.prev_actions = provider.prev_actions
     environment.view = provider.view
-    environment.history_len = int(getattr(provider, "history_len", _HISTORY_LEN) or _HISTORY_LEN)
+    environment.history_len = int(provider.history_len)
+
+
+def _attach_contact_runtime(environment: Any, bundle: PolicyBundleSpec) -> None:
+    """Create the version's foot contact sensor when ``foot_sensor_cfg.py`` exists."""
+    foot_mod = PolicyBundleRegistry.import_version_module(bundle, "foot_sensor_cfg")
+    if foot_mod is None:
+        return
+
+    environment.resolve_body_mj_id = getattr(foot_mod, "resolve_g1_body_mj_id", None)
+
+    pm = getattr(environment, "physics_manager", None)
+    if pm is None:
+        return
+
+    try:
+        from sensors.foot_contact_sensor import FootContactSensor
+    except ImportError:
+        from script.sensors.foot_contact_sensor import FootContactSensor
+
+    foot_cfg = foot_mod.load_g1_foot_sensor_config()
+    foot_mapping = foot_mod.resolve_g1_foot_body_mapping(
+        pm, GameConfig.DEVICE, body_suffixes=foot_cfg.bodies
+    )
+    environment.foot_sensor = FootContactSensor(
+        environment.num_env,
+        device=GameConfig.DEVICE,
+        primary_newton_bodies=foot_mapping.ankle_newton_bodies_wp,
+        num_feet=foot_cfg.num_feet,
+        ground_geom_id=foot_cfg.ground_geom_id,
+        ground_height=foot_cfg.ground_height,
+        foot_height_site_offset=foot_cfg.foot_height_site_offset,
+    )
+    environment.foot_sensor.bind_solver_constants(
+        ngeom=foot_mapping.ngeom,
+        njmax=foot_mapping.njmax,
+        nbody_mj=foot_mapping.nbody_mj,
+        naconmax=foot_mapping.naconmax,
+        opt_cone=foot_mapping.opt_cone,
+    )
+
+
+def _attach_critic(environment: Any, bundle: PolicyBundleSpec, provider: Any) -> None:
+    from script.role.policies.critic_obs_provider import CriticObsProviderRegistry
+
+    critic_id = bundle.obs_critic
+    environment.critic_obs_provider = CriticObsProviderRegistry.create(
+        critic_id,
+        num_instances=provider.num_instances,
+        policy_obs_dim=environment.flat_obs_dim,
+        foot_sensor=getattr(environment, "foot_sensor", None),
+        physics_manager=environment.physics_manager,
+        device=GameConfig.DEVICE,
+    )
+    if environment.critic_obs_provider is not None:
+        print(
+            f"[G1PolicyRuntime] asymmetric critic extension active: "
+            f"critic_obs_dim={environment.critic_obs_provider.critic_obs_dim}"
+        )
 
 
 class G1PolicyRuntime:
@@ -126,18 +206,29 @@ class G1PolicyRuntime:
             self.provider.compute_single_frame_obs(self._environment.physics_manager)
             self.provider.reset_history(terminated_wp, self._environment.physics_manager)
 
+        env = self._environment
+        pm = getattr(env, "physics_manager", None)
+        body_q = getattr(getattr(pm, "state_0", None), "body_q", None) if pm is not None else None
+        foot = getattr(env, "foot_sensor", None)
+        if foot is not None and body_q is not None:
+            foot.reset_envs(terminated_wp, body_q=body_q)
+        self_collision = getattr(env, "self_collision_sensor", None)
+        if self_collision is not None:
+            self_collision.reset_history(terminated_wp)
+
     def on_update_game_status(self, physics_manager, reward_calculator, num_env, current_step) -> None:
         del reward_calculator, num_env, current_step
         dt = 1.0 / float(GameConfig.FPS_ACTION)
         self.provider.update_velocity_commands(physics_manager, dt)
+        self._update_foot_sensor(physics_manager, dt)
+        self._update_angular_momentum(physics_manager)
 
     def on_step_actions(self, actions_wp) -> None:
         """Store game actions as G1 joint targets only when they already match.
 
-        ``flat_walk`` writes ``(num_instances, 29)`` joint actions here. Play
-        scenes with ``Articulation_body_control_rl_assisted`` send high-level
-        commands (e.g. ``(num_rl_players, 5)``); that ability already stores
-        the policy's 29-DoF actions on its own provider.
+        Training writes low-level joint actions here. Play scenes with
+        ``Articulation_body_control_rl_assisted`` send high-level commands;
+        that ability already stores the policy's joint actions on its own provider.
         """
         provider = self.provider
         if provider is None or getattr(provider, "policy_actions", None) is None:
@@ -149,6 +240,73 @@ class G1PolicyRuntime:
         if tuple(int(d) for d in actions_torch.shape) != expected:
             return
         provider.store_low_level_actions(wp.from_torch(actions_torch.contiguous()))
+
+    def on_post_substep(self, substep_idx: int) -> None:
+        """Per-substep contact decode for foot air-time and self-collision history."""
+        env = self._environment
+        pm = getattr(env, "physics_manager", None)
+        solver = getattr(getattr(pm, "solver_handler", None), "solver", None)
+        if solver is None or not hasattr(solver, "mjw_data"):
+            return
+        self_collision = getattr(env, "self_collision_sensor", None)
+        if substep_idx == 0 and self_collision is not None:
+            self_collision.begin_step()
+        mj_data = solver.mjw_data
+        if self_collision is not None:
+            self_collision.record_substep(
+                contact=mj_data.contact,
+                efc_force=mj_data.efc.force,
+                nacon=mj_data.nacon,
+                geom_bodyid=solver.mjw_model.geom_bodyid,
+                mjc_body_to_newton=solver.mjc_body_to_newton,
+            )
+        foot = getattr(env, "foot_sensor", None)
+        if foot is not None:
+            foot.update_substep_from_solver(
+                contact=mj_data.contact,
+                efc_force=mj_data.efc.force,
+                nacon=mj_data.nacon,
+                geom_bodyid=solver.mjw_model.geom_bodyid,
+                mjc_body_to_newton=solver.mjc_body_to_newton,
+                dt=pm.sim_dt,
+            )
+
+    def _update_foot_sensor(self, physics_manager, dt: float) -> None:
+        foot = getattr(self._environment, "foot_sensor", None)
+        if foot is None:
+            return
+        foot.refresh_policy_step(
+            body_q=physics_manager.state_0.body_q,
+            body_qd=physics_manager.state_0.body_qd,
+            dt=dt,
+        )
+
+    def refresh_contact_policy_step(self, physics_manager, dt: float) -> None:
+        """Recompute policy-step foot kinematics after a physics step."""
+        self._update_foot_sensor(physics_manager, dt)
+
+    def _update_angular_momentum(self, physics_manager) -> None:
+        """Refresh whole-robot subtree angular momentum when the solver exposes it."""
+        solver = getattr(getattr(physics_manager, "solver_handler", None), "solver", None)
+        if solver is None or not hasattr(solver, "mjw_data"):
+            return
+        try:
+            from mujoco_warp._src.smooth import subtree_vel
+        except ImportError:
+            return
+        subtree_vel(solver.mjw_model, solver.mjw_data)
+
+
+def _bind_post_substep(environment: Any, runtime: G1PolicyRuntime) -> None:
+    pm = getattr(environment, "physics_manager", None)
+    if pm is None:
+        return
+    if (
+        getattr(environment, "foot_sensor", None) is None
+        and getattr(environment, "self_collision_sensor", None) is None
+    ):
+        return
+    pm.post_substep_callback = runtime.on_post_substep
 
 
 def attach_if_present(environment: Any) -> Optional[G1PolicyRuntime]:
@@ -172,21 +330,24 @@ def attach_if_present(environment: Any) -> Optional[G1PolicyRuntime]:
     robot_pattern = normalize_robot_pattern(str(object_cfg.get("pattern") or G1_ROBOT_NAME))
     runtime_pattern = resolve_player_runtime_pattern(player_cfg)
     bundle = PolicyBundleRegistry.get(str(version), robot_pattern=robot_pattern)
-    provider = PolicyBundleRegistry.create_obs_provider(
-        bundle.obs_provider,
+    provider = PolicyBundleRegistry.create_obs_actor(
+        bundle.obs_actor,
         num_env=environment.num_env,
         device=GameConfig.DEVICE,
         articulation_body=articulation_body,
         pattern=runtime_pattern,
-        history_len=_HISTORY_LEN,
+        history_len=int(bundle.history_len),
         enable_obs_noise=bool(getattr(GameConfig, "ENABLE_OBS_NOISE", False)),
         obs_noise_cfg=obs_noise_cfg,
         encoder_bias_range=_encoder_bias_range(dr_cfg),
         base_com_offset_range=_base_com_offset_range(dr_cfg),
     )
     _bind_provider_on_environment(environment, provider)
+    _attach_contact_runtime(environment, bundle)
+    _attach_critic(environment, bundle, provider)
     _wire_encoder_bias_into_action(environment, provider)
     runtime = G1PolicyRuntime(environment, provider)
+    _bind_post_substep(environment, runtime)
     hooks = getattr(environment, "_object_template_runtime_hooks", None)
     if hooks is None:
         hooks = []

@@ -121,6 +121,7 @@ class WarpEnv(gym.Env):
                          capture_per_second=None, 
                          requires_grad=self.requires_grad,
                          player_controllers=player_controllers,
+                         control_policy_version=getattr(train_cfg, "control_policy_version", None),
                         )
 
         self.num_agents_each_env = train_cfg.num_agents_each_env

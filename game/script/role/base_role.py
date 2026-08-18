@@ -219,6 +219,9 @@ class BaseRole(ABC):
                 default_position_tuple[i] = (float(pos), float(pos))
                 position[i] = float(pos)
 
+        from script.role.objects.object_template.loader import prepare_object_config
+
+        prepare_object_config(object)
         data, size = self._physics_manager.add_shape(
             label=label,
             object_config=object,

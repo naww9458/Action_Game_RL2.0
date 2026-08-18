@@ -84,6 +84,15 @@ def _reward_component_options() -> list[str]:
         return []
 
 
+def _control_policy_version_options() -> list[str]:
+    try:
+        from script.role.policies.policy_bundle import PolicyBundleRegistry
+
+        return PolicyBundleRegistry.list_version_ids()
+    except Exception:
+        return []
+
+
 class _MultiSelectComboBox(QComboBox):
     selection_changed = pyqtSignal(list)
 
@@ -375,7 +384,7 @@ class PresetFormEditor(QWidget):
 
         elif field_type in ("enum", "enum_nullable"):
             combo = QComboBox()
-            options = list(field_spec.get("options", []))
+            options = self._resolve_options(field_spec)
             if field_type == "enum_nullable":
                 combo.addItem("null", None)
             for opt in options:
@@ -383,10 +392,13 @@ class PresetFormEditor(QWidget):
             if field_spec.get("allow_custom"):
                 combo.setEditable(True)
             def on_combo_changed(_idx: int, c=combo, ft=field_type) -> None:
-                if ft == "enum_nullable" and c.currentData() is None:
+                text = c.currentText()
+                if ft == "enum_nullable" and (
+                    c.currentData() is None and text in ("null", "", "None")
+                ):
                     setter(None)
                 else:
-                    setter(c.currentText())
+                    setter(text)
 
             combo.currentIndexChanged.connect(on_combo_changed)
             widget = combo
@@ -426,6 +438,8 @@ class PresetFormEditor(QWidget):
         source = field_spec.get("options_source")
         if source == "reward_components":
             return _reward_component_options()
+        if source == "control_policy_versions":
+            return _control_policy_version_options()
         return list(field_spec.get("options", []))
 
     def _parse_string_list(self, text: str) -> list[str]:
@@ -589,10 +603,11 @@ class PresetFormEditor(QWidget):
             return text
 
         if field_type == "enum_nullable":
+            text = widget.currentText()
             data = widget.currentData()
-            if data is None:
+            if data is None and text in ("null", "", "None"):
                 return None
-            return widget.currentText()
+            return text
 
         if field_type == "multi_select_unique":
             selected = widget.selected()

@@ -79,6 +79,7 @@ class Game:
                  capture_per_second: int = None, 
                  requires_grad: bool = False,
                  player_controllers: list[str] | None = None,
+                 control_policy_version: str | None = None,
                 ):
         """
         Initialize the balancing ball game.
@@ -149,6 +150,7 @@ class Game:
             platform_configs=platform_configs, 
             environment_configs=environment_configs,
             player_controllers=player_controllers,
+            control_policy_version=control_policy_version,
         )
         self.window_x = window_size[0]
         self.window_y = window_size[1]

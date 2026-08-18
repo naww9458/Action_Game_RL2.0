@@ -143,3 +143,4 @@ train:
         .*elbow.*: 0.35
         .*wrist.*: 0.3
   player_ids: []
+  control_policy_version: V1

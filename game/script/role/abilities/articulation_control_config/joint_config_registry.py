@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import inspect
 from typing import Callable, Dict, List, Optional, Tuple
 
 from script.role.abilities.articulation_control_config.config_models import (
@@ -11,7 +12,7 @@ from script.role.abilities.articulation_control_config.robot_pattern import (
     normalize_robot_pattern,
 )
 
-RobotConfigLoader = Callable[[], object]
+RobotConfigLoader = Callable[..., object]
 
 _ROBOT_LOADERS: Dict[str, RobotConfigLoader] = {}
 
@@ -37,19 +38,43 @@ def _resolve_robot_pattern(pattern: str) -> str:
     return robot_pattern
 
 
-def _try_load_robot_config(pattern: str, task_name: str | None):
+def _try_load_robot_config(
+    pattern: str,
+    task_name: str | None,
+    control_policy_version: str | None = None,
+):
     _ensure_object_templates()
     robot_pattern = normalize_robot_pattern(pattern)
     if robot_pattern not in _ROBOT_LOADERS:
         return None
-    return _load_robot_config(robot_pattern, task_name)
+    return _load_robot_config(robot_pattern, task_name, control_policy_version)
 
 
-def _load_robot_config(robot_pattern: str, task_name: str | None):
+def _load_robot_config(
+    robot_pattern: str,
+    task_name: str | None,
+    control_policy_version: str | None = None,
+):
     loader = _ROBOT_LOADERS[robot_pattern]
-    config = loader()
-    if task_name is not None and hasattr(config, "from_yaml"):
-        return config.from_yaml(task_name=task_name)
+    try:
+        params = inspect.signature(loader).parameters
+    except (TypeError, ValueError):
+        params = {}
+    kwargs: Dict[str, object] = {}
+    accepts_task = "task_name" in params
+    if accepts_task and task_name is not None:
+        kwargs["task_name"] = task_name
+    if "control_policy_version" in params and control_policy_version is not None:
+        kwargs["control_policy_version"] = control_policy_version
+    config = loader(**kwargs) if kwargs else loader()
+    if task_name is not None and not accepts_task and hasattr(config, "from_yaml"):
+        yaml_kwargs: Dict[str, object] = {"task_name": task_name}
+        if control_policy_version is not None:
+            yaml_kwargs["control_policy_version"] = control_policy_version
+        try:
+            return config.from_yaml(**yaml_kwargs)
+        except TypeError:
+            return config.from_yaml(task_name=task_name)
     return config
 
 
@@ -60,9 +85,10 @@ def apply_physics_init_for_pattern(
     joint_start: int,
     joint_end: int,
     task_name: str | None = None,
+    control_policy_version: str | None = None,
 ) -> None:
     robot_pattern = _resolve_robot_pattern(pattern)
-    config = _load_robot_config(robot_pattern, task_name)
+    config = _load_robot_config(robot_pattern, task_name, control_policy_version)
     config.apply_builder_physics_init(builder_env, start_q_idx, joint_start, joint_end)
 
 
@@ -71,17 +97,19 @@ def resolve_joint_arrays_for_pattern(
     joint_labels: List[str],
     default_qs: Optional[List[float]] = None,
     task_name: str | None = None,
+    control_policy_version: str | None = None,
 ) -> Tuple[List[float], List[float], List[float], List[float], List[int], List[int], float]:
     robot_pattern = _resolve_robot_pattern(pattern)
-    config = _load_robot_config(robot_pattern, task_name)
+    config = _load_robot_config(robot_pattern, task_name, control_policy_version)
     return config.resolve_joint_arrays(joint_labels=joint_labels, default_qs=default_qs)
 
 
 def resolve_command_interface_for_pattern(
     pattern: str,
     task_name: str | None = None,
+    control_policy_version: str | None = None,
 ):
-    config = _try_load_robot_config(pattern, task_name)
+    config = _try_load_robot_config(pattern, task_name, control_policy_version)
     if config is None or not hasattr(config, "get_command_interface"):
         return None
     return config.get_command_interface()
@@ -91,8 +119,13 @@ def resolve_rl_action_dim_for_pattern(
     pattern: str,
     per_dof_rl_dim: int,
     task_name: str | None = None,
+    control_policy_version: str | None = None,
 ) -> int:
-    command_iface = resolve_command_interface_for_pattern(pattern, task_name=task_name)
+    command_iface = resolve_command_interface_for_pattern(
+        pattern,
+        task_name=task_name,
+        control_policy_version=control_policy_version,
+    )
     if command_iface is not None:
         return int(command_iface.command_dim)
     return int(per_dof_rl_dim)
@@ -103,8 +136,9 @@ def resolve_possess_offset_for_pattern(
     task_name: str | None = None,
     object_config: dict | None = None,
     path_body_map: dict | None = None,
+    control_policy_version: str | None = None,
 ) -> Optional[Tuple[float, float, float]]:
-    config = _try_load_robot_config(pattern, task_name)
+    config = _try_load_robot_config(pattern, task_name, control_policy_version)
     if config is None:
         return None
 
@@ -156,9 +190,10 @@ def resolve_possess_offset_for_pattern(
 def resolve_follow_body_prim_suffix(
     pattern: str,
     task_name: str | None = None,
+    control_policy_version: str | None = None,
 ) -> Optional[str]:
     """Body prim suffix to follow for camera (falls back to articulation root)."""
-    config = _try_load_robot_config(pattern, task_name)
+    config = _try_load_robot_config(pattern, task_name, control_policy_version)
     if config is None:
         return None
     suffix = getattr(config, "possess_body_prim_suffix", None)
@@ -171,12 +206,13 @@ def resolve_runtime_nominals_gpu_spec(
     pattern: str,
     joint_labels: List[str],
     task_name: str | None = None,
+    control_policy_version: str | None = None,
 ):
     from script.role.abilities.articulation_control_config.runtime_helpers import (
         RuntimeNominalsGpuSpec,
     )
 
-    config = _try_load_robot_config(pattern, task_name)
+    config = _try_load_robot_config(pattern, task_name, control_policy_version)
     if config is None or not hasattr(config, "build_runtime_nominals_gpu_spec"):
         return None
     spec = config.build_runtime_nominals_gpu_spec(joint_labels)

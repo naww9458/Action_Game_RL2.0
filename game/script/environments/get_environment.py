@@ -1,4 +1,5 @@
 import importlib
+from pathlib import Path
 
 from script.environments.environment import DefaultEnvironment, Environment
 from script.environments.environment_cfg import EnvironmentDefinition
@@ -47,26 +48,36 @@ def _try_load_sibling_class(config_path, config_obj: EnvironmentDefinition) -> O
     return getattr(module, class_name)
 
 
+def _is_missing_target_module(exc: ModuleNotFoundError, module_name: str) -> bool:
+    """True when ``import_module(module_name)`` failed because that module is absent."""
+    missing = str(exc.name or "")
+    if not missing:
+        return True
+    if missing == module_name or module_name.startswith(missing + ".") or missing.startswith(module_name + "."):
+        return True
+    return missing in module_name.split(".")
+
+
 def _resolve_environment_class(
     config_obj: EnvironmentDefinition,
     config_path=None,
 ) -> Type:
-    if config_path is not None:
-        try:
-            sibling = _try_load_sibling_class(config_path, config_obj)
-            if sibling is not None:
-                return sibling
-        except AttributeError:
-            pass
-
     class_path = _environment_class_path(config_obj)
     if class_path:
         try:
             return _import_class(class_path)
         except ModuleNotFoundError as exc:
             module_name, _, _ = str(class_path).replace(":", ".").rpartition(".")
-            if exc.name != module_name:
+            if not _is_missing_target_module(exc, module_name):
                 raise
+        except AttributeError:
+            pass
+
+    if config_path is not None:
+        try:
+            sibling = _try_load_sibling_class(config_path, config_obj)
+            if sibling is not None:
+                return sibling
         except AttributeError:
             pass
 
@@ -79,6 +90,7 @@ def get_environment(
     game: 'Game' = None,
     environment_config_path=None,
     player_controllers: list[str] | None = None,
+    control_policy_version: str | None = None,
     **runtime_overrides
 ) -> Environment:
     """Load and instantiate an environment from catalog path or ``env_id`` (YAML stem)."""
@@ -100,12 +112,17 @@ def get_environment(
                 f"No environment catalog entry for env_id={env_id}"
             )
 
+    from script.environments.env_catalog import prefer_custom_env_path
+
+    resolved_path = prefer_custom_env_path(Path(resolved_path))
+
     print("config_path: ", resolved_path)
     try:
         config_obj = EnvironmentDefinition.load(
             resolved_path,
             overrides=runtime_overrides,
             player_controllers=player_controllers,
+            control_policy_version=control_policy_version,
         )
     except Exception as e:
         import traceback

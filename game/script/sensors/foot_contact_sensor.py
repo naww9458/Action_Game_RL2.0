@@ -182,6 +182,18 @@ class FootContactSensor:
         self._opt_cone = int(opt_cone)
         self._solver_bound = True
 
+    def solver_constants(self) -> dict | None:
+        """Return bound solver sizes, or None before ``bind_solver_constants``."""
+        if not self._solver_bound:
+            return None
+        return {
+            "ngeom": self._ngeom,
+            "njmax": self._njmax,
+            "nbody_mj": self._nbody_mj,
+            "naconmax": self._naconmax,
+            "opt_cone": self._opt_cone,
+        }
+
     def update_from_solver(
         self,
         *,

@@ -1,6 +1,6 @@
 display_name: 障礙物對抗
 intro: Obstacle Duel. APG demo：雙人障礙物對抗。
-environment_class: script.environments.template.rl.apg_demo.obstacle_duel.obstacle_duel.ObstacleDuel
+environment_class: script.environments.custom.rl.apg_demo.obstacle_duel.obstacle_duel.ObstacleDuel
 environment_configs:
   space_xyz:
   - 20

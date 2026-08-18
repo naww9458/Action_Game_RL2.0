@@ -14,7 +14,7 @@ import numpy as np
 import warp as wp
 import yaml
 
-from .g1_control_config import G1_CONTROL_CONFIG_PATH, G1_ROBOT_NAME
+_VERSION_DIR = Path(__file__).resolve().parent
 
 
 @dataclass(frozen=True)
@@ -36,7 +36,7 @@ _FOOT_SENSOR_CFG_CACHE: dict[str, G1FootSensorConfig] = {}
 def load_g1_foot_sensor_config(
     config_path: Optional[Path] = None,
 ) -> G1FootSensorConfig:
-    path = config_path or G1_CONTROL_CONFIG_PATH
+    path = config_path or (_VERSION_DIR / "control_configs.yaml")
     cache_key = str(path)
     cached = _FOOT_SENSOR_CFG_CACHE.get(cache_key)
     if cached is not None:
@@ -44,28 +44,33 @@ def load_g1_foot_sensor_config(
 
     with path.open("r", encoding="utf-8") as fh:
         raw_data = yaml.safe_load(fh) or {}
-    robot_cfg = raw_data.get(G1_ROBOT_NAME, {})
-    foot_cfg = robot_cfg.get("foot_sensor", {})
-    if not isinstance(foot_cfg, dict):
+    if not isinstance(raw_data, dict):
+        raw_data = {}
+    foot_cfg = raw_data.get("unitree_g1") or {}
+    if isinstance(foot_cfg, dict):
+        nested = foot_cfg.get("foot_sensor")
+        foot_cfg = nested if isinstance(nested, dict) else {}
+    else:
         foot_cfg = {}
 
-    bodies = foot_cfg.get("bodies") or [
-        "left_ankle_roll_link",
-        "right_ankle_roll_link",
-    ]
+    bodies = foot_cfg.get("bodies")
     if not isinstance(bodies, (list, tuple)) or len(bodies) == 0:
         raise ValueError(f"foot_sensor.bodies must be a non-empty list in {path}")
 
+    if "ground_geom_id" not in foot_cfg:
+        raise KeyError(f"foot_sensor.ground_geom_id is required in {path}")
+    if "ground_height" not in foot_cfg:
+        raise KeyError(f"foot_sensor.ground_height is required in {path}")
+
     site = foot_cfg.get("foot_height_site_offset")
-    if isinstance(site, (list, tuple)) and len(site) == 3:
-        site_offset = (float(site[0]), float(site[1]), float(site[2]))
-    else:
-        site_offset = (0.0, 0.0, float(foot_cfg.get("foot_height_offset", 0.0)))
+    if not isinstance(site, (list, tuple)) or len(site) != 3:
+        raise KeyError(f"foot_sensor.foot_height_site_offset must be a 3-element list in {path}")
+    site_offset = (float(site[0]), float(site[1]), float(site[2]))
 
     instance = G1FootSensorConfig(
         bodies=tuple(str(b) for b in bodies),
-        ground_geom_id=int(foot_cfg.get("ground_geom_id", 0)),
-        ground_height=float(foot_cfg.get("ground_height", 0.0)),
+        ground_geom_id=int(foot_cfg["ground_geom_id"]),
+        ground_height=float(foot_cfg["ground_height"]),
         foot_height_offset=float(site_offset[2]),
         foot_height_site_offset=site_offset,
     )

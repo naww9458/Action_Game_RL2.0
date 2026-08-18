@@ -1,25 +1,20 @@
 """Generic asymmetric-critic observation provider registry (service locator).
 
-Robot-specific critic-observation extensions (e.g. Unitree G1 foot-state
-extras) register a factory here under their normalized robot pattern. Levels
-discover the extension lazily via ``CriticObsProviderRegistry.create`` and
-gracefully fall back to the symmetric (policy) observation when no provider is
-registered for the player pattern.
+Version-specific critic extras (e.g. G1 V1 foot-state) register a factory under
+the id in ``control_policy.yaml`` ``observation.obs_critic``. Tasks call
+``CriticObsProviderRegistry.create(provider_id, ...)`` and fall back to the
+symmetric (policy) observation when no factory is registered.
 """
 
 from __future__ import annotations
 
 from typing import Any, Callable, Dict, Optional
 
-from script.role.abilities.articulation_control_config.robot_pattern import (
-    normalize_robot_pattern,
-)
-
 
 class CriticObsProvider:
     """Duck-typed protocol for an asymmetric-critic observation extension.
 
-    Concrete implementations live next to their robot's ``object_template``
+    Concrete implementations live in ``object_template/.../models/<version>/``
     and expose at least:
 
     * ``critic_obs_dim`` (``int``): number of extra columns appended after the
@@ -39,18 +34,24 @@ class CriticObsProvider:
 
 
 class CriticObsProviderRegistry:
-    """Service locator mapping normalized robot pattern -> critic-obs factory."""
+    """Service locator mapping critic-provider id -> factory."""
 
     _factories: Dict[str, Callable[..., CriticObsProvider]] = {}
 
     @classmethod
-    def register(cls, robot_pattern: str, factory: Callable[..., CriticObsProvider]) -> None:
-        cls._factories[normalize_robot_pattern(robot_pattern)] = factory
+    def register(cls, provider_id: str, factory: Callable[..., CriticObsProvider]) -> None:
+        cls._factories[str(provider_id).strip()] = factory
 
     @classmethod
-    def create(cls, robot_pattern: str, **kwargs) -> Optional[CriticObsProvider]:
-        """Create the provider for ``robot_pattern`` or return ``None`` when absent."""
-        factory = cls._factories.get(normalize_robot_pattern(robot_pattern))
+    def is_registered(cls, provider_id: str) -> bool:
+        return str(provider_id).strip() in cls._factories
+
+    @classmethod
+    def create(cls, provider_id: str | None, **kwargs) -> Optional[CriticObsProvider]:
+        """Create the provider for ``provider_id`` or return ``None`` when absent."""
+        if not provider_id:
+            return None
+        factory = cls._factories.get(str(provider_id).strip())
         if factory is None:
             return None
         provider = factory(**kwargs)

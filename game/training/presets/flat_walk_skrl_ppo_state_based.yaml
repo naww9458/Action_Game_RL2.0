@@ -51,6 +51,7 @@ train:
   seed: 31415926
   num_agents_each_env: 1
   num_envs_default: 4096
+  control_policy_version: V1
   reward_components:
     - TrackLinearVelocityReward
     - TrackAngularVelocityReward

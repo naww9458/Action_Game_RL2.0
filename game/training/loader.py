@@ -65,6 +65,7 @@ class TrainConfigView:
         self.reward_components_diff = [RewardComponent.resolve(name) for name in train.reward_components_diff]
         self.reward_parameters = dict(train.reward_parameters)
         self.player_controllers = list(train.player_ids)
+        self.control_policy_version = train.control_policy_version
         rl_count = sum(1 for c in self.player_controllers if c == "RL")
         self.num_agents_each_env = rl_count if rl_count > 0 else train.num_agents_each_env
 
@@ -193,6 +194,7 @@ class TrainingPresetLoader:
                 "reward_components_diff": [c.__name__ for c in getattr(train_cfg, "reward_components_diff", [])],
                 "reward_parameters": getattr(train_cfg, "reward_parameters", {}),
                 "player_ids": getattr(train_cfg, "player_ids", []),
+                "control_policy_version": getattr(train_cfg, "control_policy_version", None),
             },
         }
         preset = TrainingPresetConfig.model_validate(preset_data)

@@ -158,6 +158,8 @@ class TrainPresetConfig(BaseModel):
     reward_parameters: Dict[str, Any] = Field(default_factory=dict)
     # Per-player controller overrides applied on top of environment YAML (Human / RL / Bot).
     player_ids: List[str] = Field(default_factory=list)
+    # When set, overrides player ``object.control_policy_version`` (preset wins over env YAML).
+    control_policy_version: Optional[str] = None
 
     @field_validator("player_ids", mode="before")
     @classmethod
@@ -165,6 +167,14 @@ class TrainPresetConfig(BaseModel):
         if not value:
             return []
         return normalize_player_controller_overrides(list(value))
+
+    @field_validator("control_policy_version", mode="before")
+    @classmethod
+    def _normalize_control_policy_version(cls, value):
+        if value is None:
+            return None
+        text = str(value).strip()
+        return text or None
 
 
 class TrainingPresetConfig(BaseModel):

@@ -16,38 +16,70 @@ import torch
 import warp as wp
 import yaml
 
+from pathlib import Path
+
 from script.game_config import GameConfig
-from script.role.objects.object_template.mjlab_unitree_g1.g1_actuator_model import ACTION_DIM
-from script.role.objects.object_template.mjlab_unitree_g1.g1_control_config import (
-    G1_CONTROL_CONFIG_PATH,
-    G1_DEFAULT_TASK,
-    G1_ROBOT_NAME,
-)
 
 if TYPE_CHECKING:
     from script.role.bodies.articulation_body import ArticulationBody
     from script.simulate.physics_manager import PhysicsManager
 
-# Default velocity-command sampling ranges, matching mjlab's initial
-# ``command_vel`` curriculum stage. The provider keeps instance state plus a
-# device buffer so ``set_command_velocity_ranges`` can schedule the curriculum.
-_DEFAULT_COMMAND_VELOCITY_RANGES: dict[str, tuple[float, float]] = {
-    "lin_vel_x": (-1.0, 1.0),
-    "lin_vel_y": (-1.0, 1.0),
-    "ang_vel_z": (-0.5, 0.5),
-}
+_VERSION_DIR = Path(__file__).resolve().parent
 
 
-def _load_imu_site_offset_b(*, task_name: str = G1_DEFAULT_TASK) -> wp.vec3:
-    """Read ``<task>.imu_site_offset`` from G1 ``control_configs.yaml``."""
-    with G1_CONTROL_CONFIG_PATH.open("r", encoding="utf-8") as fh:
-        raw = yaml.safe_load(fh) or {}
-    task_cfg = ((raw.get(G1_ROBOT_NAME) or {}).get(task_name) or {})
-    offset = task_cfg.get("imu_site_offset")
+def _load_version_yaml(name: str) -> dict:
+    path = _VERSION_DIR / name
+    with path.open("r", encoding="utf-8") as fh:
+        data = yaml.safe_load(fh) or {}
+    if not isinstance(data, dict):
+        raise ValueError(f"Invalid YAML mapping: {path}")
+    return data
+
+
+def _task_mapping() -> dict:
+    raw = _load_version_yaml("control_configs.yaml")
+    robot_cfg = raw.get("unitree_g1") or {}
+    if not isinstance(robot_cfg, dict):
+        robot_cfg = {}
+    task_cfg = robot_cfg.get("velocity_locomotion") or {}
+    return task_cfg if isinstance(task_cfg, dict) else {}
+
+
+def _action_dim() -> int:
+    action = _load_version_yaml("control_policy.yaml").get("action") or {}
+    if "low_level_dim" not in action:
+        raise KeyError(
+            f"{_VERSION_DIR / 'control_policy.yaml'}: action.low_level_dim is required"
+        )
+    return int(action["low_level_dim"])
+
+
+def _default_command_velocity_ranges() -> dict[str, tuple[float, float]]:
+    raw = _task_mapping().get("command_sample_ranges") or {}
+    if not isinstance(raw, dict):
+        raw = {}
+    required = ("lin_vel_x", "lin_vel_y", "ang_vel_z")
+    missing = [key for key in required if key not in raw]
+    if missing:
+        raise ValueError(
+            f"{_VERSION_DIR / 'control_configs.yaml'}: unitree_g1.velocity_locomotion."
+            f"command_sample_ranges missing {missing}"
+        )
+    return {key: (float(raw[key][0]), float(raw[key][1])) for key in required}
+
+
+_DEFAULT_COMMAND_VELOCITY_RANGES = _default_command_velocity_ranges()
+ACTION_DIM = _action_dim()
+
+
+def _load_imu_site_offset_b() -> wp.vec3:
+    """Read ``imu_site_offset`` from this version's ``control_configs.yaml``."""
+    path = _VERSION_DIR / "control_configs.yaml"
+    offset = _task_mapping().get("imu_site_offset")
     if not isinstance(offset, (list, tuple)) or len(offset) != 3:
         raise ValueError(
-            f"{G1_CONTROL_CONFIG_PATH}: {G1_ROBOT_NAME}.{task_name}.imu_site_offset "
-            "must be a 3-element [x, y, z] list (mjlab imu_in_pelvis)."
+            f"{path}: unitree_g1.velocity_locomotion.imu_site_offset must be a "
+            "3-element [x, y, z] list (mjlab imu_in_pelvis)."
         )
     return wp.vec3(float(offset[0]), float(offset[1]), float(offset[2]))
 
@@ -411,7 +443,7 @@ class G1VelocityLocomotionProvider:
         device: str,
         articulation_body: "ArticulationBody",
         pattern: str,
-        history_len: int = 1,
+        history_len: int,
         instance_world_indices: Optional[list[int]] = None,
         instance_view_indices: Optional[list[int]] = None,
         enable_obs_noise: bool = False,
@@ -432,14 +464,30 @@ class G1VelocityLocomotionProvider:
 
         self.enable_obs_noise = bool(enable_obs_noise)
         noise = obs_noise_cfg or {}
-        # Per-segment uniform noise amplitudes, matching mjlab's actor-obs
-        # corruption config (obs terms: base_lin_vel ±0.5, base_ang_vel ±0.2,
-        # projected_gravity ±0.05, joint_pos ±0.01, joint_vel ±1.5).
-        self.lin_vel_noise = float(noise.get("base_lin_vel", 0.5))
-        self.ang_vel_noise = float(noise.get("base_ang_vel", 0.2))
-        self.gravity_noise = float(noise.get("projected_gravity", 0.05))
-        self.joint_pos_noise = float(noise.get("joint_pos", 0.01))
-        self.joint_vel_noise = float(noise.get("joint_vel", 1.5))
+        required_noise = (
+            "base_lin_vel",
+            "base_ang_vel",
+            "projected_gravity",
+            "joint_pos",
+            "joint_vel",
+        )
+        if self.enable_obs_noise:
+            missing = [key for key in required_noise if key not in noise]
+            if missing:
+                raise KeyError(
+                    f"environment_configs.observation_noise missing {missing}"
+                )
+            self.lin_vel_noise = float(noise["base_lin_vel"])
+            self.ang_vel_noise = float(noise["base_ang_vel"])
+            self.gravity_noise = float(noise["projected_gravity"])
+            self.joint_pos_noise = float(noise["joint_pos"])
+            self.joint_vel_noise = float(noise["joint_vel"])
+        else:
+            self.lin_vel_noise = 0.0
+            self.ang_vel_noise = 0.0
+            self.gravity_noise = 0.0
+            self.joint_pos_noise = 0.0
+            self.joint_vel_noise = 0.0
 
         # C4 DR (mjlab startup events): encoder_bias corrupts only the actor
         # obs; base_com_offset approximates the torso COM shift in obs space.
@@ -869,7 +917,7 @@ def create_g1_velocity_locomotion_provider(
     device: str,
     articulation_body: "ArticulationBody",
     pattern: str,
-    history_len: int = 1,
+    history_len: int,
     instance_world_indices: Optional[list[int]] = None,
     instance_view_indices: Optional[list[int]] = None,
     enable_obs_noise: bool = False,
@@ -892,3 +940,6 @@ def create_g1_velocity_locomotion_provider(
     )
     provider.setup()
     return provider
+
+
+create_obs_actor = create_g1_velocity_locomotion_provider

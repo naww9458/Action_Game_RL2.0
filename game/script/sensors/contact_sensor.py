@@ -697,7 +697,7 @@ class SelfCollisionSensor:
         num_env: int,
         device: str,
         *,
-        history_length: int = 4,
+        history_length: int,
         ground_geom_id: int = 0,
     ):
         self.num_env = num_env

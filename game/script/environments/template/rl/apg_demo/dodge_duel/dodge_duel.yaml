@@ -1,6 +1,6 @@
 display_name: 閃避對抗
 intro: APG demo：雙人閃避對抗。
-environment_class: script.environments.template.rl.apg_demo.dodge_duel.dodge_duel.DodgeDuel
+environment_class: script.environments.custom.rl.apg_demo.dodge_duel.dodge_duel.DodgeDuel
 environment_configs:
   space_xyz:
   - 20

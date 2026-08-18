@@ -241,6 +241,7 @@ class Articulation_body_control(Ability):
         self._command_interface = resolve_command_interface_for_pattern(
             self.pattern,
             task_name=self._control_task,
+            control_policy_version=getattr(self, "control_policy_version", None),
         )
         self._use_command_expander = self._command_interface is not None
         if self._use_command_expander:
@@ -291,6 +292,7 @@ class Articulation_body_control(Ability):
             self.pattern,
             joint_labels=joint_labels,
             task_name=self._control_task,
+            control_policy_version=getattr(self, "control_policy_version", None),
         )
         if gpu_spec is None:
             return

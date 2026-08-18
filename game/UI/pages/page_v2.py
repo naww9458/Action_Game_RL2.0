@@ -37,7 +37,7 @@ from script.role.abilities.ability import Ability
 from utils.get_pydantic_default import get_pydantic_default
 from UI.pages.experiment_hub import ExperimentHubPage
 from UI.pages.env_browser import EnvTreeController, TemplateCatalogDialog
-from script.environments.env_catalog import ROOT_CUSTOM
+from script.environments.env_catalog import ROOT_CUSTOM, apply_custom_environment_class
 
 DEFAULT_ENV_TREE_COLORS = {
     "series": "#1565C0",
@@ -797,6 +797,8 @@ class EditPage(BasePage):
         if not os.path.exists(file_path): return
         with open(file_path, 'r', encoding='utf-8') as f:
             self.current_yaml_data = yaml.safe_load(f) or {}
+
+        apply_custom_environment_class(self.current_yaml_data, Path(file_path))
             
         if "environment_configs" not in self.current_yaml_data: 
             self.current_yaml_data["environment_configs"] = copy.deepcopy(get_pydantic_default(EnvironmentConfig))
@@ -1705,6 +1707,7 @@ class EditPage(BasePage):
         self._prune_coupled_solver_config_in_yaml()
         self.window().save_ui_settings(self.main_splitter.sizes(), self.right_splitter.sizes())
         if self.current_file_path:
+            apply_custom_environment_class(self.current_yaml_data, Path(self.current_file_path))
             with open(self.current_file_path, 'w', encoding='utf-8') as f:
                 yaml.dump(self.current_yaml_data, f, allow_unicode=True, sort_keys=False)
         self.window().switch_page(0)

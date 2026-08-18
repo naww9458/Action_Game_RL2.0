@@ -1,0 +1,368 @@
+# Complete V1 collision table (mjlab-aligned capsules/spheres and contact excludes).
+# This file is the whole table for this model; it is assigned onto the object, not merged.
+body_collision_shape_overrides:
+  left_hip_roll_link:
+    type: capsule
+    radius: 0.06
+    fromto:
+    - - 0.02
+      - 0.0
+      - 0.0
+    - - 0.02
+      - 0.0
+      - -0.08
+  right_hip_roll_link:
+    type: capsule
+    radius: 0.06
+    fromto:
+    - - 0.02
+      - 0.0
+      - 0.0
+    - - 0.02
+      - 0.0
+      - -0.08
+  left_hip_yaw_link:
+    type: capsule
+    radius: 0.055
+    fromto:
+    - - 0.0
+      - 0.0
+      - -0.03
+    - - -0.06
+      - 0.0
+      - -0.17
+  right_hip_yaw_link:
+    type: capsule
+    radius: 0.055
+    fromto:
+    - - 0.0
+      - 0.0
+      - -0.03
+    - - -0.06
+      - 0.0
+      - -0.17
+  left_knee_link:
+    type: capsule
+    radius: 0.045
+    fromto:
+    - - 0.01
+      - 0.0
+      - 0.0
+    - - 0.01
+      - 0.0
+      - -0.15
+    also_add:
+    - type: capsule
+      radius: 0.03
+      fromto:
+      - - 0.01
+        - 0.0
+        - -0.2
+      - - 0.01
+        - 0.0
+        - -0.28
+  right_knee_link:
+    type: capsule
+    radius: 0.045
+    fromto:
+    - - 0.01
+      - 0.0
+      - 0.0
+    - - 0.01
+      - 0.0
+      - -0.15
+    also_add:
+    - type: capsule
+      radius: 0.03
+      fromto:
+      - - 0.01
+        - 0.0
+        - -0.2
+      - - 0.01
+        - 0.0
+        - -0.28
+  torso_link:
+    type: capsule
+    radius: 0.09
+    fromto:
+    - - 0.01
+      - 0.0
+      - 0.08
+    - - 0.01
+      - 0.0
+      - 0.2
+    also_add:
+    - type: sphere
+      radius: 0.06
+      pos:
+      - 0.0
+      - 0.0
+      - 0.43
+  head_link: disable
+  left_shoulder_yaw_link:
+    type: capsule
+    radius: 0.035
+    fromto:
+    - - 0.0
+      - 0.0
+      - -0.08
+    - - 0.0
+      - 0.0
+      - 0.05
+  right_shoulder_yaw_link:
+    type: capsule
+    radius: 0.035
+    fromto:
+    - - 0.0
+      - 0.0
+      - -0.08
+    - - 0.0
+      - 0.0
+      - 0.05
+  left_elbow_link:
+    type: capsule
+    radius: 0.035
+    fromto:
+    - - -0.01
+      - 0.0
+      - -0.01
+    - - 0.08
+      - 0.0
+      - -0.01
+  right_elbow_link:
+    type: capsule
+    radius: 0.035
+    fromto:
+    - - -0.01
+      - 0.0
+      - -0.01
+    - - 0.08
+      - 0.0
+      - -0.01
+  left_wrist_pitch_link:
+    type: capsule
+    radius: 0.035
+    fromto:
+    - - -0.01
+      - 0.0
+      - 0.0
+    - - 0.06
+      - 0.0
+      - 0.0
+  right_wrist_pitch_link:
+    type: capsule
+    radius: 0.035
+    fromto:
+    - - -0.01
+      - 0.0
+      - 0.0
+    - - 0.06
+      - 0.0
+      - 0.0
+  left_wrist_yaw_link:
+    type: capsule
+    radius: 0.035
+    fromto:
+    - - 0.07
+      - 0.0
+      - 0.0
+    - - 0.15
+      - -0.02
+      - 0.0
+  right_wrist_yaw_link:
+    type: capsule
+    radius: 0.035
+    fromto:
+    - - 0.07
+      - 0.0
+      - 0.0
+    - - 0.15
+      - 0.02
+      - 0.0
+  pelvis_contour_link: disable
+  pelvis:
+    add: true
+    type: sphere
+    radius: 0.07
+    pos:
+    - 0.0
+    - 0.0
+    - -0.08
+  left_hip_pitch_link: disable
+  right_hip_pitch_link: disable
+  left_ankle_pitch_link: disable
+  right_ankle_pitch_link: disable
+  left_ankle_roll_link:
+  - type: disable
+  - add: true
+    type: capsule
+    radius: 0.01
+    fromto:
+    - - 0.1
+      - -0.026
+      - -0.025
+    - - 0.05
+      - -0.027
+      - -0.025
+  - add: true
+    type: capsule
+    radius: 0.01
+    fromto:
+    - - -0.044
+      - -0.018
+      - -0.025
+    - - 0.123
+      - -0.018
+      - -0.025
+  - add: true
+    type: capsule
+    radius: 0.01
+    fromto:
+    - - -0.052
+      - -0.01
+      - -0.025
+    - - 0.13
+      - -0.01
+      - -0.025
+  - add: true
+    type: capsule
+    radius: 0.01
+    fromto:
+    - - -0.054
+      - 0.0
+      - -0.025
+    - - 0.132
+      - 0.0
+      - -0.025
+  - add: true
+    type: capsule
+    radius: 0.01
+    fromto:
+    - - -0.052
+      - 0.01
+      - -0.025
+    - - 0.13
+      - 0.01
+      - -0.025
+  - add: true
+    type: capsule
+    radius: 0.01
+    fromto:
+    - - -0.044
+      - 0.018
+      - -0.025
+    - - 0.123
+      - 0.018
+      - -0.025
+  - add: true
+    type: capsule
+    radius: 0.01
+    fromto:
+    - - 0.1
+      - 0.026
+      - -0.025
+    - - 0.05
+      - 0.026
+      - -0.025
+  right_ankle_roll_link:
+  - type: disable
+  - add: true
+    type: capsule
+    radius: 0.01
+    fromto:
+    - - 0.1
+      - -0.026
+      - -0.025
+    - - 0.05
+      - -0.026
+      - -0.025
+  - add: true
+    type: capsule
+    radius: 0.01
+    fromto:
+    - - -0.044
+      - -0.018
+      - -0.025
+    - - 0.123
+      - -0.018
+      - -0.025
+  - add: true
+    type: capsule
+    radius: 0.01
+    fromto:
+    - - -0.052
+      - -0.01
+      - -0.025
+    - - 0.13
+      - -0.01
+      - -0.025
+  - add: true
+    type: capsule
+    radius: 0.01
+    fromto:
+    - - -0.054
+      - 0.0
+      - -0.025
+    - - 0.132
+      - 0.0
+      - -0.025
+  - add: true
+    type: capsule
+    radius: 0.01
+    fromto:
+    - - -0.052
+      - 0.01
+      - -0.025
+    - - 0.13
+      - 0.01
+      - -0.025
+  - add: true
+    type: capsule
+    radius: 0.01
+    fromto:
+    - - -0.044
+      - 0.018
+      - -0.025
+    - - 0.123
+      - 0.018
+      - -0.025
+  - add: true
+    type: capsule
+    radius: 0.01
+    fromto:
+    - - 0.1
+      - 0.026
+      - -0.025
+    - - 0.05
+      - 0.026
+      - -0.025
+  left_wrist_roll_link: disable
+  right_wrist_roll_link: disable
+  left_hand_palm_link: disable
+  right_hand_palm_link: disable
+  left_hand_thumb_0_link: disable
+  left_hand_thumb_1_link: disable
+  left_hand_thumb_2_link: disable
+  right_hand_thumb_0_link: disable
+  right_hand_thumb_1_link: disable
+  right_hand_thumb_2_link: disable
+  left_hand_index_0_link: disable
+  left_hand_index_1_link: disable
+  right_hand_index_0_link: disable
+  right_hand_index_1_link: disable
+  left_hand_middle_0_link: disable
+  left_hand_middle_1_link: disable
+  right_hand_middle_0_link: disable
+  right_hand_middle_1_link: disable
+  logo_link: disable
+  left_shoulder_pitch_link: disable
+  right_shoulder_pitch_link: disable
+body_collision_exclude_pairs:
+- - left_elbow_link
+  - left_wrist_pitch_link
+- - right_elbow_link
+  - right_wrist_pitch_link
+- - pelvis
+  - left_hip_roll_link
+- - pelvis
+  - right_hip_roll_link

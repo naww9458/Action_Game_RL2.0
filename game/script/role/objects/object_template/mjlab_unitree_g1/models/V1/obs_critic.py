@@ -12,7 +12,7 @@ from __future__ import annotations
 import torch
 import warp as wp
 
-from .g1_foot_sensor_cfg import load_g1_foot_sensor_config, resolve_g1_foot_body_mapping
+from .foot_sensor_cfg import load_g1_foot_sensor_config, resolve_g1_foot_body_mapping
 
 
 @wp.kernel
@@ -130,5 +130,5 @@ class G1FootCriticObsProvider:
         return self.critic_obs_torch
 
 
-def create_g1_foot_critic_obs(**kwargs) -> G1FootCriticObsProvider:
+def create_obs_critic(**kwargs) -> G1FootCriticObsProvider:
     return G1FootCriticObsProvider(**kwargs)

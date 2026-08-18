@@ -8,8 +8,10 @@ policy:
   default_checkpoint: model_1250.pt
 
 observation:
-  provider: g1_velocity_locomotion
+  obs_actor: g1_velocity_locomotion
+  obs_critic: g1_foot_critic
   obs_dim: 99
+  history_len: 1
 
 action:
   low_level_dim: 29

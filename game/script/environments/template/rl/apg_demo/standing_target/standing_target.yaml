@@ -1,6 +1,6 @@
 display_name: 站立打靶
 intro: APG demo：站立射擊打靶。
-environment_class: script.environments.template.rl.apg_demo.standing_target.standing_target.StandingTarget
+environment_class: script.environments.custom.rl.apg_demo.standing_target.standing_target.StandingTarget
 environment_configs:
   space_xyz:
   - 20
