@@ -221,11 +221,7 @@ class ExperimentHubPage(QWidget):
             self._sync_eval_window_envs_range()
 
     def _default_eval_num_envs(self, run) -> int:
-        if run.algorithm.upper() == "APG":
-            return 2
-        if run.num_envs is not None:
-            return min(run.num_envs, 40)
-        return 40
+        return 2 # TODO Hardcode
 
     def _update_eval_run_hints(self, run):
         if run is None:
@@ -241,7 +237,7 @@ class ExperimentHubPage(QWidget):
             self.btn_eval.setText(self.TR("eval_model"))
             self.lbl_eval_algorithm.setText(self.TR("eval_ppo_hint"))
 
-        self.spin_eval_num_envs.setValue(self._default_eval_num_envs(run))
+        self.spin_eval_num_envs.setValue(self._default_eval_num_envs(run)) # default eval num envs
 
     def _build_launch_tab(self):
         tab = QWidget()
@@ -585,6 +581,10 @@ class ExperimentHubPage(QWidget):
 
     def stop_tensorboard(self):
         self._stop_tensorboard()
+
+    def stop_helper_processes(self) -> None:
+        """Stop TensorBoard spawned from the experiment hub (UI close / quit)."""
+        self._stop_tensorboard(silent=True)
 
     def open_tensorboard_browser(self):
         if self._tb_process is None or self._tb_process.poll() is not None:

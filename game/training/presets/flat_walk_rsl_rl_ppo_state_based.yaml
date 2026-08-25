@@ -1,6 +1,6 @@
 meta:
   id: flat_walk_rsl_rl_ppo_state_based
-  display_name: "G1 速度行走 RSL-RL PPO"
+  display_name: G1 速度行走 RSL-RL PPO
   env_id: flat_walk
   obs_type: state_based
   framework: RSL_RL

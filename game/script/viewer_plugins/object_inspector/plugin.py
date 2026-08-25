@@ -89,8 +89,17 @@ class ObjectInspectorPlugin:
         if not self._bridge.has_commands():
             return
         self._window.flush_pinned_storage()
+        had_pins = False
+        pinned_worlds: List[int] = []
         for world_idx, values, pinned_dims in self._window.iter_stored_command_pins():
             self._bridge.apply_command_pins(world_idx, values, pinned_dims)
+            pinned_worlds.append(int(world_idx))
+            had_pins = True
+        if had_pins:
+            provider = getattr(self._game.environment, "g1_provider", None)
+            holder = getattr(provider, "hold_external_commands", None)
+            if callable(holder):
+                holder(world_indices=pinned_worlds)
 
     def _collect_gameplay_bindings(self, game: "Game") -> List[dict]:
         if Ability._default_configs is None:

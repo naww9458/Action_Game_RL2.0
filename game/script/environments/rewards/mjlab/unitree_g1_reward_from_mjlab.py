@@ -257,7 +257,12 @@ class TrackLinearVelocityReward(RewardComponent):
 
 
 class TrackAngularVelocityReward(RewardComponent):
-    """exp(-||ω_cmd_z - ω_actual_z||² / std² - ||ω_actual_xy||² / std²)."""
+    """Yaw-rate tracking ``exp(-(ωz - cmd_z)² / std²)``.
+
+    Roll/pitch may optionally be folded into the same exp (mjlab default). When
+    they dominate, the yaw gradient vanishes; V1 therefore keeps roll/pitch on
+    ``BodyAngularVelocityPenaltyReward`` and sets ``include_roll_pitch: false``.
+    """
 
     log_name = "track_angular_velocity"
 
@@ -267,7 +272,20 @@ class TrackAngularVelocityReward(RewardComponent):
         cfg = _component_params(self.params, "TrackAngularVelocityReward")
         self.std = float(cfg.get("std", 0.7071067811865476))
         self.std_sq = self.std * self.std
+        self.include_roll_pitch = 1.0 if bool(cfg.get("include_roll_pitch", True)) else 0.0
         _init_mjlab_scaling(self, "TrackAngularVelocityReward")
+
+    def bind_environment(self, environment):
+        provider = getattr(environment, "g1_provider", None)
+        getter = getattr(provider, "get_tracking_reward_cfg", None)
+        if not callable(getter):
+            return
+        cfg = getter().get("TrackAngularVelocityReward") or {}
+        if "std" in cfg:
+            self.std = float(cfg["std"])
+            self.std_sq = self.std * self.std
+        if "include_roll_pitch" in cfg:
+            self.include_roll_pitch = 1.0 if bool(cfg["include_roll_pitch"]) else 0.0
 
     def calculate(
         self,
@@ -300,6 +318,7 @@ class TrackAngularVelocityReward(RewardComponent):
                 step_total_rewards,
                 term_buf,
                 self.std_sq,
+                self.include_roll_pitch,
                 self.reward_scale,
             ],
             device=self.device,
@@ -318,6 +337,7 @@ class TrackAngularVelocityReward(RewardComponent):
         step_total_rewards: wp.array(dtype=wp.float32),
         term_buf: wp.array(dtype=wp.float32),
         std_sq: wp.float32,
+        include_roll_pitch: wp.float32,
         reward_scale: wp.float32,
     ):
         tid = wp.tid()
@@ -340,7 +360,7 @@ class TrackAngularVelocityReward(RewardComponent):
         act_wy = local_ang[1]
         act_wz = local_ang[2]
         z_error = (cmd_wz - act_wz) * (cmd_wz - act_wz)
-        xy_error = act_wx * act_wx + act_wy * act_wy
+        xy_error = include_roll_pitch * (act_wx * act_wx + act_wy * act_wy)
         ang_vel_error = z_error + xy_error
         reward_value = wp.exp(-ang_vel_error / std_sq) * reward_scale
         wp.atomic_add(step_total_rewards, shape_id, reward_value)

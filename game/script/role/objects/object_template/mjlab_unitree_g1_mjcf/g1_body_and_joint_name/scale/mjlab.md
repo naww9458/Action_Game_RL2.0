@@ -1,0 +1,222 @@
+KNEES_BENT_KEYFRAME: 
+    EntityCfg.InitialStateCfg(
+        pos = (0, 0, 0.76), 
+        rot = (1.0, 0.0, 0.0, 0.0), 
+        lin_vel = (0.0, 0.0, 0.0), 
+        ang_vel = (0.0, 0.0, 0.0), 
+        joint_pos = { 
+            '.*_hip_pitch_joint': -0.312, 
+            '.*_knee_joint': 0.669, 
+            '.*_ankle_pitch_joint': -0.363, 
+            '.*_elbow_joint': 0.6, 
+            'left_shoulder_roll_joint': 0.2, 
+            'left_shoulder_pitch_joint': 0.2, 
+            'right_shoulder_roll_joint': -0.2, 
+            'right_shoulder_pitch_joint': 0.2 
+            }, 
+        joint_vel = { '.*': 0.0 }
+    )
+
+
+
+G1_ARTICULATION: 
+    EntityArticulationInfoCfg(
+        actuators = (
+            BuiltinPositionActuatorCfg(
+                target_names_expr = ('.*_elbow_joint', '.*_shoulder_pitch_joint', '.*_shoulder_roll_joint', '.*_shoulder_yaw_joint', '.*_wrist_roll_joint'), 
+                transmission_type = <TransmissionType.JOINT: 'joint' >, 
+                armature = 0.003609725, 
+                frictionloss = None, 
+                viscous_damping = None, 
+                delay_min_lag = 0, 
+                delay_max_lag = 0, 
+                delay_hold_prob = 0.0, 
+                delay_update_period = 0, 
+                delay_per_env_phase = True, 
+                stiffness = 14.25062309787429, 
+                damping = 0.907222843292423, 
+                effort_limit = 25.0
+            ), 
+            BuiltinPositionActuatorCfg(
+                target_names_expr = ('.*_hip_pitch_joint', '.*_hip_yaw_joint', 'waist_yaw_joint'), 
+                transmission_type = <TransmissionType.JOINT: 'joint' >, 
+                armature = 0.01017752004132231, 
+                frictionloss = None, 
+                viscous_damping = None, 
+                delay_min_lag = 0, 
+                delay_max_lag = 0, 
+                delay_hold_prob = 0.0, 
+                delay_update_period = 0, 
+                delay_per_env_phase = True, 
+                stiffness = 40.17923863450712, 
+                damping = 2.557889775413375, 
+                effort_limit = 88.0
+            ), 
+            BuiltinPositionActuatorCfg(
+                target_names_expr = ('.*_hip_roll_joint', '.*_knee_joint'), 
+                transmission_type = <TransmissionType.JOINT: 'joint' >, 
+                armature = 0.025101924999999997, 
+                frictionloss = None, 
+                viscous_damping = None, 
+                delay_min_lag = 0, 
+                delay_max_lag = 0, 
+                delay_hold_prob = 0.0, 
+                delay_update_period = 0, 
+                delay_per_env_phase = True, 
+                stiffness = 99.09842777666111, 
+                damping = 6.308801853496639, 
+                effort_limit = 139.0
+            ), 
+            BuiltinPositionActuatorCfg(
+                target_names_expr = ('.*_wrist_pitch_joint', '.*_wrist_yaw_joint'), 
+                transmission_type = <TransmissionType.JOINT: 'joint' >, 
+                armature = 0.00425, 
+                frictionloss = None, 
+                viscous_damping = None, 
+                delay_min_lag = 0, 
+                delay_max_lag = 0, 
+                delay_hold_prob = 0.0, 
+                delay_update_period = 0, 
+                delay_per_env_phase = True, 
+                stiffness = 16.77832748089279, 
+                damping = 1.06814150219, 
+                effort_limit = 5.0
+            ), 
+            BuiltinPositionActuatorCfg(
+                target_names_expr = ('waist_pitch_joint', 'waist_roll_joint'), 
+                transmission_type = <TransmissionType.JOINT: 'joint' >, 
+                armature = 0.00721945, 
+                frictionloss = None, 
+                viscous_damping = None, 
+                delay_min_lag = 0, 
+                delay_max_lag = 0, 
+                delay_hold_prob = 0.0, 
+                delay_update_period = 0, 
+                delay_per_env_phase = True, 
+                stiffness = 28.50124619574858, 
+                damping = 1.814445686584846, 
+                effort_limit = 50.0
+            ), 
+            BuiltinPositionActuatorCfg(
+                target_names_expr = ('.*_ankle_pitch_joint', '.*_ankle_roll_joint'), 
+                transmission_type = <TransmissionType.JOINT: 'joint' >, 
+                armature = 0.00721945, 
+                frictionloss = None, 
+                viscous_damping = None, 
+                delay_min_lag = 0, 
+                delay_max_lag = 0, 
+                delay_hold_prob = 0.0, 
+                delay_update_period = 0, 
+                delay_per_env_phase = True, 
+                stiffness = 28.50124619574858, 
+                damping = 1.814445686584846, 
+                effort_limit = 50.0)), 
+                soft_joint_pos_limit_factor = 0.9
+            )
+
+
+
+G1_ACTION_SCALE: 
+{ 
+    '.*_elbow_joint': 0.43857731392336724, 
+    '.*_shoulder_pitch_joint': 0.43857731392336724, 
+    '.*_shoulder_roll_joint': 0.43857731392336724, 
+    '.*_shoulder_yaw_joint': 0.43857731392336724, 
+    '.*_wrist_roll_joint': 0.43857731392336724, 
+    '.*_hip_pitch_joint': 0.5475464629911068, 
+    '.*_hip_yaw_joint': 0.5475464629911068, 
+    'waist_yaw_joint': 0.5475464629911068, 
+    '.*_hip_roll_joint': 0.35066146637882434, 
+    '.*_knee_joint': 0.35066146637882434, 
+    '.*_wrist_pitch_joint': 0.07450087032950714, 
+    '.*_wrist_yaw_joint': 0.07450087032950714, 
+    'waist_pitch_joint': 0.43857731392336724, 
+    'waist_roll_joint': 0.43857731392336724, 
+    '.*_ankle_pitch_joint': 0.43857731392336724, 
+    '.*_ankle_roll_joint': 0.43857731392336724 
+}
+
+
+
+".*_elbow_joint",
+".*_shoulder_pitch_joint",
+".*_shoulder_roll_joint",
+".*_shoulder_yaw_joint",
+".*_wrist_roll_joint",
+".*_hip_pitch_joint",
+".*_hip_yaw_joint",
+"waist_yaw_joint",
+".*_hip_roll_joint",
+".*_knee_joint",
+".*_wrist_pitch_joint",
+".*_wrist_yaw_joint",
+"waist_pitch_joint",
+"waist_roll_joint",
+".*_ankle_pitch_joint",
+".*_ankle_roll_joint",
+
+
+JOINT_NAMES: tuple[str, ...] = (
+    "left_hip_pitch_joint",
+    "left_hip_roll_joint",
+    "left_hip_yaw_joint",
+    "left_knee_joint",
+    "left_ankle_pitch_joint",
+    "left_ankle_roll_joint",
+    "right_hip_pitch_joint",
+    "right_hip_roll_joint",
+    "right_hip_yaw_joint",
+    "right_knee_joint",
+    "right_ankle_pitch_joint",
+    "right_ankle_roll_joint",
+    "waist_yaw_joint",
+    "waist_roll_joint",
+    "waist_pitch_joint",
+    "left_shoulder_pitch_joint",
+    "left_shoulder_roll_joint",
+    "left_shoulder_yaw_joint",
+    "left_elbow_joint",
+    "left_wrist_roll_joint",
+    "left_wrist_pitch_joint",
+    "left_wrist_yaw_joint",
+    "right_shoulder_pitch_joint",
+    "right_shoulder_roll_joint",
+    "right_shoulder_yaw_joint",
+    "right_elbow_joint",
+    "right_wrist_roll_joint",
+    "right_wrist_pitch_joint",
+    "right_wrist_yaw_joint",
+)
+
+# Per-joint scale: 0.25 * effort_limit / stiffness (see g1_constants.py).
+ACTION_SCALE: tuple[float, ...] = (
+    0.5475464629911068,
+    0.35066146637882434,
+    0.5475464629911068,
+    0.35066146637882434,
+    0.43857731392336724,
+    0.43857731392336724,
+    0.5475464629911068,
+    0.35066146637882434,
+    0.5475464629911068,
+    0.35066146637882434,
+    0.43857731392336724,
+    0.43857731392336724,
+    0.5475464629911068,
+    0.43857731392336724,
+    0.43857731392336724,
+    0.43857731392336724,
+    0.43857731392336724,
+    0.43857731392336724,
+    0.43857731392336724,
+    0.43857731392336724,
+    0.07450087032950714,
+    0.07450087032950714,
+    0.43857731392336724, 
+    0.43857731392336724,
+    0.43857731392336724,
+    0.43857731392336724, 
+    0.43857731392336724,
+    0.07450087032950714,
+    0.07450087032950714,
+)

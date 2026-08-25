@@ -15,7 +15,7 @@ _TEMPLATE_PREPARE_FNS: List[Callable[[Any], None]] = []
 def load_object_templates() -> Dict[str, Dict[str, Any]]:
     templates: Dict[str, Dict[str, Any]] = {}
     for folder in sorted(_TEMPLATE_ROOT.iterdir()):
-        if not folder.is_dir() or folder.name.startswith("_"):
+        if not folder.is_dir() or folder.name.startswith("_") or not folder.name.isidentifier():
             continue
         template_path = folder / "template.yaml"
         if not template_path.exists():
@@ -100,7 +100,7 @@ def ensure_object_templates_registered() -> None:
         return
 
     for folder in sorted(_TEMPLATE_ROOT.iterdir()):
-        if not folder.is_dir() or folder.name.startswith("_"):
+        if not folder.is_dir() or folder.name.startswith("_") or not folder.name.isidentifier():
             continue
         template_path = folder / "template.yaml"
         if not template_path.exists():

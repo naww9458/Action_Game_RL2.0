@@ -5,6 +5,7 @@ control_task: velocity_locomotion
 
 policy:
   module: policy_PPO_g1_velocity
+  # default_checkpoint: model_1250.pt
   default_checkpoint: model_2750.pt
 
 observation:

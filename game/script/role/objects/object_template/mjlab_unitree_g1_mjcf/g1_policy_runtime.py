@@ -314,6 +314,8 @@ def _bind_post_substep(environment: Any, runtime: G1PolicyRuntime) -> None:
 
 def attach_if_present(environment: Any) -> Optional[G1PolicyRuntime]:
     """Attach G1 obs/command runtime when a G1 player with a policy version is loaded."""
+    if getattr(environment, "g1_provider", None) is not None:
+        return None
     player_cfg = _find_g1_player(environment)
     if player_cfg is None:
         return None

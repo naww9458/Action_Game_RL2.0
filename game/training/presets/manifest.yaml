@@ -1,10 +1,4 @@
 presets:
-  - id: flat_walk_skrl_ppo_state_based
-    file: flat_walk_skrl_ppo_state_based.yaml
-    display_name: "G1 速度行走 SKRL PPO"
-    env_id: flat_walk
-    framework: SKRL
-    algorithm: PPO
   - id: standing_target_skrl_ppo_state_based
     file: standing_target_skrl_ppo_state_based.yaml
     display_name: "站立打靶 PPO"

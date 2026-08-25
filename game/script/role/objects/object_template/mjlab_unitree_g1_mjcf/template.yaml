@@ -1,0 +1,51 @@
+id: mjlab_unitree_g1_mjcf
+display_name: Unitree G1 (MJCF)
+object_type: mjcf
+# 物件屬性：可透過 "Add Object Template" 批量套用到 player_configs
+# Asset is mjlab's 29-DoF G1 (tests/mjlab/.../xmls/g1.xml), copied to Action_Game_RL_Assets.
+possess_offset:
+  - 0.0
+  - 0.0
+  - 0.0
+abilities:
+  - Articulation_body_control_rl_assisted
+object:
+  pattern: unitree_g1
+  type: mjcf
+  object_friction: 0.6
+  object_elasticity: 0.5
+  file_name: g1.xml
+  file_path_or_source: Action_Game_RL_Assets/assets/external_sources/mjlab_unitree_g1
+  floating: null
+  base_joint: null
+  parent_body: -1
+  armature_scale: 1.0
+  scale: 1.0
+  hide_visuals: false
+  parse_visuals_as_colliders: false
+  parse_meshes: true
+  parse_sites: true
+  parse_visuals: true
+  parse_mujoco_options: true
+  ignore_names: null
+  ignore_classes: null
+  visual_classes:
+    - visual
+  collider_classes:
+    - collision
+    - foot_capsule
+  no_class_as_colliders: true
+  force_show_colliders: false
+  enable_self_collisions: true
+  ignore_inertial_definitions: false
+  collapse_fixed_joints: false
+  verbose: false
+  skip_equality_constraints: false
+  convert_3d_hinge_to_ball_joints: false
+  mesh_maxhullvert: null
+  ctrl_direct: false
+  override_root_xform: false
+  approximate_meshes: false
+  use_mujoco_policy_init: true
+  control_task: velocity_locomotion
+  control_policy_version: V1

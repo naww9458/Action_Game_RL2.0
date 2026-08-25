@@ -431,19 +431,15 @@ class ControlBridge:
         environment = self.game.environment
         if environment.commands is None or not pinned_indices:
             return
-        host = environment.commands.numpy()
-        if world_idx < 0 or world_idx >= len(host):
+        cmd = wp.to_torch(environment.commands)
+        if world_idx < 0 or world_idx >= int(cmd.shape[0]):
             return
-        changed = False
         for dim_index in pinned_indices:
             if dim_index not in values:
                 continue
-            if dim_index >= host.shape[1]:
+            if dim_index >= int(cmd.shape[1]):
                 continue
-            host[world_idx, dim_index] = values[dim_index]
-            changed = True
-        if changed:
-            environment.commands.assign(host)
+            cmd[world_idx, dim_index] = float(values[dim_index])
 
     def resolve_rl_action_row(self, local_role_idx: int, world_idx: int) -> int:
         num_objects_env = self.game.num_objects_env

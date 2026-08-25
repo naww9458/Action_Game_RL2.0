@@ -6,3 +6,5 @@ tests/fps_testing/Action_Game_RL_FPS_testing
 
 capture/
 
+compare1.py
+compare2.py

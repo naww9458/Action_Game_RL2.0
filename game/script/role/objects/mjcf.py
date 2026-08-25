@@ -13,8 +13,8 @@ from script.role.abilities.articulation_control_config.joint_config_registry imp
 class MjcfModel(BaseObjectModel):
     type: Literal["mjcf"] = "mjcf"
 
-    file_name: str = "g1.xml"
-    file_path_or_source: str = "Action_Game_RL_Assets/assets/external_sources/mjlab_unitree_g1"
+    file_name: str = ""
+    file_path_or_source: str = ""
     use_mujoco_policy_init: bool = False
     control_task: str | None = None
     control_policy_version: str | None = None

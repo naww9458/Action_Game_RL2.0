@@ -210,7 +210,10 @@ class Articulation_body_control_rl_assisted(Articulation_body_control):
             val = float(pos - neg)
             if self.command_ranges and i < len(self.command_ranges):
                 lo, hi = self.command_ranges[i]
-                val = max(lo, min(hi, val))
+                if val > 0.0:
+                    val = float(hi)
+                elif val < 0.0:
+                    val = float(lo)
             values.append(val)
         return values
 
@@ -253,7 +256,6 @@ class Articulation_body_control_rl_assisted(Articulation_body_control):
 
     def rl_action(self, actions, **kwargs):
         if self._human_control_applied:
-            self._human_control_applied = False
             return
 
         self._ensure_configured()
@@ -272,6 +274,9 @@ class Articulation_body_control_rl_assisted(Articulation_body_control):
 
         player_idx = int(index_human_player_gpu.numpy()[0])
         instance_idx = self._instance_idx_for_player(player_idx)
+        holder = getattr(self._obs_actor, "hold_external_commands", None)
+        if callable(holder):
+            holder(instance_indices=[instance_idx])
 
         self._apply_commands(instance_idx, values)
         self._run_policy_and_apply()
@@ -279,6 +284,9 @@ class Articulation_body_control_rl_assisted(Articulation_body_control):
 
     def bot_action(self, **kwargs):
         self._ensure_configured()
+        if self._human_control_applied:
+            self._human_control_applied = False
+            return
         dt = 1.0 / float(GameConfig.FPS_ACTION)
         self._obs_actor.update_velocity_commands(self.physics_manager, dt)
         self._run_policy_and_apply()

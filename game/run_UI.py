@@ -10,6 +10,7 @@ PROJECT_ROOT = str(Path(__file__).resolve().parent.parent)
 if __name__ == "__main__":
     app = QApplication(sys.argv)
     window = MainWindow(project_root=PROJECT_ROOT)
+    app.aboutToQuit.connect(window.stop_helper_processes)
     window.show()
     sys.exit(app.exec())
 

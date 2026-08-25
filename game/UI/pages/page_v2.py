@@ -2276,6 +2276,16 @@ class MainWindow(QMainWindow):
             self.env_browser.reload()
             self.update_button_states()
 
+    def stop_helper_processes(self) -> None:
+        train_page = getattr(self, "train_page", None)
+        stopper = getattr(train_page, "stop_helper_processes", None)
+        if callable(stopper):
+            stopper()
+
+    def closeEvent(self, event):
+        self.stop_helper_processes()
+        super().closeEvent(event)
+
 
 
 
@@ -2283,5 +2293,6 @@ class MainWindow(QMainWindow):
 if __name__ == "__main__":
     app = QApplication(sys.argv)
     window = MainWindow(project_root=str(Path(__file__).resolve().parent.parent.parent.parent))
+    app.aboutToQuit.connect(window.stop_helper_processes)
     window.show()
     sys.exit(app.exec())

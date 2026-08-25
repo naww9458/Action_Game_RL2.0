@@ -160,7 +160,11 @@ class PolicyBundleRegistry:
         if not OBJECT_TEMPLATE_ROOT.exists():
             return
         for template_dir in sorted(OBJECT_TEMPLATE_ROOT.iterdir()):
-            if not template_dir.is_dir() or template_dir.name.startswith("_"):
+            if (
+                not template_dir.is_dir()
+                or template_dir.name.startswith("_")
+                or not template_dir.name.isidentifier()
+            ):
                 continue
             yaml_path = template_dir / "policy_versions.yaml"
             if yaml_path.exists():

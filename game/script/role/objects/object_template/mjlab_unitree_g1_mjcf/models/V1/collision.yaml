@@ -1,0 +1,3 @@
+# mjlab G1 MJCF already authors collision geoms in g1.xml
+# (capsules/spheres, foot_capsule class, and <contact><exclude>).
+# This file is intentionally empty so prepare_object does not duplicate them.

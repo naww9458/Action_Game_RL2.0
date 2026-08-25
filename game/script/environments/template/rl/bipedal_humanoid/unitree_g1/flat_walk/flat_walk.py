@@ -109,6 +109,10 @@ class FlatWalk(Environment):
         "Episode_Reward/action_rate_l2",
         "Metrics/slip_velocity_mean",
         "Curriculum/command_vel/lin_vel_y_min",
+        # Project-specific per-axis command-following scores (not in mjlab).
+        "Metrics/twist/follow_vel_x",
+        "Metrics/twist/follow_vel_y",
+        "Metrics/twist/follow_vel_yaw",
     )
 
     def __init__(self, **kwargs):
@@ -151,9 +155,16 @@ class FlatWalk(Environment):
         # per-step means, so multiply by FPS to align (per-step mean x 50 = sum/20).
         self.reward_log_scale = float(getattr(GameConfig, "FPS_ACTION", 50))
 
-        # Per-env twist-error metric buffers (mjlab ``Metrics/twist/*``).
+        # Per-env twist-error / follow-score metric buffers (mjlab ``Metrics/twist/*``
+        # plus per-axis command-following scores).
         self._twist_err_xy_buf = wp.zeros(self.num_env, dtype=wp.float32, device=GameConfig.DEVICE)
         self._twist_err_yaw_buf = wp.zeros(self.num_env, dtype=wp.float32, device=GameConfig.DEVICE)
+        self._twist_follow_x_buf = wp.zeros(self.num_env, dtype=wp.float32, device=GameConfig.DEVICE)
+        self._twist_follow_y_buf = wp.zeros(self.num_env, dtype=wp.float32, device=GameConfig.DEVICE)
+        self._twist_follow_yaw_buf = wp.zeros(self.num_env, dtype=wp.float32, device=GameConfig.DEVICE)
+        self._follow_std_x_sq = 0.0
+        self._follow_std_y_sq = 0.0
+        self._follow_std_yaw_sq = 0.0
 
         # Cached 0-d GPU tensors for ``Curriculum/command_vel/*`` (constants).
         self._curriculum_metric_tensors: Optional[dict[str, torch.Tensor]] = None
@@ -172,6 +183,17 @@ class FlatWalk(Environment):
                 "Unitree G1 policy runtime was not attached. "
                 "player object.pattern must be unitree_g1 with control_policy_version."
             )
+        follow_stds_fn = getattr(self.g1_provider, "get_command_follow_metric_stds", None)
+        if not callable(follow_stds_fn):
+            raise RuntimeError(
+                "G1 policy provider must implement get_command_follow_metric_stds() "
+                "(stds live in object_template control_configs.yaml "
+                "unitree_g1.velocity_locomotion.command_follow_metrics.std)."
+            )
+        follow_stds = follow_stds_fn()
+        self._follow_std_x_sq = float(follow_stds["lin_vel_x"]) ** 2
+        self._follow_std_y_sq = float(follow_stds["lin_vel_y"]) ** 2
+        self._follow_std_yaw_sq = float(follow_stds["ang_vel_z"]) ** 2
 
         self.push_timer = wp.zeros(self.num_env, dtype=wp.float32, device=GameConfig.DEVICE)
         seed_base = getattr(GameConfig, "SEED", 31415926)
@@ -491,6 +513,12 @@ class FlatWalk(Environment):
         instance_view_indices: wp.array(dtype=wp.int32),
         err_xy_buf: wp.array(dtype=wp.float32),
         err_yaw_buf: wp.array(dtype=wp.float32),
+        follow_x_buf: wp.array(dtype=wp.float32),
+        follow_y_buf: wp.array(dtype=wp.float32),
+        follow_yaw_buf: wp.array(dtype=wp.float32),
+        std_x_sq: float,
+        std_y_sq: float,
+        std_yaw_sq: float,
     ):
         tid = wp.tid()
         world = instance_world_indices[tid]
@@ -509,8 +537,13 @@ class FlatWalk(Environment):
 
         dx = local_lin[0] - commands[tid, 0]
         dy = local_lin[1] - commands[tid, 1]
+        dyaw = local_ang[2] - commands[tid, 2]
         err_xy_buf[world] = wp.sqrt(dx * dx + dy * dy)
-        err_yaw_buf[world] = wp.abs(local_ang[2] - commands[tid, 2])
+        err_yaw_buf[world] = wp.abs(dyaw)
+        # Independent per-axis scores: other axes must not leak into these.
+        follow_x_buf[world] = wp.exp(-(dx * dx) / std_x_sq)
+        follow_y_buf[world] = wp.exp(-(dy * dy) / std_y_sq)
+        follow_yaw_buf[world] = wp.exp(-(dyaw * dyaw) / std_yaw_sq)
 
     def get_command_metrics(self) -> Optional[dict]:
         """Return per-step twist command-tracking metrics (mjlab ``Metrics/twist/*``).
@@ -518,7 +551,11 @@ class FlatWalk(Environment):
         Mirrors ``velocity_command.py`` ``_update_metrics``: ``error_vel_xy`` is
         the body-frame xy linear-velocity error and ``error_vel_yaw`` the yaw
         angular-velocity error, both against the resampled velocity command.
-        Values are 0-d GPU tensors (mean over envs), consumed by the generic
+
+        ``follow_vel_x`` / ``follow_vel_y`` / ``follow_vel_yaw`` are independent
+        per-axis scores in ``(0, 1]``: ``exp(-(v_axis - cmd_axis)^2 / std^2)``
+        using body-frame forward speed, lateral speed, and yaw rate. Values are
+        0-d GPU tensors (mean over envs), consumed by the generic
         ``Game.get_training_log`` public interface.
         """
         if self.g1_provider is None or self.commands is None or self.view is None:
@@ -536,12 +573,21 @@ class FlatWalk(Environment):
                 self.g1_provider.instance_view_indices_wp,
                 self._twist_err_xy_buf,
                 self._twist_err_yaw_buf,
+                self._twist_follow_x_buf,
+                self._twist_follow_y_buf,
+                self._twist_follow_yaw_buf,
+                self._follow_std_x_sq,
+                self._follow_std_y_sq,
+                self._follow_std_yaw_sq,
             ],
             device=GameConfig.DEVICE,
         )
         return {
             "Metrics/twist/error_vel_xy": torch.mean(wp.to_torch(self._twist_err_xy_buf)),
             "Metrics/twist/error_vel_yaw": torch.mean(wp.to_torch(self._twist_err_yaw_buf)),
+            "Metrics/twist/follow_vel_x": torch.mean(wp.to_torch(self._twist_follow_x_buf)),
+            "Metrics/twist/follow_vel_y": torch.mean(wp.to_torch(self._twist_follow_y_buf)),
+            "Metrics/twist/follow_vel_yaw": torch.mean(wp.to_torch(self._twist_follow_yaw_buf)),
         }
 
     def get_log_key_order(self) -> Optional[tuple[str, ...]]:

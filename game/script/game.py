@@ -586,6 +586,7 @@ class Game:
         if callable(apply_fn):
             apply_fn()
         self._apply_inspector_pinned_controls()
+        self._apply_inspector_commands()
         viewer = self.physics_manager.viewerGL
         if viewer is not None:
             viewer.apply_forces(self.physics_manager.state_0)
