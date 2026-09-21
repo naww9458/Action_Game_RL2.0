@@ -5,7 +5,6 @@ control_task: velocity_locomotion
 
 policy:
   module: policy_PPO_g1_velocity
-  # default_checkpoint: model_1250.pt
   default_checkpoint: model_2750.pt
 
 observation:
@@ -28,6 +27,8 @@ commands:
     - [-1.0, 1.0]
     - [-1.0, 1.0]
     - [-0.5, 0.5]
+  default:
+    values: [0.0, 0.0, 0.0]
   human_control:
     keyboard:
       command_0_positive: [w]

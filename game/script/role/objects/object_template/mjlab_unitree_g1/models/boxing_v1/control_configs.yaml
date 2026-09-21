@@ -1,0 +1,274 @@
+# This file contains code adapted from:
+# https://github.com/mujocolab/mjlab
+#
+# Modified for Action_Game_RL.
+#
+# The original project is licensed under the Apache License 2.0.
+
+# Unitree G1 control config (mjlab velocity_locomotion).
+# Stiffness/damping/armature/scale are computed at runtime from g1_actuator_model.py.
+
+unitree_g1:
+  # Foot contact sensor for gait rewards / asymmetric critic (flat terrain).
+  # Body name suffixes are matched against Newton body labels.
+  foot_sensor:
+    bodies:
+      - left_ankle_roll_link
+      - right_ankle_roll_link
+    ground_geom_id: 0
+    ground_height: 0.0
+    # mjlab measures foot height at the ``left_foot``/``right_foot`` sites
+    # (pos="0.04 0 -0.037" inside the ankle_roll_link bodies). Rotate this
+    # body-local offset into world so pitch/roll still match mjlab.
+    foot_height_site_offset: [0.04, 0.0, -0.037]
+
+  velocity_locomotion:
+    # Pelvis IMU site offset [m] (mjlab g1.xml ``imu_in_pelvis``).
+    imu_site_offset: [0.04525, 0.0, -0.08339]
+    soft_limit_factor: 0.9
+    command_sample_ranges:
+      lin_vel_x: [-1.0, 1.0]
+      lin_vel_y: [-1.0, 1.0]
+      ang_vel_z: [-0.5, 0.5]
+
+    # Command resample aligned with mjlab UniformVelocityCommand
+    # (tests/mjlab/.../velocity_command.py + Flat-Unitree-G1 env_cfg):
+    # independent Bernoulli flags (not mutually exclusive), then every step
+    # heading PD overwrites wz and standing forces (0,0,0).
+    #   standing 0.1 : (0, 0, 0)
+    #   forward  0.2 : |vx|>=0.3, vy=0, wz=0 at resample (heading may restore wz)
+    #   heading  0.3 : wz = clip(stiffness * heading_error, ±heading_wz_clip)
+    #   remainder    : keep independently sampled (vx, vy, wz)
+    # In-place Q/E generalises from heading + mix (same as mjlab); dedicated
+    # lateral / pure-yaw slices are disabled (0) so they cannot dominate learning.
+    command_resample:
+      interval_s: [3.0, 8.0]
+      rel_standing: 0.1
+      rel_forward: 0.2
+      rel_lateral: 0.0
+      rel_yaw: 0.0
+      rel_heading: 0.3
+      heading_stiffness: 0.5
+      heading_wz_clip: 0.5
+      forward_min_speed: 0.3
+      lateral_min_speed: 0.3
+      yaw_min_speed: 0.3
+
+    # Tracking-reward std / axis coupling. Roll/pitch stay on BodyAngularVelocityPenaltyReward;
+    # mixing them into the yaw exp saturates the gradient (follow_vel_yaw ~0.3).
+    # std matches mjlab's sqrt(0.5); a smaller std over-saturates the exp tail and
+    # removes the gradient the policy needs to escape the no-yaw local optimum.
+    tracking_rewards:
+      TrackAngularVelocityReward:
+        std: 0.7071067811865476
+        include_roll_pitch: false
+
+    # Per-axis command-following scores (Metrics/twist/follow_vel_*).
+    # score = exp(-(v_axis - cmd_axis)^2 / std^2); each axis is independent.
+    # Approaches 1 as body-frame velocity matches the command (acceleration
+    # transients keep the episode mean strictly below 1).
+    command_follow_metrics:
+      std:
+        lin_vel_x: 0.5
+        lin_vel_y: 0.5
+        ang_vel_z: 0.7071067811865476
+
+    init_state:
+      keyframe: knees_bent # knees_bent / home
+      root_pos: [0.0, 0.0, 0.76]
+      root_rot: [0.0, 0.0, 0.7071, 0.7071]
+
+    joint_pos:
+      ".*_hip_pitch_joint": -0.312
+      ".*_knee_joint": 0.669
+      ".*_ankle_pitch_joint": -0.363
+      ".*_elbow_joint": 0.6
+      left_shoulder_roll_joint: 0.2
+      left_shoulder_pitch_joint: 0.2
+      right_shoulder_roll_joint: -0.2
+      right_shoulder_pitch_joint: 0.2
+
+    home_joint_pos:
+      ".*_hip_pitch_joint": -0.1
+      ".*_knee_joint": 0.3
+      ".*_ankle_pitch_joint": -0.2
+      ".*_shoulder_pitch_joint": 0.2
+      ".*_elbow_joint": 1.28
+      left_shoulder_roll_joint: 0.2
+      right_shoulder_roll_joint: -0.2
+
+    home_init_state:
+      root_pos: [0.0, 0.0, 0.783675]
+      root_rot: [0.0, 0.0, 0.7071, 0.7071]
+
+    non_rl_patterns: [finger, thumb, hand]
+
+    # Hand joints (g1_29dof_with_hand only; not in mjlab). Values from g1_29dof.yaml.
+    hand_joints:
+      stiffness: 10.0
+      damping: 2.0
+      armature: 0.1
+      nominal: 0.0
+      rl_controllable: false
+      names:
+        - left_hand_index_0_joint
+        - left_hand_index_1_joint
+        - left_hand_middle_0_joint
+        - left_hand_middle_1_joint
+        - left_hand_thumb_0_joint
+        - left_hand_thumb_1_joint
+        - left_hand_thumb_2_joint
+        - right_hand_index_0_joint
+        - right_hand_index_1_joint
+        - right_hand_middle_0_joint
+        - right_hand_middle_1_joint
+        - right_hand_thumb_0_joint
+        - right_hand_thumb_1_joint
+        - right_hand_thumb_2_joint
+
+    mjw_joint_names:
+      - left_hip_pitch_joint
+      - left_hip_roll_joint
+      - left_hip_yaw_joint
+      - left_knee_joint
+      - left_ankle_pitch_joint
+      - left_ankle_roll_joint
+      - right_hip_pitch_joint
+      - right_hip_roll_joint
+      - right_hip_yaw_joint
+      - right_knee_joint
+      - right_ankle_pitch_joint
+      - right_ankle_roll_joint
+      - waist_yaw_joint
+      - waist_roll_joint
+      - waist_pitch_joint
+      - left_shoulder_pitch_joint
+      - left_shoulder_roll_joint
+      - left_shoulder_yaw_joint
+      - left_elbow_joint
+      - left_wrist_roll_joint
+      - left_wrist_pitch_joint
+      - left_wrist_yaw_joint
+      - left_hand_index_0_joint
+      - left_hand_index_1_joint
+      - left_hand_middle_0_joint
+      - left_hand_middle_1_joint
+      - left_hand_thumb_0_joint
+      - left_hand_thumb_1_joint
+      - left_hand_thumb_2_joint
+      - right_shoulder_pitch_joint
+      - right_shoulder_roll_joint
+      - right_shoulder_yaw_joint
+      - right_elbow_joint
+      - right_wrist_roll_joint
+      - right_wrist_pitch_joint
+      - right_wrist_yaw_joint
+      - right_hand_index_0_joint
+      - right_hand_index_1_joint
+      - right_hand_middle_0_joint
+      - right_hand_middle_1_joint
+      - right_hand_thumb_0_joint
+      - right_hand_thumb_1_joint
+      - right_hand_thumb_2_joint
+
+  # Boxing observation extras / action signal / sampled history / V1 checkpoint expand.
+  # Packed actor obs = V1 frame (99) + extras (13) + action signal (1) + history (6x35=210) = 323.
+  # Critic obs = 323 + 12 foot-state extras = 335.
+  boxing:
+    max_dist: 3.0
+    max_hand_vel: 5.0
+    standoff_distance: 0.8
+    # distance_feasibility shape: 1 - |dist-standoff|/band clamped to [0, 1]
+    # (linear) or exp(-ratio^2) (gaussian). Gates every boxing reward stage.
+    punch_ready_band: 0.3
+    punch_ready_mode: linear  # linear | gaussian
+    pelvis_body: pelvis
+    hand_body: right_wrist_yaw_link
+    extras_dim: 13
+    # Action signal (0..1): retract -> punch transition read by the policy at
+    # obs column 112. Filled from punch_phase.signal_wp; 0 in no-target envs.
+    signal_dim: 1
+    hit_hand_bodies:
+      - right_wrist_yaw_link
+    target_body: target
+    torso_body: pelvis
+    command_clip:
+      cmd_x_max: 1.0
+      cmd_yaw_max: 0.5
+    # Bang-bang approach overlay: deviation beyond deadband -> max command.
+    overlay:
+      lin_vel_deadband: 0.05
+      yaw_deadband: 0.05
+    obs_history:
+      samples: 6
+      stride: 4
+      segments:
+        - base_ang_vel
+        - projected_gravity
+        - joint_pos
+    # Dim layout for optional V1→boxing weight transfer when --resume points at
+    # a 99-dim walk checkpoint (head copied, new cols zero-filled, foot tail kept).
+    # No default source .pt — train from scratch unless the launcher passes one.
+    checkpoint_expand:
+      source_actor_dim: 99
+      source_critic_dim: 111
+      target_actor_dim: 323
+      target_critic_dim: 335
+    # Reward formula constants (read by rewards/mjlab/g1_boxing_rewards.py via
+    # get_boxing_obs_cfg). Sub-weights live here so the preset component
+    # weights can stay at 1.0 with a single source of truth per constant.
+    distance:
+      base_weight: 0.5        # in-band positive: feasibility * base_weight
+      penalty_weight: 1.0     # out-of-band: -abs(dist - standoff) * penalty_weight
+    ready_pose:
+      ready_threshold: 0.3    # hand_is_ready when weighted joint error below this
+      error_scale: 1.0
+      weight: 1.0
+      ready_bonus: 0.5
+      # G1 right arm dofs (exact joint_dof_names entries, radians).
+      joints:
+        right_shoulder_pitch_joint: {pose: -0.8, weight: 1.0}
+        right_shoulder_roll_joint: {pose: 0.4, weight: 1.0}
+        right_shoulder_yaw_joint: {pose: 0.0, weight: 0.5}
+        right_elbow_joint: {pose: 1.2, weight: 1.0}
+    # Hard-state punch/retract FSM (punch_phase.py). Drives the action-signal
+    # obs column and gates the retract vs punch reward branches.
+    punch_phase:
+      cooldown_lo_s: 0.2          # min cooldown drawn after leaving punch
+      cooldown_hi_s: 0.6          # max cooldown drawn after leaving punch
+      transition_duration_s: 0.08 # signal quadratic-ease duration (0<->1)
+      contact_hold_min_s: 0.2     # min post-contact punch hold
+      contact_hold_max_s: 0.4     # max hold when contact persists + arm extended
+      direction_deviation_cos: 0.707  # ~45deg: punch dir vs target dir (below -> deviated)
+      joint_limit_proximity: 0.1  # rad within soft limit that counts as near-limit
+      punch_timeout_s: 1.0        # hard cap on punch duration
+      arm_extension_threshold: 0.15  # hand-target dist below which arm counts as extended
+    punch:
+      # 0.7 => |dist-standoff| < 0.09 m (linear band 0.3). Must exceed the
+      # overlay lin_vel_deadband (0.05 m) so the approach stop-zone still
+      # unlocks punch/hit. 0.9 was a 0.03 m ring inside the 0.05 m deadband.
+      gate_feasibility: 0.7
+      planar_min_speed: 0.5   # v_xy must exceed this (m/s)
+      planar_dominance_ratio: 2.0  # v_xy must exceed ratio * |v_z|
+      xy_weight: 2.0
+      acc_weight: 3.0
+      full_swing_window_s: 0.1   # hand forward-history window (wind-up -> swing)
+      full_swing_min_advance: 0.1  # min forward progress (m) within the window
+      full_swing_acc_scale: 1.5
+      unprepared_scale: 0.2      # acc-term scale when punch fired without ready pose
+    retract:
+      vel_weight: 1.5
+      fake_punch_vel_threshold: 0.1
+      fake_punch_penalty: 5.0   # must exceed punch.acc_weight; only when too far to punch
+      ideal_away_speed: 0.8     # Gaussian peak: ideal retract speed away from target (m/s)
+      away_sigma: 0.5           # Gaussian sigma around ideal_away_speed
+      over_speed_threshold: 2.0 # away speed above this is penalized (m/s)
+      over_speed_penalty: 2.0   # penalty per m/s above over_speed_threshold
+    hit:
+      base: 10.0
+      velocity_bonus: 5.0
+      velocity_threshold: 1.5
+    pose:
+      nominal_weight: 0.0
+      torque_weight: 0.001
+      tilt_weight: 0.5

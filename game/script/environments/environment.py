@@ -474,10 +474,25 @@ class Environment:
         # 3. 🌟 一鍵委託物理管理器進行多態重置！無須再傳入一堆重複、臃腫的 position/rotation 陣列
         self.physics_manager.reset_obj()
 
+        handler = getattr(self.physics_manager, "solver_handler", None)
+        on_env_reset = getattr(handler, "on_env_reset", None)
+        if callable(on_env_reset):
+            on_env_reset(getattr(self.physics_manager, "state_0", None), terminated)
+
         # 4. Re-mount tools configured with `start_attached: true` in reset envs.
         self._restore_start_attached_tools(terminated)
 
+        self.prepare_reset_observations(terminated, current_step)
+
         self._dispatch_template_hooks("on_reset", terminated, current_step)
+
+    def prepare_reset_observations(self, terminated, current_step):
+        """Fill observation extras after physics reset and before template on_reset.
+
+        Default is a no-op. Subclasses use TryGet on runtime hooks so this base
+        class does not name any object template.
+        """
+        del terminated, current_step
 
     def _reset_worlds(self, terminated) -> Optional[List[int]]:
         """World indices being reset.

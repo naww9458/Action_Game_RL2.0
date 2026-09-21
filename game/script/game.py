@@ -396,7 +396,11 @@ class Game:
         self._train_log.on_actions(actions)
 
         self._apply_inspector_rl_actions(actions_wp)
-        self.players.rl_action(actions=actions_wp)
+        self.players.rl_action(
+            actions=actions_wp,
+            apply_default_commands=actions is None,
+            overlay_commands=self._apply_inspector_commands,
+        )
 
         # Curriculum hook: host-side, outside the CUDA-graph capture region so
         # device buffers (e.g. velocity-command ranges) update before replay.
@@ -405,7 +409,6 @@ class Game:
 
         if self.graph is not None:
             wp.capture_launch(self.graph)
-            self._apply_inspector_commands()
         else:
             # Start capturing
             if self.current_step.numpy()[0] >= self.capture_graph_after_step:
@@ -421,8 +424,6 @@ class Game:
 
             self.environment.update_game_status(physics_manager=self.physics_manager, reward_calculator=self.reward_calculator, num_env=self.num_env, current_step=self.current_step)
 
-            self._apply_inspector_commands()
-            
             self.reward_calculator.calculate_rewards(
                 current_step=self.current_step, 
                 actions=self._step_actions_wp, 
@@ -490,7 +491,11 @@ class Game:
         self._train_log.on_actions(actions)
 
         self._apply_inspector_rl_actions(actions_wp)
-        self.players.rl_action(actions=actions_wp)
+        self.players.rl_action(
+            actions=actions_wp,
+            apply_default_commands=actions is None,
+            overlay_commands=self._apply_inspector_commands,
+        )
 
         # Curriculum hook (host-side; step_Diff runs without a CUDA graph).
         self.environment.update_curriculum()
@@ -505,8 +510,6 @@ class Game:
             num_env=self.num_env, 
             current_step=self.current_step
         )
-
-        self._apply_inspector_commands()
 
         self.reward_calculator.calculate_rewards( 
             current_step=self.current_step, 
@@ -586,7 +589,6 @@ class Game:
         if callable(apply_fn):
             apply_fn()
         self._apply_inspector_pinned_controls()
-        self._apply_inspector_commands()
         viewer = self.physics_manager.viewerGL
         if viewer is not None:
             viewer.apply_forces(self.physics_manager.state_0)
@@ -606,6 +608,7 @@ class Game:
                 break
 
     def _apply_inspector_commands(self):
+        """Pinned command overlay: after default/trainer, before Human input."""
         viewer = self.physics_manager.viewerGL
         if viewer is not None and hasattr(viewer, "object_inspector"):
             viewer.object_inspector.apply_command_pins()

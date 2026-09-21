@@ -12,11 +12,18 @@ from __future__ import annotations
 import os
 import shutil
 
+import rsl_rl.runners.on_policy_runner as rsl_on_policy_runner
 from rsl_rl.runners.on_policy_runner import OnPolicyRunner
+
+from rl_framework.nan_report import check_nan_with_report
 
 
 class RslRlOnPolicyRunner(OnPolicyRunner):
     """``OnPolicyRunner`` that additionally mirrors checkpoints into ``checkpoints/``."""
+
+    def __init__(self, *args, nan_check_abort: bool = False, **kwargs):
+        self._nan_check_abort = bool(nan_check_abort)
+        super().__init__(*args, **kwargs)
 
     def _resolve_log_dir(self) -> str | None:
         """Return the run log directory for the installed rsl_rl API variant.
@@ -71,6 +78,23 @@ class RslRlOnPolicyRunner(OnPolicyRunner):
                     self.log = log_with_reward_diagnostics
 
             self._training_log_hooks_installed = True
+
+        # Optional detailed NaN abort (--nan-check without --no-nan-check-abort).
+        if not getattr(self, "_nan_check_patched", False):
+            if self._nan_check_abort:
+                env = self.env
+
+                def check_nan(obs, rewards, dones): # TODO 明明很亂，實際上應該同時檢查了 actor 和 critic ，但不因爲不是重要核心功能，暫不改進
+                    critic = getattr(env, "critic_obs", None)
+                    if critic is None:
+                        inner = getattr(env, "env", None)
+                        critic = getattr(inner, "critic_obs", None)
+                    check_nan_with_report(
+                        obs, rewards, dones, env=env, critic_obs=critic
+                    )
+
+                rsl_on_policy_runner.check_nan = check_nan
+            self._nan_check_patched = True
 
         super().learn(num_learning_iterations, init_at_random_ep_len)
 

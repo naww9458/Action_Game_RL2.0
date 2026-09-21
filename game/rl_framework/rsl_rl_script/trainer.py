@@ -38,6 +38,9 @@ class Trainer(Trainer_base):
         dump_rollouts=False,
         dump_actions_steps=0,
         dump_obs_steps=0,
+        nan_check=False,
+        nan_check_guard=False,
+        nan_check_abort=False,
     ):
         ensure_runtime_env()
 
@@ -49,27 +52,10 @@ class Trainer(Trainer_base):
         self.dump_rollouts = bool(dump_rollouts)
         self.dump_actions_steps = int(dump_actions_steps or 0)
         self.dump_obs_steps = int(dump_obs_steps or 0)
+        self.nan_check_guard = bool(nan_check) and bool(nan_check_guard)
+        self.nan_check_abort = bool(nan_check) and bool(nan_check_abort)
 
-        if loaded_config is None and preset_id is not None:
-            from training.loader import TrainingPresetLoader
-
-            loaded_config = TrainingPresetLoader.load(preset_id)
-
-        if checkpoint_path is not None:
-            self.model_cfg, self.train_cfg, self.environment_config_path, loaded_from_ckpt = self.load_config_from_checkpoint(
-                checkpoint_path
-            )
-            if loaded_config is None:
-                loaded_config = loaded_from_ckpt
-        elif loaded_config is not None:
-            self.model_cfg = loaded_config.model_cfg
-            self.train_cfg = loaded_config.train_cfg
-        else:
-            raise ValueError(
-                "Trainer requires loaded_config, preset_id, or checkpoint_path"
-            )
-
-        self.loaded_config = loaded_config
+        loaded_config = self.bind_launch_config(loaded_config, checkpoint_path, preset_id)
         self.preset_path = preset_path or (
             str(loaded_config.preset_path) if loaded_config and loaded_config.preset_path else None
         )
@@ -107,6 +93,7 @@ class Trainer(Trainer_base):
             max_episode_length=self.train_cfg.max_episode_step,
             device=device,
             clip_actions=self.runner_cfg.clip_actions,
+            nan_guard=self.nan_check_guard,
         )
 
         # Create the run directory under runs/RSL-rl/<experiment_name>/.
@@ -144,11 +131,10 @@ class Trainer(Trainer_base):
             train_cfg=self.runner_cfg.to_on_policy_runner_cfg(),
             log_dir=self.log_dir,
             device=device,
+            nan_check_abort=self.nan_check_abort,
         )
 
-        if checkpoint_path is not None:
-            print(f"[RSL-rl] Resuming from checkpoint: {checkpoint_path}")
-            self.runner.load(checkpoint_path, map_location=device)
+        self._load_or_transfer_checkpoint(checkpoint_path, device)
 
         self._init_battle_tracking()
 
@@ -180,6 +166,73 @@ class Trainer(Trainer_base):
         # For RSL-rl, ``train.timesteps`` is interpreted as the number of
         # learning iterations (each collects num_steps_per_env steps per env).
         cfg.max_iterations = preset.train.timesteps
+
+    def _policy_bundle_spec(self):
+        from script.role.policies.policy_bundle import PolicyBundleRegistry
+
+        version = getattr(self.train_cfg, "control_policy_version", None)
+        if not version:
+            return None
+        env = getattr(getattr(self.env, "game", None), "environment", None)
+        obs_actor = getattr(env, "g1_obs_actor", None) if env is not None else None
+        pattern = getattr(obs_actor, "pattern", None)
+        return PolicyBundleRegistry.get(str(version), robot_pattern=pattern)
+
+    def _env_policy_obs_dims(self) -> tuple[int, int]:
+        env = self.env.game.environment
+        obs_actor = getattr(env, "g1_obs_actor", None) # TODO Hard code G1
+        actor_dim = int(
+            getattr(obs_actor, "obs_dim", 0) or getattr(env, "flat_obs_dim", 0) or 0
+        )
+        critic_extra = 0
+        obs_critic = getattr(env, "g1_obs_critic", None) # TODO Hard code G1
+        if obs_critic is not None:
+            critic_extra = int(getattr(obs_critic, "critic_obs_dim", 0) or 0)
+        return actor_dim, actor_dim + critic_extra
+
+    def _try_weight_transfer(self, checkpoint_path: str) -> bool:
+        """TryGet version expander: copy padded weights, skip optimizer / iteration."""
+        spec = self._policy_bundle_spec()
+        if spec is None:
+            return False
+        from script.role.policies.policy_bundle import PolicyBundleRegistry
+
+        expander = PolicyBundleRegistry.import_version_module(spec, "checkpoint_expand")
+        expand_fn = getattr(expander, "expand_if_needed", None) if expander is not None else None
+        apply_fn = getattr(expander, "apply_expanded_weights", None) if expander is not None else None
+        if not callable(expand_fn) or not callable(apply_fn):
+            return False
+        import torch
+
+        actor_dim, critic_dim = self._env_policy_obs_dims()
+        loaded = torch.load(checkpoint_path, map_location=self.device, weights_only=False)
+        expanded, did_expand = expand_fn(
+            loaded,
+            target_actor_dim=actor_dim,
+            target_critic_dim=critic_dim,
+        )
+        if not did_expand:
+            return False
+        apply_fn(self.runner, expanded)
+        print(
+            f"[RSL-rl] Transferred pretrained weights from {checkpoint_path} "
+            f"(actor {actor_dim}, critic {critic_dim}; optimizer not loaded)"
+        )
+        return True
+
+    def _load_or_transfer_checkpoint(self, checkpoint_path, device) -> None:
+        """Load ``--resume`` when provided; otherwise train from scratch.
+
+        A mismatched V1-sized checkpoint is weight-transferred via the version
+        expander (optimizer skipped). A matching checkpoint is loaded in full.
+        No template-bundled default ``.pt`` is invented.
+        """
+        if not checkpoint_path:
+            return
+        if self._try_weight_transfer(checkpoint_path):
+            return
+        print(f"[RSL-rl] Resuming from checkpoint: {checkpoint_path}")
+        self.runner.load(checkpoint_path, map_location=device)
 
     # ------------------------------------------------------------------
     # Launcher entry points

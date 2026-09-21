@@ -50,6 +50,8 @@ class WarpEnv(gym.Env):
         step_mode: str,
         enable_window=False,
         window_num_envs=1,
+        nan_check_guard=False,
+        nan_check_abort=False,
     ):
 
         # render_mode="window"
@@ -67,6 +69,8 @@ class WarpEnv(gym.Env):
             self.step = self.step_Diff
             self.requires_grad = True
 
+        self._nan_guard = bool(nan_check_guard)
+        self._nan_abort = bool(nan_check_abort)
         self.seed = None
         if is_training:
             # To ensure experimental reproducibility, seeds are only used during training. Using seeds outside of training is equivalent to using training data for testing.
@@ -142,6 +146,15 @@ class WarpEnv(gym.Env):
         # to RSL-rl's ``RslRlVecEnvWrapper``. ``None`` keeps the wrapper on the
         # symmetric-critic fallback (policy obs).
         self.critic_obs = None
+
+    def mark_envs_terminated(self, env_mask: torch.Tensor) -> None:
+        """Set ``Game.terminated`` for the given env rows (wrappers / NaN guard)."""
+        mask = env_mask.reshape(-1).bool()
+        term = wp.to_torch(self.game.terminated).reshape(-1)
+        n = min(int(term.shape[0]), int(mask.shape[0]))
+        if n <= 0:
+            return
+        term[:n] = term[:n] | mask[:n].to(device=term.device, dtype=torch.bool)
 
     def reset(self, seed=None, options=None):
         super().reset(seed=self.seed)
@@ -227,6 +240,9 @@ class WarpEnv(gym.Env):
         if self.model_obs_type == "state_based":
             self.critic_obs = self.game._get_critic_observation()
 
+        obs, rewards, terminated_tensor, truncated_tensor = self._apply_nan_check(
+            obs, rewards, terminated_tensor, truncated_tensor
+        )
         return obs, rewards, terminated_tensor, truncated_tensor, {}
 
     def step_Diff(self, actions: torch.Tensor):
@@ -247,14 +263,81 @@ class WarpEnv(gym.Env):
             "rewards_wp": step_total_rewards_diff
         }
 
+        obs, rewards, terminated_tensor, truncated_tensor = self._apply_nan_check(
+            obs, rewards, terminated_tensor, truncated_tensor
+        )
         # 最後一個參數從 tape 改為 info
         return obs, rewards, terminated_tensor, truncated_tensor, info
+
+    def _row_nonfinite_mask(self, tensor: torch.Tensor) -> torch.Tensor | None:
+        if tensor is None or not torch.is_tensor(tensor):
+            return None
+        if not tensor.is_floating_point() and not tensor.is_complex():
+            return None
+        flat = tensor.reshape(self.num_envs, -1)
+        return ~torch.isfinite(flat).all(dim=-1)
+
+    def _apply_nan_check(self, obs, rewards, terminated, truncated):
+        """Optional launch-feature NaN guard / abort (framework-shared report)."""
+        if not self._nan_guard and not self._nan_abort:
+            return obs, rewards, terminated, truncated
+
+        rewards_flat = rewards.view(-1).float()
+        bad = ~torch.isfinite(rewards_flat)
+        obs_mask = self._row_nonfinite_mask(torch.as_tensor(obs, device=self.device))
+        if obs_mask is not None:
+            bad = bad | obs_mask
+        critic_mask = self._row_nonfinite_mask(self.critic_obs) if self.critic_obs is not None else None
+        if critic_mask is not None:
+            bad = bad | critic_mask
+
+        if self._nan_abort:
+            from rl_framework.nan_report import check_nan_with_report
+
+            dones = terminated.view(-1).bool() | truncated.view(-1).bool()
+            check_nan_with_report(
+                obs,
+                rewards_flat,
+                dones.float(),
+                env=self,
+                critic_obs=self.critic_obs,
+            )
+
+        if self._nan_guard and bad.any():
+            hits = int(getattr(self, "_nan_guard_hits", 0)) + 1
+            self._nan_guard_hits = hits
+            if hits <= 3 or hits % 64 == 0:
+                from rl_framework.nan_report import print_nan_guard_report
+
+                print_nan_guard_report(
+                    obs,
+                    rewards_flat,
+                    env=self,
+                    critic_obs=self.critic_obs,
+                    count=hits,
+                    n_bad=int(bad.sum().item()),
+                    action="zeroing reward/obs and marking terminated",
+                )
+            self.mark_envs_terminated(bad)
+            terminated = terminated.view(-1, 1).bool() | bad.view(-1, 1)
+            rewards = torch.where(
+                torch.isfinite(rewards_flat),
+                rewards_flat,
+                torch.zeros_like(rewards_flat),
+            ).view_as(rewards)
+            if torch.is_tensor(obs):
+                obs = obs.clone()
+                obs[bad] = 0
+            if self.critic_obs is not None and torch.is_tensor(self.critic_obs):
+                self.critic_obs = self.critic_obs.clone()
+                self.critic_obs[bad] = 0
+
+        return obs, rewards, terminated, truncated
 
     def _get_observations(self):
         # obs will return by game step function
 
         pass
-
     def close(self):
         self.game.physics_manager.cleanup() 
         self.game.close()

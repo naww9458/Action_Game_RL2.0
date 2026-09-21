@@ -24,7 +24,18 @@ def _ensure_object_templates() -> None:
 
 
 def register_robot_loader(pattern: str, loader: RobotConfigLoader) -> None:
-    _ROBOT_LOADERS[normalize_robot_pattern(pattern)] = loader
+    key = normalize_robot_pattern(pattern)
+    existing = _ROBOT_LOADERS.get(key)
+    if existing is not None and existing is not loader:
+        existing_name = getattr(existing, "__name__", repr(existing))
+        new_name = getattr(loader, "__name__", repr(loader))
+        raise ValueError(
+            f"Joint config loader for pattern '{key}' is already registered as "
+            f"{existing.__module__}.{existing_name}; refusing "
+            f"{loader.__module__}.{new_name}. Each object template must use a "
+            "unique object.pattern."
+        )
+    _ROBOT_LOADERS[key] = loader
 
 
 def _resolve_robot_pattern(pattern: str) -> str:

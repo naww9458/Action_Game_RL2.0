@@ -63,6 +63,9 @@ headless_train: Headless Training
 dump_rollouts: Dump first N rollout steps (.npy)
 dump_actions_steps: 'Model output steps to save (actions):'
 dump_obs_steps: 'Observation steps to save (obs):'
+nan_check: NaN / Inf Check
+nan_check_guard: 'Reset non-finite envs (guard)'
+nan_check_abort: 'Abort with detailed report (abort)'
 is_lock_fps: 'Lock FPS (is_lock_fps):'
 language_select: 'Language:'
 launch_tb: Launch TensorBoard

@@ -21,6 +21,9 @@ object:
     filter_all_collisions: true
     object_friction: 0.5
     object_elasticity: 0.0
+    # Kinematic cube: mass is for solver compile / inertia only; DOFs stay locked.
+    object_mass: 1.0
+    lock_inertia: true
     color: [255, 196, 37]
   target:
     shape: sphere
@@ -30,5 +33,7 @@ object:
     object_friction: 0.8
     object_elasticity: 0.35
     object_mass: 0.8
-    lock_inertia: true
+    # Dynamic ball: must keep inertia. lock_inertia on a free body zeros I
+    # and the solver writes NaN transforms (policy obs then contain NaN).
+    lock_inertia: false
     color: [217, 38, 31]

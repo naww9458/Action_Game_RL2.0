@@ -39,6 +39,9 @@ class Trainer(Trainer_base):
         dump_rollouts=False,
         dump_actions_steps=0,
         dump_obs_steps=0,
+        nan_check=False,
+        nan_check_guard=False,
+        nan_check_abort=False,
     ):
         ensure_runtime_env()
 
@@ -52,24 +55,10 @@ class Trainer(Trainer_base):
         self.dump_rollouts = bool(dump_rollouts)
         self.dump_actions_steps = int(dump_actions_steps or 0)
         self.dump_obs_steps = int(dump_obs_steps or 0)
+        self.nan_check_guard = bool(nan_check) and bool(nan_check_guard)
+        self.nan_check_abort = bool(nan_check) and bool(nan_check_abort)
 
-        if loaded_config is None and preset_id is not None:
-            from training.loader import TrainingPresetLoader
-            loaded_config = TrainingPresetLoader.load(preset_id)
-
-        if checkpoint_path is not None:
-            self.model_cfg, self.train_cfg, self.environment_config_path, loaded_from_ckpt = self.load_config_from_checkpoint(checkpoint_path)
-            if loaded_config is None:
-                loaded_config = loaded_from_ckpt
-        elif loaded_config is not None:
-            self.model_cfg = loaded_config.model_cfg
-            self.train_cfg = loaded_config.train_cfg
-        else:
-            raise ValueError(
-                "Trainer requires loaded_config, preset_id, or checkpoint_path"
-            )
-
-        self.loaded_config = loaded_config
+        loaded_config = self.bind_launch_config(loaded_config, checkpoint_path, preset_id)
         self.preset_path = preset_path or (str(loaded_config.preset_path) if loaded_config and loaded_config.preset_path else None)
         self.Policy = loaded_config.Policy
 
@@ -96,6 +85,8 @@ class Trainer(Trainer_base):
             step_mode="Differentiation",
             enable_window=self.enable_window,
             window_num_envs=self.window_num_envs,
+            nan_check_guard=self.nan_check_guard,
+            nan_check_abort=self.nan_check_abort,
         )
 
         if is_training and not checkpoint_path:

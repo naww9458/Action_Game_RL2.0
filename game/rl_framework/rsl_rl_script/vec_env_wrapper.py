@@ -41,6 +41,7 @@ class RslRlVecEnvWrapper(VecEnv):
         device: str,
         clip_actions: float | None = None,
         cfg: dict | object | None = None,
+        nan_guard: bool = False,
     ) -> None:
         """Initialize the wrapper.
 
@@ -50,10 +51,13 @@ class RslRlVecEnvWrapper(VecEnv):
             device: Torch device string used for buffers.
             clip_actions: If not None, clip actions to ``[-clip_actions, clip_actions]``.
             cfg: Optional configuration object exposed as ``env.cfg`` (defaults to ``env`` itself).
+            nan_guard: When True, non-finite obs/reward rows are zeroed, marked
+                terminated, and auto-reset (``--nan-check`` guard).
         """
         self.env = env
         self.device = device
         self.cfg = env if cfg is None else cfg
+        self.nan_guard = bool(nan_guard)
 
         self.num_envs = env.num_envs
         action_space = env.action_space
@@ -133,6 +137,34 @@ class RslRlVecEnvWrapper(VecEnv):
         rewards = rewards.view(-1).float()
         terminated = terminated.view(-1).bool()
         truncated = truncated.view(-1).bool()
+
+        # Optional NaN guard (--nan-check): one world can return NaN q/qd from
+        # the solver. Zero that step's reward and mark the env terminated so
+        # the auto-reset below restores finite physics. Report BEFORE mutating
+        # so the layout still shows the original non-finite columns / terms.
+        if self.nan_guard:
+            bad = self._nonfinite_env_mask(obs, rewards)
+            if bad.any():
+                hits = int(getattr(self, "_nan_guard_hits", 0)) + 1
+                self._nan_guard_hits = hits
+                if hits <= 3 or hits % 64 == 0:
+                    from rl_framework.nan_report import print_nan_guard_report
+
+                    print_nan_guard_report(
+                        obs,
+                        rewards,
+                        env=self,
+                        critic_obs=getattr(self.env, "critic_obs", None),
+                        count=hits,
+                        n_bad=int(bad.sum().item()),
+                        action="zeroing reward and resetting",
+                    )
+            terminated = terminated | bad
+            mark = getattr(self.env, "mark_envs_terminated", None)
+            if callable(mark):
+                mark(bad)
+            rewards = torch.where(torch.isfinite(rewards), rewards, torch.zeros_like(rewards))
+
         dones = terminated | truncated
 
         # Update episode length buffer.
@@ -165,6 +197,26 @@ class RslRlVecEnvWrapper(VecEnv):
     # ------------------------------------------------------------------
     # Helpers
     # ------------------------------------------------------------------
+    def _row_nonfinite_mask(self, tensor: Any) -> torch.Tensor | None:
+        if tensor is None or not torch.is_tensor(tensor):
+            return None
+        if not tensor.is_floating_point() and not tensor.is_complex():
+            return None
+        flat = tensor.reshape(self.num_envs, -1)
+        return ~torch.isfinite(flat).all(dim=-1)
+
+    def _nonfinite_env_mask(self, obs: Any, rewards: torch.Tensor) -> torch.Tensor:
+        """True for env rows whose reward, policy obs, or critic obs is non-finite."""
+        bad = ~torch.isfinite(rewards.reshape(self.num_envs))
+        policy = obs["state"] if isinstance(obs, dict) and "state" in obs else obs
+        policy_mask = self._row_nonfinite_mask(torch.as_tensor(policy, device=self.device))
+        if policy_mask is not None:
+            bad = bad | policy_mask
+        critic_mask = self._row_nonfinite_mask(getattr(self.env, "critic_obs", None))
+        if critic_mask is not None:
+            bad = bad | critic_mask
+        return bad
+
     def _snapshot_obs(self, obs: Any) -> torch.Tensor:
         """Flatten ``obs`` to ``(num_envs, obs_dim)`` and detach it from env storage.
 

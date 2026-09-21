@@ -1,0 +1,59 @@
+# G1 control policy boxing_v1 — 323-dim packed obs on top of the V1 locomotion frame.
+# Packed layout: [0:99] current V1 frame, [99:112] boxing extras, [112] action
+# signal, [113:323] sampled history (6x35).
+id: boxing_v1
+description: "G1 boxing observation expansion (323-dim actor obs, 29-dim joint action, 3-dim commands)."
+control_task: velocity_locomotion
+
+policy:
+  module: policy_PPO_g1_velocity
+  default_checkpoint: model_4150.pt
+
+observation:
+  obs_actor: g1_boxing_v1
+  obs_critic: g1_boxing_foot_critic
+  obs_dim: 323
+  history_len: 1
+
+action:
+  low_level_dim: 29
+  control_mode: 3
+
+commands:
+  dim: 3
+  labels:
+    - "vx (m/s)"
+    - "vy (m/s)"
+    - "wz (rad/s)"
+  ranges:
+    - [-1.0, 1.0]
+    - [-1.0, 1.0]
+    - [-0.5, 0.5]
+  default:
+    values: [0.0, 0.0, 0.0]
+    has_target: false
+  human_control:
+    keyboard:
+      command_0_positive: [w]
+      command_0_negative: [s]
+      command_1_positive: [a]
+      command_1_negative: [d]
+      command_2_positive: [q]
+      command_2_negative: [e]
+    mouse: {}
+
+# Direct articulation-body human control (non-RL-assisted path).
+articulation_ability:
+  control_mode: 3
+  gait_torque: 50.0
+  force: 150.0
+  human_control:
+    bindings:
+      - local_x
+      - local_y
+    keyboard:
+      local_x_positive: [w]
+      local_x_negative: [s]
+      local_y_positive: [a]
+      local_y_negative: [d]
+    mouse: {}

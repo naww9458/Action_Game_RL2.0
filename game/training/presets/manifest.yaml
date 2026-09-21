@@ -29,3 +29,15 @@ presets:
     env_id: flat_walk
     framework: RSL_RL
     algorithm: PPO
+  - id: flat_walk_rsl_rl_ppo_state_based_2
+    file: flat_walk_rsl_rl_ppo_state_based_2.yaml
+    display_name: "G1 速度行走 RSL-RL PPO（323 維 boxing_v1 觀察）"
+    env_id: flat_walk
+    framework: RSL_RL
+    algorithm: PPO
+  - id: boxing_punch_rsl_rl_ppo_state_based
+    file: boxing_punch_rsl_rl_ppo_state_based.yaml
+    display_name: "G1 揮拳訓練 RSL-RL PPO（323 維 boxing_v1）"
+    env_id: boxing_punch
+    framework: RSL_RL
+    algorithm: PPO

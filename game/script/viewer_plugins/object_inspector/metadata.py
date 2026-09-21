@@ -407,18 +407,8 @@ def _resolve_player_action(game: "Game", local_role_idx: int) -> Optional[Player
     )
 
 
-def _role_owns_ability(owners: List[int], local_role_idx: int, num_objects_env: int) -> bool:
-    if num_objects_env <= 0:
-        return local_role_idx in owners
-    return any(int(owner) % num_objects_env == local_role_idx for owner in owners)
-
-
 def _resolve_accepts_commands(game: "Game", local_role_idx: int, pattern: str) -> bool:
-    """True when this character uses the env command buffer as a side channel.
-
-    If an owned ability already maps commands onto the RL action vector, those
-    values stay on the RL Action tab.
-    """
+    """True when this character consumes a command buffer shown on the Commands tab."""
     environment = game.environment
     if getattr(environment, "commands", None) is None:
         return False
@@ -433,13 +423,4 @@ def _resolve_accepts_commands(game: "Game", local_role_idx: int, pattern: str) -
     if normalize_robot_pattern(pattern) not in consumers:
         return False
 
-    players = game.players
-    num_objects_env = int(game.num_objects_env)
-    for ability_idx, owners in enumerate(players.abilities_owner_list):
-        if not _role_owns_ability(owners, local_role_idx, num_objects_env):
-            continue
-        ability = players.abilities_instance_list[ability_idx]
-        if callable(getattr(ability, "uses_command_as_rl_action", None)):
-            if ability.uses_command_as_rl_action():
-                return False
     return True

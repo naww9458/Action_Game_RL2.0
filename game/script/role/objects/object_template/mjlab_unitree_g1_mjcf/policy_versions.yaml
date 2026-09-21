@@ -1,5 +1,5 @@
 # Thin index: maps control-policy version id -> on-disk config under models/<version>/.
 versions:
   V1:
-    robot_pattern: unitree_g1
+    robot_pattern: unitree_g1_mjcf
     config: models/V1/control_policy.yaml

@@ -5,7 +5,7 @@
 #
 # The original project is licensed under the Apache License 2.0.
 
-"""G1 velocity locomotion observation/command provider (mjlab-aligned)."""
+"""G1 velocity locomotion observation and command (mjlab-aligned)."""
 
 from __future__ import annotations
 
@@ -656,7 +656,7 @@ def write_commands_from_rl_actions_kernel(
         commands[tid, i] = actions[action_row][action_shape_offset + i]
 
 
-class G1VelocityLocomotionProvider:
+class G1VelocityLocomotionObsActor:
     """Observation/command contract for Mjlab-Velocity-Flat-Unitree-G1."""
 
     command_labels = ["vx (m/s)", "vy (m/s)", "wz (rad/s)"]
@@ -684,7 +684,7 @@ class G1VelocityLocomotionProvider:
         self.instance_world_indices = instance_world_indices or list(range(num_env))
         self.instance_view_indices = instance_view_indices or [0] * num_env
         if len(self.instance_world_indices) != len(self.instance_view_indices):
-            raise ValueError("G1 provider instance world and view index counts must match.")
+            raise ValueError("G1 obs actor instance world and view index counts must match.")
         self.num_instances = len(self.instance_world_indices)
 
         self.enable_obs_noise = bool(enable_obs_noise)
@@ -773,7 +773,7 @@ class G1VelocityLocomotionProvider:
             -1,
         )
         if view_idx == -1:
-            raise RuntimeError(f"Articulation pattern '{self.pattern}' not found for G1 provider.")
+            raise RuntimeError(f"Articulation pattern '{self.pattern}' not found for G1 obs actor.")
         self.view = self.articulation_body.views[view_idx]
         self.rl_action_dim = self.articulation_body.control_rl_action_dim.get(self.pattern, ACTION_DIM)
         self.obs_dim = 12 + 3 * self.rl_action_dim
@@ -879,7 +879,7 @@ class G1VelocityLocomotionProvider:
     def validate_dims(self, *, expected_low_level_action_dim: Optional[int] = None) -> None:
         if expected_low_level_action_dim is not None and self.rl_action_dim != expected_low_level_action_dim:
             raise ValueError(
-                f"Provider rl_action_dim={self.rl_action_dim} != expected {expected_low_level_action_dim}"
+                f"obs_actor rl_action_dim={self.rl_action_dim} != expected {expected_low_level_action_dim}"
             )
 
     def write_commands_from_rl_actions(
@@ -1215,14 +1215,14 @@ class G1VelocityLocomotionProvider:
         expected_shape = (self.num_instances, self.rl_action_dim)
         if low_level_actions.shape != expected_shape:
             raise ValueError(
-                "Low-level action shape does not match G1 provider instances: "
+                "Low-level action shape does not match G1 obs actor instances: "
                 f"expected {expected_shape}, got {low_level_actions.shape}."
             )
         wp.copy(self.prev_actions, self.policy_actions)
         wp.copy(self.policy_actions, low_level_actions)
 
 
-def create_g1_velocity_locomotion_provider(
+def create_g1_velocity_locomotion_obs_actor(
     *,
     num_env: int,
     device: str,
@@ -1235,8 +1235,8 @@ def create_g1_velocity_locomotion_provider(
     obs_noise_cfg: Optional[dict] = None,
     encoder_bias_range: Optional[tuple[float, float]] = None,
     base_com_offset_range: Optional[dict[str, tuple[float, float]]] = None,
-) -> G1VelocityLocomotionProvider:
-    provider = G1VelocityLocomotionProvider(
+) -> G1VelocityLocomotionObsActor:
+    obs_actor = G1VelocityLocomotionObsActor(
         num_env=num_env,
         device=device,
         articulation_body=articulation_body,
@@ -1249,8 +1249,8 @@ def create_g1_velocity_locomotion_provider(
         encoder_bias_range=encoder_bias_range,
         base_com_offset_range=base_com_offset_range,
     )
-    provider.setup()
-    return provider
+    obs_actor.setup()
+    return obs_actor
 
 
-create_obs_actor = create_g1_velocity_locomotion_provider
+create_obs_actor = create_g1_velocity_locomotion_obs_actor

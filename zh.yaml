@@ -64,6 +64,9 @@ headless_train: 無視窗訓練 (headless)
 dump_rollouts: 保存前 N 步 rollout (.npy)
 dump_actions_steps: '保存模型輸出步數 (actions):'
 dump_obs_steps: '保存觀測步數 (obs):'
+nan_check: NaN / Inf 檢查
+nan_check_guard: '重置非有限值環境 (guard)'
+nan_check_abort: '仍有非有限值時中止並報告 (abort)'
 is_lock_fps: '鎖定幀率 (is_lock_fps):'
 language_select: '語言選擇:'
 launch_tb: 啟動 TensorBoard

@@ -32,6 +32,15 @@ class BaseSolver:
         """當外部 Kernel 強行修改了 state 的位置/旋轉後，調用此方法同步求解器內部狀態"""
         pass
 
+    def on_env_reset(self, state, terminated) -> None:
+        """Clear solver-internal buffers for worlds flagged in ``terminated``.
+
+        Called from ``Environment.reset_env`` (outside the CUDA graph). Default
+        is a no-op; MuJoCo Warp must zero ``qacc_warmstart`` after a NaN
+        divergence or the next ``step`` poisons the teleported joint state.
+        """
+        del state, terminated
+
     def reset_history(self):
         """當重置環境時，調用此方法清除歷史快取"""
         pass

@@ -20,6 +20,50 @@ class Trainer_base:
         self.agent = None
         self.loaded_config = None
         self.preset_path = None
+        self.model_cfg = None
+        self.train_cfg = None
+        self.environment_config_path = None
+
+    def bind_launch_config(self, loaded_config, checkpoint_path, preset_id=None):
+        """Bind model/train/env from the launch preset, or from a checkpoint as fallback.
+
+        ``--preset`` owns the scene, rewards, and network sizes. ``--resume`` is
+        weights only: never load the checkpoint run's ``environment_cfg.yaml``,
+        or a source-task checkpoint would replace the launched environment.
+
+        Checkpoint config is used only when no preset was given (eval of a run).
+        """
+        if loaded_config is None and preset_id is not None:
+            from training.loader import TrainingPresetLoader
+
+            loaded_config = TrainingPresetLoader.load(preset_id)
+
+        if loaded_config is not None:
+            self.model_cfg = loaded_config.model_cfg
+            self.train_cfg = loaded_config.train_cfg
+            self.environment_config_path = None
+            self.loaded_config = loaded_config
+            if checkpoint_path:
+                print(
+                    f"[train] Preset {loaded_config.meta.id} "
+                    f"(env={loaded_config.meta.env_id}) owns the environment; "
+                    f"checkpoint is weights only: {checkpoint_path}"
+                )
+            return loaded_config
+
+        if checkpoint_path is not None:
+            (
+                self.model_cfg,
+                self.train_cfg,
+                self.environment_config_path,
+                loaded_from_ckpt,
+            ) = self.load_config_from_checkpoint(checkpoint_path)
+            self.loaded_config = loaded_from_ckpt
+            return loaded_from_ckpt
+
+        raise ValueError(
+            "Trainer requires loaded_config, preset_id, or checkpoint_path"
+        )
 
 
     def _init_battle_tracking(self) -> None:

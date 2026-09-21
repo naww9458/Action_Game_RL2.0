@@ -1,8 +1,8 @@
-"""Generic asymmetric-critic observation provider registry (service locator).
+"""Asymmetric-critic observation registry (service locator).
 
 Version-specific critic extras (e.g. G1 V1 foot-state) register a factory under
 the id in ``control_policy.yaml`` ``observation.obs_critic``. Tasks call
-``CriticObsProviderRegistry.create(provider_id, ...)`` and fall back to the
+``CriticObsRegistry.create(obs_critic_id, ...)`` and fall back to the
 symmetric (policy) observation when no factory is registered.
 """
 
@@ -11,7 +11,7 @@ from __future__ import annotations
 from typing import Any, Callable, Dict, Optional
 
 
-class CriticObsProvider:
+class CriticObs:
     """Duck-typed protocol for an asymmetric-critic observation extension.
 
     Concrete implementations live in ``object_template/.../models/<version>/``
@@ -33,27 +33,27 @@ class CriticObsProvider:
         raise NotImplementedError
 
 
-class CriticObsProviderRegistry:
-    """Service locator mapping critic-provider id -> factory."""
+class CriticObsRegistry:
+    """Service locator mapping ``observation.obs_critic`` id -> factory."""
 
-    _factories: Dict[str, Callable[..., CriticObsProvider]] = {}
-
-    @classmethod
-    def register(cls, provider_id: str, factory: Callable[..., CriticObsProvider]) -> None:
-        cls._factories[str(provider_id).strip()] = factory
+    _factories: Dict[str, Callable[..., CriticObs]] = {}
 
     @classmethod
-    def is_registered(cls, provider_id: str) -> bool:
-        return str(provider_id).strip() in cls._factories
+    def register(cls, obs_critic_id: str, factory: Callable[..., CriticObs]) -> None:
+        cls._factories[str(obs_critic_id).strip()] = factory
 
     @classmethod
-    def create(cls, provider_id: str | None, **kwargs) -> Optional[CriticObsProvider]:
-        """Create the provider for ``provider_id`` or return ``None`` when absent."""
-        if not provider_id:
+    def is_registered(cls, obs_critic_id: str) -> bool:
+        return str(obs_critic_id).strip() in cls._factories
+
+    @classmethod
+    def create(cls, obs_critic_id: str | None, **kwargs) -> Optional[CriticObs]:
+        """Create the critic observation for ``obs_critic_id``, or ``None`` when absent."""
+        if not obs_critic_id:
             return None
-        factory = cls._factories.get(str(provider_id).strip())
+        factory = cls._factories.get(str(obs_critic_id).strip())
         if factory is None:
             return None
-        provider = factory(**kwargs)
-        provider.setup()
-        return provider
+        critic_obs = factory(**kwargs)
+        critic_obs.setup()
+        return critic_obs

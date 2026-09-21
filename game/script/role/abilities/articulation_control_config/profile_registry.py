@@ -119,31 +119,99 @@ def command_binding_names(command_dim: int) -> Tuple[str, ...]:
     return tuple(f"command_{i}" for i in range(command_dim))
 
 
+def parse_articulation_share_key(share_key: str | None) -> Dict[str, str | None]:
+    """Split ``role:robot[:version[:controller]]`` from ``Ability.share_scope``."""
+    empty: Dict[str, str | None] = {
+        "role": None,
+        "robot": None,
+        "version": None,
+        "controller": None,
+    }
+    text = str(share_key or "").strip()
+    if not text or ":" not in text:
+        return empty
+    parts = text.split(":")
+    parsed = dict(empty)
+    parsed["role"] = parts[0] or None
+    parsed["robot"] = normalize_robot_pattern(parts[1]) if len(parts) > 1 and parts[1] else None
+    if len(parts) == 3:
+        tail = parts[2]
+        if tail in ("Human", "RL", "Bot"):
+            parsed["controller"] = tail
+        else:
+            parsed["version"] = tail or None
+    elif len(parts) >= 4:
+        parsed["version"] = parts[2] or None
+        parsed["controller"] = parts[3] or None
+    return parsed
+
+
+def articulation_share_scope(
+    *,
+    role_type: str,
+    object_config: Dict[str, Any],
+    controller: str | None = None,
+) -> str:
+    """Unique ability instance key: role + robot + policy version + controller."""
+    pattern = object_config.get("pattern")
+    if not pattern:
+        raise ValueError(
+            f"articulation share_scope requires object.pattern (role_type={role_type!r})."
+        )
+    robot = normalize_robot_pattern(str(pattern))
+    role = str(role_type or "player").strip() or "player"
+    version = str(object_config.get("control_policy_version") or "").strip()
+    ctrl = normalize_controller(controller) if controller else ""
+    parts = [role, robot]
+    if version:
+        parts.append(version)
+    if ctrl:
+        parts.append(ctrl)
+    return ":".join(parts)
+
+
 def find_player_config_for_ability(
     player_configs: Sequence[Dict[str, Any]],
     ability_name: str,
     *,
     robot_pattern: str | None = None,
+    control_policy_version: str | None = None,
+    controller: str | None = None,
 ) -> Dict[str, Any]:
     """Return the first player config that lists *ability_name*.
 
     When *robot_pattern* is set, only configs whose ``object.pattern`` normalizes
     to that robot kind are considered (for per-articulation ability instances).
+    Optional *control_policy_version* / *controller* further disambiguate mixed
+    G1 policy versions or Human/RL/Bot runtime patterns in one scene.
     """
     wanted = normalize_robot_pattern(robot_pattern) if robot_pattern else None
+    wanted_version = str(control_policy_version).strip() if control_policy_version else None
+    wanted_controller = normalize_controller(controller) if controller else None
     for cfg in player_configs or []:
         abilities = cfg.get("abilities") or []
         if ability_name not in abilities:
             continue
+        object_cfg = dict(cfg.get("object") or {})
         if wanted is not None:
-            object_cfg = dict(cfg.get("object") or {})
             cfg_pattern = object_cfg.get("pattern")
             if not cfg_pattern:
                 continue
             if normalize_robot_pattern(str(cfg_pattern)) != wanted:
                 continue
+        if wanted_version is not None:
+            cfg_version = str(object_cfg.get("control_policy_version") or "").strip()
+            if cfg_version != wanted_version:
+                continue
+        if wanted_controller is not None:
+            if normalize_controller(cfg.get("controller")) != wanted_controller:
+                continue
         return dict(cfg)
     detail = f" with robot_pattern='{wanted}'" if wanted else ""
+    if wanted_version:
+        detail += f" control_policy_version='{wanted_version}'"
+    if wanted_controller:
+        detail += f" controller='{wanted_controller}'"
     raise RuntimeError(
         f"No player config references ability '{ability_name}'{detail}."
     )

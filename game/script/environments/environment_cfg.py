@@ -3,7 +3,7 @@ import yaml
 import json
 
 from typing import List, Dict, Any, Optional
-from pydantic import BaseModel
+from pydantic import BaseModel, ConfigDict
 from pathlib import Path
 
 from script.role.controller_utils import (
@@ -103,6 +103,9 @@ def apply_control_policy_version_override(
 
 # --- 環境與總配置 ---
 class EnvironmentConfig(BaseModel):
+    # Env-specific keys (e.g. boxing walk_env_ratio) must survive load/dump.
+    # Keep the schema generic; task code reads extras via TryGet / KeyError.
+    model_config = ConfigDict(extra="allow")
     space_xyz: List[float] = [20, 20, 20]
     interval_distance: float = 5.0
     gravity: List[float] = [0, 0, -9.8]

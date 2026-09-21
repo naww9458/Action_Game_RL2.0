@@ -68,8 +68,9 @@ class ObjectInspectorPlugin:
             show_role_name_labels=viewer.show_role_name_labels,
             on_show_role_name_labels_changed=self._on_show_role_name_labels_changed,
         )
-        if self._bridge.has_commands():
-            self._window.set_command_labels(list(game.environment.command_labels))
+        self._window.set_role_picker_callback(self._on_role_picker)
+        self._window.set_role_picker_clear_callback(self._on_role_picker_clear)
+        self._sync_command_page(self._window.current_spec())
         self._window.setup_debug_geometry_controls(
             config=viewer.viewer_controls_cfg.debug_geometry,
             on_changed=self._on_debug_geometry_style_changed,
@@ -86,20 +87,23 @@ class ObjectInspectorPlugin:
     def apply_command_pins(self):
         if not self._bridge or not self._window or not self.is_visible or not self._game:
             return
-        if not self._bridge.has_commands():
-            return
         self._window.flush_pinned_storage()
-        had_pins = False
-        pinned_worlds: List[int] = []
-        for world_idx, values, pinned_dims in self._window.iter_stored_command_pins():
-            self._bridge.apply_command_pins(world_idx, values, pinned_dims)
-            pinned_worlds.append(int(world_idx))
-            had_pins = True
-        if had_pins:
-            provider = getattr(self._game.environment, "g1_provider", None)
-            holder = getattr(provider, "hold_external_commands", None)
-            if callable(holder):
-                holder(world_indices=pinned_worlds)
+        catalog = self._catalog
+        num_objects_env = int(self._game.num_objects_env)
+        for catalog_key, world_idx, values, pinned_dims in self._window.iter_stored_command_pins():
+            spec = (
+                catalog.get_by_catalog_key(catalog_key)
+                if catalog is not None and catalog_key
+                else None
+            )
+            if spec is not None:
+                player_idx = int(world_idx) * num_objects_env + int(spec.local_role_idx)
+                for ability_idx in self._game.players.get_player_abilities(player_idx):
+                    ability = self._game.players.abilities_instance_list[ability_idx]
+                    apply_fn = getattr(ability, "apply_commands", None)
+                    if callable(apply_fn):
+                        apply_fn(player_idx, values, pinned_dims)
+            self._bridge.apply_command_pins(world_idx, values, pinned_dims, spec)
 
     def _collect_gameplay_bindings(self, game: "Game") -> List[dict]:
         if Ability._default_configs is None:
@@ -324,6 +328,7 @@ class ObjectInspectorPlugin:
         spec = self._catalog.get_by_catalog_key(catalog_key)
         if spec is None:
             return
+        self._sync_command_page(spec)
         self._window.blockSignals(True)
         if self._window.label_combo.findText(catalog_key) >= 0:
             self._window.label_combo.setCurrentText(catalog_key)
@@ -348,6 +353,7 @@ class ObjectInspectorPlugin:
         spec = self._window.current_spec()
         if spec is None:
             return
+        self._sync_command_page(spec)
         self._window.set_spec(spec, world_idx)
         self.refresh_from_sim(resync_rl=True)
 
@@ -498,6 +504,124 @@ class ObjectInspectorPlugin:
             self._window.set_rl_action_values(rl_values, force=resync_rl)
             if resync_rl:
                 self._window._save_rl_action_values()
-        if spec.accepts_commands and self._bridge.has_commands():
-            cmd_values = self._bridge.read_commands(world)
+        if spec.accepts_commands and self._bridge.has_commands(spec):
+            cmd_values = self._bridge.read_commands(world, spec)
             self._window.set_command_values(cmd_values, force=False)
+            self._window.set_command_target_label(
+                self._bridge.command_target_label(spec, world)
+            )
+
+    def _sync_command_page(self, spec: Optional[ObjectInspectorSpec]):
+        if self._window is None or self._bridge is None:
+            return
+        if spec is None or not spec.accepts_commands:
+            self._window.set_command_page([])
+            return
+        obs_actor = self._bridge.resolve_command_obs_actor(spec)
+        labels = list(getattr(obs_actor, "command_labels", None) or []) if obs_actor is not None else []
+        if not labels:
+            labels = list(getattr(self._game.environment, "command_labels", None) or [])
+        ranges = getattr(obs_actor, "command_ranges", None) if obs_actor is not None else None
+        show_picker = callable(
+            getattr(obs_actor, "try_set_command_role_target", None)
+        ) if obs_actor is not None else False
+        world = self._window.current_world() if spec is not None else 0
+        self._window.set_command_page(
+            labels,
+            ranges=ranges,
+            show_target_picker=show_picker,
+            target_label=self._bridge.command_target_label(spec, world),
+        )
+
+    def _picker_kinds(self, spec: Optional[ObjectInspectorSpec]) -> List[str]:
+        obs_actor = self._bridge.resolve_command_obs_actor(spec) if self._bridge else None
+        getter = getattr(obs_actor, "try_target_picker_kinds", None) if obs_actor is not None else None
+        if callable(getter):
+            kinds = getter()
+            if kinds:
+                return [str(item).strip().lower() for item in kinds]
+        return ["player", "entity"]
+
+    def _preferred_target_body(self, spec: Optional[ObjectInspectorSpec]) -> str:
+        obs_actor = self._bridge.resolve_command_obs_actor(spec) if self._bridge else None
+        getter = getattr(obs_actor, "try_preferred_target_body", None) if obs_actor is not None else None
+        if callable(getter):
+            return str(getter() or "").strip()
+        return ""
+
+    def _list_picker_roles(self, spec: ObjectInspectorSpec) -> List[tuple]:
+        if self._catalog is None or self._game is None:
+            return []
+        num_objects_env = int(self._game.num_objects_env)
+        wanted = set(self._picker_kinds(spec))
+        players = {
+            int(idx) % num_objects_env
+            for idx in getattr(self._game.players, "index_obj_role", []) or []
+        }
+        entities = {
+            int(idx) % num_objects_env
+            for idx in getattr(self._game.entities, "index_obj_role", []) or []
+        }
+        items = []
+        for catalog_key in self._catalog.list_catalog_keys():
+            other = self._catalog.get_by_catalog_key(catalog_key)
+            if other is None or other.local_role_idx == spec.local_role_idx:
+                continue
+            if other.local_role_idx in players:
+                kind = "player"
+            elif other.local_role_idx in entities:
+                kind = "entity"
+            else:
+                continue
+            if kind not in wanted:
+                continue
+            local_body = self._bridge.resolve_role_local_body(
+                other, preferred_body=self._preferred_target_body(spec)
+            )
+            if local_body < 0:
+                continue
+            name = other.label or catalog_key
+            items.append(
+                (
+                    f"[{kind}] {name}",
+                    {
+                        "kind": kind,
+                        "catalog_key": catalog_key,
+                        "local_role_idx": int(other.local_role_idx),
+                        "local_body_idx": int(local_body),
+                        "label": str(name),
+                    },
+                )
+            )
+        return items
+
+    def _on_role_picker(self):
+        if self._window is None or self._bridge is None:
+            return
+        spec = self._window.current_spec()
+        if spec is None:
+            return
+        items = self._list_picker_roles(spec)
+        if not items:
+            return
+        chosen = self._window.pick_role_dialog(items)
+        if not isinstance(chosen, dict):
+            return
+        ok = self._bridge.set_command_role_target(
+            spec,
+            self._window.current_world(),
+            local_role_idx=int(chosen["local_role_idx"]),
+            local_body_idx=int(chosen["local_body_idx"]),
+            label=str(chosen.get("label") or ""),
+        )
+        if ok:
+            self._window.set_command_target_label(str(chosen.get("label") or ""))
+
+    def _on_role_picker_clear(self):
+        if self._window is None or self._bridge is None:
+            return
+        spec = self._window.current_spec()
+        if spec is None:
+            return
+        if self._bridge.clear_command_role_target(spec, self._window.current_world()):
+            self._window.set_command_target_label("")

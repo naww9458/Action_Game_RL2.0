@@ -284,6 +284,22 @@ class ExperimentHubPage(QWidget):
         self.spin_dump_obs_steps.setValue(100)
         form.addRow(self.lbl_dump_obs_steps, self.spin_dump_obs_steps)
 
+        self.lbl_nan_check = QLabel(self.TR("nan_check"))
+        self.check_nan_check = QCheckBox()
+        self.check_nan_check.setChecked(False)
+        self.check_nan_check.stateChanged.connect(self._update_nan_check_visibility)
+        form.addRow(self.lbl_nan_check, self.check_nan_check)
+
+        self.lbl_nan_check_guard = QLabel(self.TR("nan_check_guard"))
+        self.check_nan_check_guard = QCheckBox()
+        self.check_nan_check_guard.setChecked(True)
+        form.addRow(self.lbl_nan_check_guard, self.check_nan_check_guard)
+
+        self.lbl_nan_check_abort = QLabel(self.TR("nan_check_abort"))
+        self.check_nan_check_abort = QCheckBox()
+        self.check_nan_check_abort.setChecked(True)
+        form.addRow(self.lbl_nan_check_abort, self.check_nan_check_abort)
+
         self.btn_start_train = QPushButton(self.TR("start_train"))
         self.btn_start_train.setStyleSheet("background-color: #1565c0; color: white; font-weight: bold; padding: 10px;")
         self.btn_start_train.clicked.connect(self.launch_train)
@@ -299,6 +315,7 @@ class ExperimentHubPage(QWidget):
         self.tabs.addTab(tab, self.TR("tab_launch"))
         self._update_window_envs_visibility()
         self._update_dump_rollouts_visibility()
+        self._update_nan_check_visibility()
 
     def _sync_window_envs_range(self, _value: int | None = None):
         max_envs = self.spin_train_envs.value()
@@ -320,6 +337,12 @@ class ExperimentHubPage(QWidget):
         self.lbl_dump_obs_steps.setVisible(visible)
         self.spin_dump_obs_steps.setVisible(visible)
 
+    def _update_nan_check_visibility(self, _state: int | None = None):
+        visible = self.check_nan_check.isChecked()
+        self.lbl_nan_check_guard.setVisible(visible)
+        self.check_nan_check_guard.setVisible(visible)
+        self.lbl_nan_check_abort.setVisible(visible)
+        self.check_nan_check_abort.setVisible(visible)
     def refresh_presets(self):
         self._ensure_training_imports()
         from training.registry import TrainingPresetRegistry
@@ -679,6 +702,12 @@ class ExperimentHubPage(QWidget):
                 "--dump-actions-steps", str(self.spin_dump_actions_steps.value()),
                 "--dump-obs-steps", str(self.spin_dump_obs_steps.value()),
             ])
+        if self.check_nan_check.isChecked():
+            cmd_args.append("--nan-check")
+            if not self.check_nan_check_guard.isChecked():
+                cmd_args.append("--no-nan-check-guard")
+            if not self.check_nan_check_abort.isChecked():
+                cmd_args.append("--no-nan-check-abort")
         try:
             self._train_process = self._spawn_launcher(*cmd_args)
 
@@ -711,6 +740,9 @@ class ExperimentHubPage(QWidget):
         self.lbl_window_envs.setText(self.TR("window_envs"))
         self.lbl_dump_actions_steps.setText(self.TR("dump_actions_steps"))
         self.lbl_dump_obs_steps.setText(self.TR("dump_obs_steps"))
+        self.lbl_nan_check.setText(self.TR("nan_check"))
+        self.lbl_nan_check_guard.setText(self.TR("nan_check_guard"))
+        self.lbl_nan_check_abort.setText(self.TR("nan_check_abort"))
         lang = getattr(self.main_app, "global_config", {}).get("language", "zh")
         self.preset_editor.set_language(lang)
 

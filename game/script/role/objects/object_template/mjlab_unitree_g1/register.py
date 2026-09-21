@@ -1,4 +1,4 @@
-"""Register G1 articulation joint loader and observation providers."""
+"""Register G1 articulation joint loader and observation."""
 
 from __future__ import annotations
 

@@ -38,7 +38,7 @@
 | `collision.yaml`       | 可選；該版本完整碰撞表（由 `prepare_object` 整份寫上 object）                                      |
 | `*.pt`                 | 權重 checkpoint                                                                                 |
 
-`control_policy.yaml` 的 `observation` 區塊用 **`obs_actor`**、**`obs_critic`** 作為註冊 id（不是 `provider` / `critic_provider`）。對應模組檔名固定為 **`obs_actor.py`**、**`obs_critic.py`**。
+`control_policy.yaml` 的 `observation` 區塊用 **`obs_actor`**、**`obs_critic`** 作為註冊 id。對應模組檔名固定為 **`obs_actor.py`**、**`obs_critic.py`**。
 
 沒有 policy 版本的物件（例如純車輛、靶標）仍用根目錄的 `control_configs.yaml` 等既有慣例；不必強制 `obs_actor` / `obs_critic` 檔名。
 

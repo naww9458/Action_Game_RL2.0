@@ -1,0 +1,146 @@
+meta:
+  id: flat_walk_rsl_rl_ppo_state_based_2
+  display_name: G1 速度行走 RSL-RL PPO（323 維 boxing_v1 觀察）
+  env_id: flat_walk
+  obs_type: state_based
+  framework: RSL_RL
+  algorithm: PPO
+  policy_module: rl_framework.rsl_rl_script.policy
+  trainer_module: rl_framework.rsl_rl_script.trainer
+model:
+  state_obs_size: 323
+  critic_obs_size: 335
+  obs_width: 0
+  obs_height: 0
+  stack_size: 1
+  ppo:
+    rollouts: 24
+    grad_norm_clip: 1.0
+    entropy_loss_scale: 0.01
+    value_loss_scale: 1.0
+    ratio_clip: 0.2
+    value_clip: 0.2
+    discount_factor: 0.99
+    lambda: 0.95
+    learning_epochs: 5
+    mini_batches: 4
+    random_timesteps: 0
+    learning_rate: 0.001
+    kl_threshold: 0.01
+    checkpoint_interval: 50
+    mixed_precision: false
+  apg:
+    learning_rate: 0.001
+    checkpoint_interval: 50
+    mixed_precision: false
+  preprocessors:
+    state:
+      type: null
+      kwargs: {}
+    value:
+      type: null
+      kwargs: {}
+  learning_rate_scheduler: null
+train:
+  timesteps: 30000
+  write_interval: 1
+  enable_namespaces: true
+  max_episode_step: 1000
+  horizon: 16
+  max_episode_epochs: 40
+  total_epochs: 4000
+  max_episode_step_evaluate: 3000
+  seed: 31415926
+  num_agents_each_env: 1
+  num_envs_default: 4096
+  reward_components:
+  - ActionRateL2Reward
+  - AngularMomentumPenaltyReward
+  - BodyAngularVelocityPenaltyReward
+  - FeetAirTimeReward
+  - FeetClearanceReward
+  - FeetSlipReward
+  - FeetSwingHeightReward
+  - JointPosLimitsReward
+  - SelfCollisionCostReward
+  - SoftLandingReward
+  - TrackAngularVelocityReward
+  - TrackLinearVelocityReward
+  - UprightReward
+  - VariablePostureReward
+  reward_components_diff: []
+  reward_parameters:
+    G1LocomotionTerminator:
+      enable_height_check: false
+      enable_height_absurd_check: false
+      enable_speed_check: false
+      enable_nonfinite_check: false
+    TrackLinearVelocityReward:
+      weight: 2.0
+    TrackAngularVelocityReward:
+      weight: 2.0
+    ActionRateL2Reward:
+      weight: -0.1
+    AngularMomentumPenaltyReward:
+      weight: -0.02
+      body_name: pelvis
+    BodyAngularVelocityPenaltyReward:
+      weight: -0.05
+      body_name: torso_link
+    FeetAirTimeReward:
+      weight: 0.0
+    FeetClearanceReward:
+      weight: -2.0
+    FeetSlipReward:
+      weight: -0.1
+    FeetSwingHeightReward:
+      weight: -0.25
+    JointPosLimitsReward:
+      weight: -1.0
+    SelfCollisionCostReward:
+      weight: -1.0
+      num_history: 4
+      force_threshold: 10.0
+    SoftLandingReward:
+      weight: -1.0e-05
+    UprightReward:
+      weight: 1.0
+      body_name: torso_link
+    VariablePostureReward:
+      weight: 1.0
+      walking_threshold: 0.05
+      running_threshold: 1.5
+      std_standing:
+        .*: 0.05
+      std_walking:
+        .*hip_pitch.*: 0.3
+        .*hip_roll.*: 0.15
+        .*hip_yaw.*: 0.15
+        .*knee.*: 0.35
+        .*ankle_pitch.*: 0.25
+        .*ankle_roll.*: 0.1
+        .*waist_yaw.*: 0.2
+        .*waist_roll.*: 0.08
+        .*waist_pitch.*: 0.1
+        .*shoulder_pitch.*: 0.15
+        .*shoulder_roll.*: 0.15
+        .*shoulder_yaw.*: 0.1
+        .*elbow.*: 0.15
+        .*wrist.*: 0.3
+      std_running:
+        .*hip_pitch.*: 0.5
+        .*hip_roll.*: 0.2
+        .*hip_yaw.*: 0.2
+        .*knee.*: 0.6
+        .*ankle_pitch.*: 0.35
+        .*ankle_roll.*: 0.15
+        .*waist_yaw.*: 0.3
+        .*waist_roll.*: 0.08
+        .*waist_pitch.*: 0.2
+        .*shoulder_pitch.*: 0.5
+        .*shoulder_roll.*: 0.2
+        .*shoulder_yaw.*: 0.15
+        .*elbow.*: 0.35
+        .*wrist.*: 0.3
+  player_ids: []
+  control_policy_version: boxing_v1

@@ -115,8 +115,8 @@ DAMPING_4010 = 2.0 * DAMPING_RATIO * ARMATURE_4010 * NATURAL_FREQ
 _NON_RL_PATTERNS = frozenset({"finger", "thumb", "hand"})
 
 # Hand joints present in g1_29dof_with_hand USD but absent from mjlab MJCF.
-# Kept so a shared ``unitree_g1`` loader still resolves USD hand DoFs if this
-# template's loader is registered last. MJCF g1.xml has no these joints.
+# Kept for name-table completeness; this template's pattern is unitree_g1_mjcf
+# and does not share a loader with the USD G1. MJCF g1.xml has no these joints.
 HAND_JOINT_NAMES: frozenset[str] = frozenset({
     "left_hand_index_0_joint",
     "left_hand_index_1_joint",

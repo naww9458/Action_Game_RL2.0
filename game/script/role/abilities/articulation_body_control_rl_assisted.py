@@ -40,7 +40,6 @@ class Articulation_body_control_rl_assisted(Articulation_body_control):
         self._command_profile = None
         self._obs_actor = None
         self._policy_runner = None
-        self._human_control_applied = False
 
         self._player_env_indices: Optional[List[int]] = None
         self._player_env_indices_gpu: Optional[wp.array] = None
@@ -51,7 +50,10 @@ class Articulation_body_control_rl_assisted(Articulation_body_control):
         self._rl_player_indices_cache: List[int] = []
 
         self._pending_human_control: dict | None = None
+        self._pending_human_command: Optional[tuple[int, List[float]]] = None
         self._command_bindings: Dict[str, AxisKeyBindings] = {}
+        self._default_command: List[float] = []
+        self._default_has_target: Optional[bool] = None # TODO 應該改進，此項更多代表的是任務目標/類型，但目前沒想好怎麽改
 
     def configure_from_player_configs(
         self, player_configs: List[Dict[str, Any]], environment: "Environment"
@@ -59,7 +61,7 @@ class Articulation_body_control_rl_assisted(Articulation_body_control):
         matched_config = find_player_config_for_ability(
             player_configs,
             self.__class__.__name__,
-            robot_pattern=self._scoped_robot_pattern(),
+            **self._share_scope_match_kwargs(),
         )
         matched_object = dict(matched_config.get("object") or {})
         super().configure_from_player_configs(player_configs, environment)
@@ -74,6 +76,8 @@ class Articulation_body_control_rl_assisted(Articulation_body_control):
         self.command_labels = list(self._command_profile.command_labels)
         self.command_ranges = list(self._command_profile.command_ranges)
         self._pending_human_control = self._command_profile.human_control
+        self._default_command = list(self._bundle_spec.default_command or ())
+        self._default_has_target = self._bundle_spec.default_has_target
 
         self._build_player_env_mapping(environment)
         self._obs_actor = PolicyBundleRegistry.create_obs_actor(
@@ -98,8 +102,12 @@ class Articulation_body_control_rl_assisted(Articulation_body_control):
             expected_action_dim=action_dim,
         )
 
-        if hasattr(environment, "bind_assisted_provider"):
-            environment.bind_assisted_provider(self._obs_actor)
+        if hasattr(environment, "bind_assisted_obs_actor"):
+            environment.bind_assisted_obs_actor(self._obs_actor)
+        if self._default_has_target is False:
+            clearer = getattr(self._obs_actor, "try_clear_all_command_role_targets", None)
+            if callable(clearer):
+                clearer()
 
         self._configured = True
         print(
@@ -217,16 +225,74 @@ class Articulation_body_control_rl_assisted(Articulation_body_control):
             values.append(val)
         return values
 
-    def _instance_idx_for_player(self, player_idx: int) -> int:
+    def _instance_idx_for_player(self, player_idx: int) -> Optional[int]:
         for i, rl_player_idx in enumerate(self._rl_player_indices_cache):
             if rl_player_idx == player_idx:
                 return i
-        return 0
+        return None
+
+    def _write_rl_commands(self, actions) -> None:
+        if self._obs_actor is None or self._controlled_player_action_rows_gpu is None:
+            return
+        self._obs_actor.write_commands_from_rl_actions(
+            actions,
+            self.action_shape_offset,
+            self._controlled_player_action_rows_gpu,
+        )
+
+    def _apply_default_commands(self) -> None:
+        actor = self._obs_actor
+        if actor is None or not self._default_command or getattr(actor, "commands", None) is None:
+            return
+        cmd = wp.to_torch(actor.commands)
+        default = torch.tensor(
+            self._default_command, dtype=cmd.dtype, device=cmd.device
+        )
+        if int(default.numel()) != int(cmd.shape[1]):
+            raise ValueError(
+                f"{self.__class__.__name__} default command dim "
+                f"{int(default.numel())} != {int(cmd.shape[1])}"
+            )
+        cmd[:] = default
+
+    def write_command_base(self, actions, **kwargs) -> None:
+        """Lowest command layer: yaml default (play) or trainer actions."""
+        self._ensure_configured()
+        if kwargs.get("apply_default_commands"):
+            self._apply_default_commands()
+            return
+        self._write_rl_commands(actions)
+
+    def apply_commands(
+        self,
+        player_idx: int,
+        values: Dict[int, float],
+        dim_indices: Sequence[int],
+    ) -> None:
+        """Write selected command dims for one owned player. Last writer wins."""
+        instance_idx = self._instance_idx_for_player(int(player_idx))
+        if instance_idx is None or self._obs_actor is None:
+            return
+        cmd = wp.to_torch(self._obs_actor.commands)
+        for dim_index in dim_indices:
+            if dim_index not in values:
+                continue
+            if dim_index < 0 or dim_index >= int(cmd.shape[1]):
+                continue
+            cmd[instance_idx, dim_index] = float(values[dim_index])
 
     def _apply_commands(self, instance_idx: int, values: Sequence[float]) -> None:
         cmd_torch = wp.to_torch(self._obs_actor.commands)
         for i, val in enumerate(values):
-            cmd_torch[instance_idx, i] = val
+            cmd_torch[instance_idx, i] = float(val)
+
+    def _apply_pending_human_commands(self) -> None:
+        pending = self._pending_human_command
+        self._pending_human_command = None
+        if pending is None:
+            return
+        instance_idx, values = pending
+        self._apply_commands(instance_idx, values)
 
     def _run_policy_and_apply(self) -> None:
         self._ensure_configured()
@@ -255,41 +321,28 @@ class Articulation_body_control_rl_assisted(Articulation_body_control):
         self._write_targets_to_physics_control()
 
     def rl_action(self, actions, **kwargs):
-        if self._human_control_applied:
-            return
-
-        self._ensure_configured()
-        self._obs_actor.write_commands_from_rl_actions(
-            actions,
-            self.action_shape_offset,
-            self._controlled_player_action_rows_gpu,
-        )
+        if not kwargs.pop("commands_already_written", False):
+            self.write_command_base(actions, **kwargs)
+        self._apply_pending_human_commands()
         self._run_policy_and_apply()
 
     def human_control_interface(
         self, keyboard_keys, mouse_buttons, look_yaw, index_human_player_gpu, **kwargs
     ):
         self._ensure_configured()
+        self._pending_human_command = None
+        instance_idx = self._instance_idx_for_player(
+            int(index_human_player_gpu.numpy()[0])
+        )
+        if instance_idx is None:
+            return
         values = self._commands_from_keyboard(keyboard_keys, mouse_buttons)
-
-        player_idx = int(index_human_player_gpu.numpy()[0])
-        instance_idx = self._instance_idx_for_player(player_idx)
-        holder = getattr(self._obs_actor, "hold_external_commands", None)
-        if callable(holder):
-            holder(instance_indices=[instance_idx])
-
-        self._apply_commands(instance_idx, values)
-        self._run_policy_and_apply()
-        self._human_control_applied = True
+        if any(float(v) != 0.0 for v in values):
+            self._pending_human_command = (instance_idx, values)
 
     def bot_action(self, **kwargs):
-        self._ensure_configured()
-        if self._human_control_applied:
-            self._human_control_applied = False
-            return
-        dt = 1.0 / float(GameConfig.FPS_ACTION)
-        self._obs_actor.update_velocity_commands(self.physics_manager, dt)
-        self._run_policy_and_apply()
+        # Low-level policy always runs in rl_action (outside the CUDA graph).
+        return
 
     def get_action_spec(self) -> dict:
         self.action_space["shape"] = self.command_dim

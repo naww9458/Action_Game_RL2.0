@@ -1,7 +1,9 @@
-import newton
-
 from typing import Literal
-from script.simulate.solvers.base_solver import BaseSolverModel, BaseSolver
+
+import newton
+import warp as wp
+
+from script.simulate.solvers.base_solver import BaseSolver, BaseSolverModel
 
 class MuJoCoSolverModel(BaseSolverModel):
     type: Literal["mujoco"] = "mujoco"
@@ -55,6 +57,32 @@ class MuJoCoSolver(BaseSolver):
         self.solver.step(state_in, state_out, control, contacts, dt)
 
     def post_teleport_sync(self, state):
-        # XPBD 主要依賴 state.body_q_prev，通常已在您的 Kernel 中處理完畢
-        pass
+        # Teleport writes Newton joint_q; MuJoCo qpos is synced on the next
+        # step() when update_data_interval == 1. Warm-start lives in mjw_data
+        # and is cleared in on_env_reset (not here: reset_obj runs inside the
+        # CUDA graph every step).
+        del state
+
+    def on_env_reset(self, state, terminated) -> None:
+        """Zero MuJoCo warm-start / applied-force buffers for reset worlds.
+
+        Newton ``SolverMuJoCo.reset`` documents that after a NaN divergence
+        these buffers poison the next step even once joint_q is teleported.
+        ``flags=0`` clears buffers only — it must not overwrite the spawn
+        pose ArticulationView just wrote.
+        """
+        solver = getattr(self, "solver", None)
+        reset = getattr(solver, "reset", None)
+        if not callable(reset) or state is None or terminated is None:
+            return
+        mask = terminated
+        if not isinstance(mask, wp.array):
+            mask = wp.from_torch(mask.contiguous(), dtype=wp.bool)
+        try:
+            reset(state, world_mask=mask, flags=0)
+        except (TypeError, ValueError):
+            try:
+                reset(state, flags=0)
+            except (TypeError, ValueError):
+                return
 

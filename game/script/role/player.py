@@ -159,12 +159,23 @@ class Player(BaseRole):
         return result
 
     def rl_action(self, actions, **kwargs):
-        if self.num_rl_players > 0:
-            for ability in self.abilities_instance_list:
-                # if ability.action_shape_offset is None:
-                #     raise ValueError(f"{ability.ability_name}.action_shape_offset cannot be None")
-                
+        if self.num_rl_players <= 0:
+            return
+        overlay = kwargs.pop("overlay_commands", None)
+        deferred = []
+        for ability in self.abilities_instance_list:
+            write_base = getattr(ability, "write_command_base", None)
+            if callable(write_base):
+                write_base(actions=actions, **kwargs)
+                deferred.append(ability)
+            else:
                 ability.rl_action(actions=actions, **kwargs)
+        if callable(overlay):
+            overlay()
+        for ability in deferred:
+            ability.rl_action(
+                actions=actions, commands_already_written=True, **kwargs
+            )
 
     def bot_action(self, **kwargs):
         if self.num_bot_players > 0:

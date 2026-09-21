@@ -17,13 +17,12 @@ from script.role.abilities.articulation_control_config.joint_config_registry imp
 from script.role.abilities.articulation_control_config.runtime_helpers import (
     adjust_runtime_joint_nominals_kernel,
 )
-from script.role.abilities.articulation_control_config.robot_pattern import (
-    normalize_robot_pattern,
-)
 from script.role.abilities.articulation_control_config.profile_registry import (
     AxisKeyBindings,
+    articulation_share_scope,
     find_player_config_for_ability,
     find_tool_config_for_ability,
+    parse_articulation_share_key,
     resolve_human_control_bindings,
     resolve_role_articulation_pattern,
 )
@@ -164,8 +163,9 @@ def write_mjlab_targets_to_control_kernel(
 class Articulation_body_control(Ability):
     """Writes low-level joint position/velocity targets through the mjlab action pipeline.
 
-    Shared per articulation kind: one instance per ``(role_type, robot_pattern)``,
-    not one global instance for every robot/tool in the process.
+    Shared per articulation kind: one instance per
+    ``(role_type, robot_pattern, control_policy_version, controller)`` so mixed
+    Human/RL robots and mixed policy versions do not share one joint view.
     """
 
     @classmethod
@@ -174,16 +174,14 @@ class Articulation_body_control(Ability):
         *,
         object_config: Dict[str, Any],
         role_type: str = "player",
+        controller: str | None = None,
+        **kwargs,
     ) -> Optional[str]:
-        pattern = object_config.get("pattern")
-        if not pattern:
-            raise ValueError(
-                f"{cls.__name__}.share_scope requires object.pattern "
-                f"(role_type={role_type!r})."
-            )
-        robot = normalize_robot_pattern(str(pattern))
-        role = str(role_type or "player").strip() or "player"
-        return f"{role}:{robot}"
+        return articulation_share_scope(
+            role_type=role_type,
+            object_config=object_config,
+            controller=controller,
+        )
 
     def __init__(self, ability_name: str | None = None):
         super().__init__(ability_name or self.__class__.__name__)
@@ -219,10 +217,16 @@ class Articulation_body_control(Ability):
         self._ability_share_key: Optional[str] = None
 
     def _scoped_robot_pattern(self) -> Optional[str]:
-        share_key = getattr(self, "_ability_share_key", None)
-        if not share_key or ":" not in str(share_key):
-            return None
-        return str(share_key).split(":", 1)[1]
+        parsed = parse_articulation_share_key(getattr(self, "_ability_share_key", None))
+        return parsed.get("robot")
+
+    def _share_scope_match_kwargs(self) -> Dict[str, Any]:
+        parsed = parse_articulation_share_key(getattr(self, "_ability_share_key", None))
+        return {
+            "robot_pattern": parsed.get("robot"),
+            "control_policy_version": parsed.get("version"),
+            "controller": parsed.get("controller"),
+        }
 
     def configure_from_player_configs(
         self, player_configs: List[Dict[str, Any]], environment: "Environment"
@@ -230,7 +234,7 @@ class Articulation_body_control(Ability):
         matched_config = find_player_config_for_ability(
             player_configs,
             self.__class__.__name__,
-            robot_pattern=self._scoped_robot_pattern(),
+            **self._share_scope_match_kwargs(),
         )
         matched_object = dict(matched_config.get("object") or {})
         self._control_task = matched_object.get("control_task")
@@ -265,7 +269,7 @@ class Articulation_body_control(Ability):
 
         mjlab applies the same bias to actor joint_pos and to
         ``target = default + scale * action - bias``. Callers that own the
-        buffer (e.g. a locomotion observation provider) pass it here so the
+        buffer (e.g. a locomotion observation) pass it here so the
         applier does not keep a disconnected zeros array. ``None`` is ignored.
         """
         if encoder_bias_wp is None:

@@ -13,6 +13,7 @@ from script.role.abilities.abilities_cfg import AbilitiesConfig  # 導入 Pydant
 
 from script.role.abilities.articulation_control_config.profile_registry import (
     find_player_config_for_ability,
+    parse_articulation_share_key,
     resolve_articulation_player_pattern,
     resolve_control_policy_version,
 )
@@ -54,11 +55,12 @@ class Ability(ABC):
         *,
         object_config: Dict[str, Any],
         role_type: str = "player",
+        **kwargs,
     ) -> Optional[str]:
         """Return None for a process-wide singleton; otherwise a scope id.
 
-        Articulation abilities override this so each (role, robot-pattern) pair
-        gets its own shared instance instead of one global instance for all robots.
+        Articulation abilities override this so each (role, robot, policy,
+        controller) tuple gets its own shared instance.
         """
         return None
 
@@ -372,19 +374,15 @@ class Ability(ABC):
     def configure_from_player_configs(
         self, player_configs: List[Dict[str, Any]], environment: "Environment"
     ) -> None:
-        from script.role.abilities.articulation_control_config.robot_pattern import (
-            normalize_robot_pattern,
-        )
-
-        robot_pattern = None
-        share_key = getattr(self, "_ability_share_key", None)
-        if share_key and ":" in str(share_key):
-            robot_pattern = normalize_robot_pattern(str(share_key).split(":", 1)[1])
+        parsed = parse_articulation_share_key(getattr(self, "_ability_share_key", None))
+        robot_pattern = parsed.get("robot")
 
         matched_config = find_player_config_for_ability(
             player_configs,
             self.__class__.__name__,
             robot_pattern=robot_pattern,
+            control_policy_version=parsed.get("version"),
+            controller=parsed.get("controller"),
         )
         matched_object = dict(matched_config.get("object") or {})
         self.configure_from_object(matched_object, matched_config)

@@ -414,32 +414,186 @@ class ControlBridge:
     def set_gravity(self, gravity: List[float]):
         self.pm.set_runtime_gravity(gravity)
 
-    def has_commands(self) -> bool:
+    def has_commands(self, spec: Optional[ObjectInspectorSpec] = None) -> bool:
+        obs_actor = self.resolve_command_obs_actor(spec)
+        if obs_actor is not None and getattr(obs_actor, "commands", None) is not None:
+            return bool(getattr(obs_actor, "command_labels", None))
         environment = self.game.environment
         return environment.commands is not None and len(environment.command_labels) > 0
 
-    def read_commands(self, world_idx: int) -> Dict[int, float]:
-        environment = self.game.environment
-        if environment.commands is None:
-            return {}
-        host = environment.commands.numpy()
-        if world_idx < 0 or world_idx >= len(host):
-            return {}
-        return {idx: float(host[world_idx, idx]) for idx in range(min(len(environment.command_labels), host.shape[1]))}
+    def resolve_command_obs_actor(self, spec: Optional[ObjectInspectorSpec] = None):
+        """TryGet the obs_actor that packs this role's observation and commands."""
+        players = getattr(self.game, "players", None)
+        if spec is not None and players is not None:
+            num_objects_env = int(self.game.num_objects_env)
+            for player_idx in getattr(players, "index_obj_role", []) or []:
+                if int(player_idx) % num_objects_env != int(spec.local_role_idx):
+                    continue
+                getter = getattr(players, "get_player_abilities", None)
+                ability_indices = getter(int(player_idx)) if callable(getter) else []
+                for ability_idx in ability_indices:
+                    ability = players.abilities_instance_list[ability_idx]
+                    actor = getattr(ability, "_obs_actor", None)
+                    if actor is not None and getattr(actor, "commands", None) is not None:
+                        return actor
+        obs_actor = getattr(self.game.environment, "g1_obs_actor", None)
+        if obs_actor is not None and getattr(obs_actor, "commands", None) is not None:
+            if spec is None:
+                return obs_actor
+            from script.role.abilities.articulation_control_config.robot_pattern import (
+                normalize_robot_pattern,
+                patterns_compatible,
+            )
 
-    def apply_command_pins(self, world_idx: int, values: Dict[int, float], pinned_indices: List[int]):
-        environment = self.game.environment
-        if environment.commands is None or not pinned_indices:
+            spec_pattern = normalize_robot_pattern(str(spec.pattern or ""))
+            obs_actor_pattern = normalize_robot_pattern(str(getattr(obs_actor, "pattern", "") or ""))
+            if spec_pattern and obs_actor_pattern and patterns_compatible(spec_pattern, obs_actor_pattern):
+                return obs_actor
+            if spec_pattern and obs_actor_pattern and spec_pattern == obs_actor_pattern:
+                return obs_actor
+        return None
+
+    def resolve_command_instance(
+        self,
+        obs_actor,
+        spec: Optional[ObjectInspectorSpec],
+        world_idx: int,
+    ) -> int:
+        if obs_actor is None:
+            return -1
+        worlds = getattr(obs_actor, "instance_world_indices", None)
+        if worlds:
+            for i, world in enumerate(worlds):
+                if int(world) == int(world_idx):
+                    return i
+            return -1
+        return int(world_idx)
+
+    def read_commands(
+        self,
+        world_idx: int,
+        spec: Optional[ObjectInspectorSpec] = None,
+    ) -> Dict[int, float]:
+        obs_actor = self.resolve_command_obs_actor(spec)
+        commands = getattr(obs_actor, "commands", None) if obs_actor is not None else None
+        labels = list(getattr(obs_actor, "command_labels", None) or []) if obs_actor is not None else []
+        if commands is None:
+            environment = self.game.environment
+            commands = environment.commands
+            labels = list(environment.command_labels or [])
+            instance = int(world_idx)
+        else:
+            instance = self.resolve_command_instance(obs_actor, spec, world_idx)
+        if commands is None or instance < 0:
+            return {}
+        host = commands.numpy()
+        if instance >= len(host):
+            return {}
+        width = int(host.shape[1]) if host.ndim > 1 else 0
+        n = min(len(labels) if labels else width, width)
+        return {idx: float(host[instance, idx]) for idx in range(n)}
+
+    def apply_command_pins(
+        self,
+        world_idx: int,
+        values: Dict[int, float],
+        pinned_indices: List[int],
+        spec: Optional[ObjectInspectorSpec] = None,
+    ):
+        if not pinned_indices:
             return
-        cmd = wp.to_torch(environment.commands)
-        if world_idx < 0 or world_idx >= int(cmd.shape[0]):
+        obs_actor = self.resolve_command_obs_actor(spec)
+        commands = getattr(obs_actor, "commands", None) if obs_actor is not None else None
+        instance = (
+            self.resolve_command_instance(obs_actor, spec, world_idx)
+            if obs_actor is not None
+            else int(world_idx)
+        )
+        if commands is None:
+            environment = self.game.environment
+            commands = environment.commands
+            instance = int(world_idx)
+        if commands is None or instance < 0:
+            return
+        cmd = wp.to_torch(commands)
+        if instance >= int(cmd.shape[0]):
             return
         for dim_index in pinned_indices:
             if dim_index not in values:
                 continue
             if dim_index >= int(cmd.shape[1]):
                 continue
-            cmd[world_idx, dim_index] = float(values[dim_index])
+            cmd[instance, dim_index] = float(values[dim_index])
+        hold = getattr(obs_actor, "hold_external_commands", None) if obs_actor is not None else None
+        if callable(hold) and any(int(idx) < 3 for idx in pinned_indices):
+            hold(instance_indices=[instance])
+
+    def command_target_label(self, spec: Optional[ObjectInspectorSpec], world_idx: int) -> str:
+        obs_actor = self.resolve_command_obs_actor(spec)
+        instance = self.resolve_command_instance(obs_actor, spec, world_idx)
+        getter = getattr(obs_actor, "try_get_command_role_target", None) if obs_actor is not None else None
+        if not callable(getter) or instance < 0:
+            return ""
+        info = getter(instance)
+        if not isinstance(info, dict):
+            return ""
+        return str(info.get("label") or "selected")
+
+    def set_command_role_target(
+        self,
+        spec: ObjectInspectorSpec,
+        world_idx: int,
+        *,
+        local_role_idx: int,
+        local_body_idx: int,
+        label: str,
+    ) -> bool:
+        obs_actor = self.resolve_command_obs_actor(spec)
+        instance = self.resolve_command_instance(obs_actor, spec, world_idx)
+        setter = getattr(obs_actor, "try_set_command_role_target", None) if obs_actor is not None else None
+        if not callable(setter) or instance < 0:
+            return False
+        return bool(
+            setter(
+                instance,
+                local_role_idx=int(local_role_idx),
+                local_body_idx=int(local_body_idx),
+                label=str(label),
+            )
+        )
+
+    def clear_command_role_target(self, spec: ObjectInspectorSpec, world_idx: int) -> bool:
+        obs_actor = self.resolve_command_obs_actor(spec)
+        instance = self.resolve_command_instance(obs_actor, spec, world_idx)
+        clearer = getattr(obs_actor, "try_clear_command_role_target", None) if obs_actor is not None else None
+        if not callable(clearer) or instance < 0:
+            return False
+        return bool(clearer(instance))
+
+    def resolve_role_local_body(
+        self,
+        spec: ObjectInspectorSpec,
+        *,
+        preferred_body: str = "",
+    ) -> int:
+        """Env-local root body index for a catalog role (TryGet for target picker)."""
+        if not spec.bodies:
+            return -1
+        preferred = str(preferred_body or "").strip().lower()
+        body = None
+        if preferred:
+            body = next(
+                (item for item in spec.bodies if str(item.display_name).lower().endswith(preferred)),
+                None,
+            )
+        if body is None:
+            body = next((item for item in spec.bodies if item.is_base_body), spec.bodies[0])
+        global_idx = self._resolve_body_global_index(spec, body, 0)
+        num_env = max(int(self.game.num_env), 1)
+        bodies_per_env = int(self.pm.model.body_count) // num_env
+        if bodies_per_env <= 0:
+            return -1
+        return int(global_idx) % bodies_per_env
 
     def resolve_rl_action_row(self, local_role_idx: int, world_idx: int) -> int:
         num_objects_env = self.game.num_objects_env

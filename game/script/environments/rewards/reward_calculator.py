@@ -238,6 +238,16 @@ class RewardCalculator:
                 truncated=truncated,
             )
 
+        # One exploded world (NaN q/qd) must not poison the RL reward vector.
+        # Per-env term buffers are left as-is so the NaN-guard report can still
+        # name which term wrote NaN; get_reward_terms() nan-to-nums the mean.
+        wp.launch(
+            kernel=self.sanitize_nonfinite_1d,
+            dim=int(self.step_total_rewards_all.shape[0]),
+            inputs=[self.step_total_rewards_all],
+            device=self.device,
+        )
+
         if GameConfig.requires_grad:
             self.step_total_rewards_all_diff.zero_()
             for component in self.reward_components_diff:
@@ -323,6 +333,15 @@ class RewardCalculator:
     # ------------------------------------------------------------------
     # 統一公開接口 (所有 level / 框架通用)
     # ------------------------------------------------------------------
+    def try_get_reward_term_env_values(self) -> Dict[str, torch.Tensor]:
+        """Per-env last-step term values for NaN reports (TryGet).
+
+        Keys are ``log_name`` strings. Values are 1-D GPU tensors of length
+        ``num_env``. Does not touch the iteration-mean accumulators used by
+        :meth:`get_reward_terms`.
+        """
+        return {name: wp.to_torch(buf) for name, buf in self.reward_term_bufs.items()}
+
     def get_reward_terms(self) -> Dict[str, torch.Tensor]:
         """Return per-step mean over envs of each logged reward term.
 
@@ -340,7 +359,10 @@ class RewardCalculator:
             scale = float(getattr(self.environment, "reward_log_scale", 1.0))
         out: Dict[str, torch.Tensor] = {}
         for name, buf in self.reward_term_bufs.items():
-            mean = torch.mean(wp.to_torch(buf))
+            vals = torch.nan_to_num(
+                wp.to_torch(buf), nan=0.0, posinf=0.0, neginf=0.0
+            )
+            mean = torch.mean(vals)
             out[f"Episode_Reward/{name}"] = mean * scale
             if name in self._term_accum:
                 # Accumulate into the pre-allocated normal tensor (``out=``
@@ -354,7 +376,9 @@ class RewardCalculator:
     def get_metric_means(self) -> Dict[str, torch.Tensor]:
         """Return per-step mean over envs of raw physics metrics."""
         return {
-            f"Metrics/{name}": torch.mean(wp.to_torch(buf))
+            f"Metrics/{name}": torch.mean(
+                torch.nan_to_num(wp.to_torch(buf), nan=0.0, posinf=0.0, neginf=0.0)
+            )
             for name, buf in self.metric_bufs.items()
         }
 
@@ -413,6 +437,12 @@ class RewardCalculator:
             return
 
         player_health[tid] = default_player_health[tid]
+
+    @wp.kernel
+    def sanitize_nonfinite_1d(buf: wp.array(dtype=wp.float32)):
+        tid = wp.tid()
+        if not wp.isfinite(buf[tid]):
+            buf[tid] = 0.0
 
     @wp.kernel
     def apply_step_reward_to_rl(

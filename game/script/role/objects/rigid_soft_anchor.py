@@ -27,13 +27,20 @@ class RigidSoftAnchorPartModel(BaseModel):
     filter_all_collisions: bool = False
     object_friction: float = 0.5
     object_elasticity: float = 0.5
+    # Reduced-coordinate solvers reject moving bodies with zero mass/inertia.
+    # The kinematic cube still needs a compile-time mass; Newton then locks
+    # those DOFs with kinematic armature so the cube does not fall.
+    object_mass: float = 1.0
+    lock_inertia: bool = True
     color: Optional[List[float]] = None
 
 
 class RigidSoftAnchorTargetModel(RigidSoftAnchorPartModel):
     shape: Literal["box", "sphere"] = "sphere"
     object_mass: float = 0.8
-    lock_inertia: bool = True
+    # Free dynamic body: locking inertia zeros I and the reduced-coordinate
+    # solver divides by zero (NaN body_q, then NaN policy observations).
+    lock_inertia: bool = False
 
 
 class RigidSoftAnchorModel(BaseObjectModel):
@@ -73,6 +80,28 @@ def _shape_color(raw: Any):
     if peak > 1.0:
         vals = [v / 255.0 for v in vals]
     return vals
+
+
+def _diag_inertia(ixx: float, iyy: float, izz: float) -> wp.mat33:
+    return wp.mat33([[ixx, 0.0, 0.0], [0.0, iyy, 0.0], [0.0, 0.0, izz]])
+
+
+def _solid_inertia(part: Dict[str, Any], mass: float) -> wp.mat33:
+    """Inertia about COM for a solid box (half-extents) or sphere of the given mass."""
+    if mass <= 0.0:
+        return wp.mat33()
+    shape = str(part.get("shape", "box")).lower()
+    if shape == "sphere":
+        radius = float(part.get("radius", RigidSoftAnchorTargetModel().radius))
+        moment = 0.4 * mass * radius * radius
+        return _diag_inertia(moment, moment, moment)
+    size = _vec3(part.get("size"), RigidSoftAnchorPartModel().size)
+    hx, hy, hz = size[0], size[1], size[2]
+    return _diag_inertia(
+        (mass / 3.0) * (hy * hy + hz * hz),
+        (mass / 3.0) * (hx * hx + hz * hz),
+        (mass / 3.0) * (hx * hx + hy * hy),
+    )
 
 
 def _part_shape_cfg(base_cfg, part: Dict[str, Any], *, density: float) -> newton.ModelBuilder.ShapeConfig:
@@ -143,9 +172,15 @@ class RigidSoftAnchorObject(BaseObject):
         joint_start = builder_env.joint_count
         unlimited = newton.ModelBuilder.JointDofConfig.create_unlimited
 
+        anchor_mass = float(anchor.get("object_mass", defaults.anchor.object_mass))
+        anchor_lock = bool(anchor.get("lock_inertia", defaults.anchor.lock_inertia))
+        target_mass = float(target.get("object_mass", defaults.target.object_mass))
+        target_lock = bool(target.get("lock_inertia", defaults.target.lock_inertia))
+
         anchor_body = builder_env.add_link(
-            mass=0.0,
-            lock_inertia=True,
+            mass=anchor_mass,
+            inertia=_solid_inertia(anchor, anchor_mass),
+            lock_inertia=anchor_lock,
             is_kinematic=True,
             label=f"{label}_anchor",
         )
@@ -157,8 +192,9 @@ class RigidSoftAnchorObject(BaseObject):
 
         target_body = builder_env.add_link(
             xform=wp.transform(wp.vec3(offset[0], offset[1], offset[2]), wp.quat_identity()),
-            mass=float(target.get("object_mass", defaults.target.object_mass)),
-            lock_inertia=bool(target.get("lock_inertia", True)),
+            mass=target_mass,
+            inertia=_solid_inertia(target, target_mass),
+            lock_inertia=target_lock,
             is_kinematic=False,
             label=f"{label}_target",
         )
@@ -180,9 +216,10 @@ class RigidSoftAnchorObject(BaseObject):
             label=f"{label}_articulation",
         )
 
-        anchor_cfg = _part_shape_cfg(cfg, anchor, density=0.0)
-        target_density = 0.0 if bool(target.get("lock_inertia", True)) else float(cfg.density)
-        target_cfg = _part_shape_cfg(cfg, target, density=target_density)
+        anchor_cfg = _part_shape_cfg(cfg, anchor, density=0.0 if anchor_lock else float(cfg.density))
+        # Mass / inertia come from add_link(object_mass). Shape density must stay
+        # 0 so a free target is not given a second, volume-derived mass.
+        target_cfg = _part_shape_cfg(cfg, target, density=0.0)
         anchor_shape = _add_part_shape(
             builder_env, anchor_body, anchor, anchor_cfg, f"{label}_anchor"
         )

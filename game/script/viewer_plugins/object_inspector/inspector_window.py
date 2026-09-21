@@ -1,16 +1,20 @@
 from __future__ import annotations
 
-from typing import Callable, Dict, List, Optional, TYPE_CHECKING
+from typing import Any, Callable, Dict, List, Optional, Sequence, Tuple, TYPE_CHECKING
 
 from PyQt6.QtCore import Qt
 from PyQt6.QtWidgets import (
     QCheckBox,
     QComboBox,
+    QDialog,
+    QDialogButtonBox,
     QDoubleSpinBox,
     QFormLayout,
     QGroupBox,
     QHBoxLayout,
     QLabel,
+    QListWidget,
+    QListWidgetItem,
     QMainWindow,
     QPushButton,
     QScrollArea,
@@ -334,6 +338,12 @@ class InspectorWindow(QMainWindow):
         self._command_values: Dict[str, Dict[int, float]] = {}
         self._command_pins: Dict[str, Dict[int, bool]] = {}
         self._command_labels: List[str] = []
+        self._command_ranges: List[Tuple[float, float]] = []
+        self._show_target_picker: bool = False
+        self._command_target_label: str = ""
+        self._role_picker_cb: Optional[Callable[[], None]] = None
+        self._role_picker_clear_cb: Optional[Callable[[], None]] = None
+        self._command_target_status: Optional[QLabel] = None
         self._active_body_storage_key: Optional[str] = None
         self._active_joint_storage_key: Optional[str] = None
         self._player_action: Optional[PlayerActionSpec] = None
@@ -700,10 +710,65 @@ class InspectorWindow(QMainWindow):
         )
 
     def set_command_labels(self, labels: List[str]):
+        self.set_command_page(labels)
+
+    def set_command_page(
+        self,
+        labels: Sequence[str],
+        *,
+        ranges: Optional[Sequence[Tuple[float, float]]] = None,
+        show_target_picker: bool = False,
+        target_label: str = "",
+    ):
         self._command_labels = list(labels)
+        if ranges is None:
+            self._command_ranges = [(-1.0, 1.0) for _ in self._command_labels]
+        else:
+            self._command_ranges = [(float(lo), float(hi)) for lo, hi in ranges]
+        self._show_target_picker = bool(show_target_picker)
+        self._command_target_label = str(target_label or "")
         spec = self._spec
-        self._set_commands_tab_enabled(bool(spec is not None and spec.accepts_commands and self._command_labels))
+        enabled = bool(spec is not None and spec.accepts_commands and self._command_labels)
+        self._set_commands_tab_enabled(enabled)
         self._rebuild_commands_panel()
+
+    def set_command_target_label(self, label: str):
+        self._command_target_label = str(label or "")
+        if self._command_target_status is not None:
+            text = self._command_target_label or "(none)"
+            self._command_target_status.setText(f"Target: {text}")
+
+    def set_role_picker_callback(self, cb: Optional[Callable[[], None]]):
+        self._role_picker_cb = cb
+
+    def pick_role_dialog(
+        self,
+        items: Sequence[Tuple[str, Any]],
+        *,
+        title: str = "Select target",
+    ) -> Optional[Any]:
+        dialog = QDialog(self)
+        dialog.setWindowTitle(title)
+        layout = QVBoxLayout(dialog)
+        listing = QListWidget()
+        for display, payload in items:
+            entry = QListWidgetItem(display)
+            entry.setData(Qt.ItemDataRole.UserRole, payload)
+            listing.addItem(entry)
+        listing.itemDoubleClicked.connect(dialog.accept)
+        layout.addWidget(listing)
+        buttons = QDialogButtonBox(
+            QDialogButtonBox.StandardButton.Ok | QDialogButtonBox.StandardButton.Cancel
+        )
+        buttons.accepted.connect(dialog.accept)
+        buttons.rejected.connect(dialog.reject)
+        layout.addWidget(buttons)
+        if dialog.exec() != QDialog.DialogCode.Accepted:
+            return None
+        current = listing.currentItem()
+        if current is None:
+            return None
+        return current.data(Qt.ItemDataRole.UserRole)
 
     def _set_commands_tab_enabled(self, enabled: bool):
         self.tabs.setTabEnabled(3, enabled)
@@ -770,11 +835,16 @@ class InspectorWindow(QMainWindow):
             pinned_dims = [idx for idx, pinned in pins.items() if pinned]
             if not pinned_dims:
                 continue
-            world_idx = self._parse_command_storage_key(key)
-            if world_idx is None:
-                continue
+            parsed = self._parse_env_only_storage_key(key)
+            if parsed is not None:
+                catalog_key, world_idx = parsed
+            else:
+                world_idx = self._parse_command_storage_key(key)
+                if world_idx is None:
+                    continue
+                catalog_key = None
             values = self._command_values.get(key, {})
-            yield world_idx, values, pinned_dims
+            yield catalog_key, world_idx, values, pinned_dims
 
     @staticmethod
     def _parse_command_storage_key(key: str) -> Optional[int]:
@@ -834,12 +904,12 @@ class InspectorWindow(QMainWindow):
     def _rl_value_storage_key(self) -> Optional[str]:
         return self._env_storage_prefix()
 
-    def _command_storage_key(self) -> str:
-        return f"env{self._world_idx}"
+    def _command_storage_key(self) -> Optional[str]:
+        return self._env_storage_prefix()
 
     def _save_command_values(self):
         key = self._command_storage_key()
-        if not self._command_rows:
+        if key is None or not self._command_rows:
             return
         self._command_values[key] = {idx: row.value() for idx, row in self._command_rows.items()}
         self._command_pins[key] = {
@@ -1190,6 +1260,7 @@ class InspectorWindow(QMainWindow):
 
     def _rebuild_commands_panel(self):
         self._command_rows.clear()
+        self._command_target_status = None
         commands_layout = self._replace_scroll_panel(
             self.commands_scroll,
             "commands_panel",
@@ -1198,14 +1269,43 @@ class InspectorWindow(QMainWindow):
         if not self._command_labels:
             commands_layout.addWidget(QLabel("This character has no command inputs."))
             return
-        title = QLabel("Velocity command for selected env")
+        title = QLabel("Command for selected env (synced with observation)")
         title.setStyleSheet("font-weight: bold;")
         commands_layout.addWidget(title)
         for idx, label in enumerate(self._command_labels):
-            row = ParamRow(label, -1.0, 1.0, 0.01, pin_enabled=True, always_pinned=False)
+            lo, hi = (-1.0, 1.0)
+            if idx < len(self._command_ranges):
+                lo, hi = self._command_ranges[idx]
+            row = ParamRow(label, lo, hi, 0.01, pin_enabled=True, always_pinned=False)
             self._command_rows[idx] = row
             commands_layout.addWidget(row)
+        if self._show_target_picker:
+            self._command_target_status = QLabel(
+                f"Target: {self._command_target_label or '(none)'}"
+            )
+            commands_layout.addWidget(self._command_target_status)
+            btn_row = QHBoxLayout()
+            pick_btn = QPushButton("Select target")
+            pick_btn.clicked.connect(self._on_role_picker_clicked)
+            clear_btn = QPushButton("Clear target")
+            clear_btn.clicked.connect(self._on_role_picker_clear)
+            btn_row.addWidget(pick_btn)
+            btn_row.addWidget(clear_btn)
+            btn_row.addStretch()
+            commands_layout.addLayout(btn_row)
         self._restore_command_values()
+
+    def _on_role_picker_clicked(self):
+        if callable(self._role_picker_cb):
+            self._role_picker_cb()
+
+    def _on_role_picker_clear(self):
+        clear = getattr(self, "_role_picker_clear_cb", None)
+        if callable(clear):
+            clear()
+
+    def set_role_picker_clear_callback(self, cb: Optional[Callable[[], None]]):
+        self._role_picker_clear_cb = cb
 
     def _on_label_changed(self, label: str):
         if hasattr(self, "_label_changed_cb") and self._label_changed_cb:

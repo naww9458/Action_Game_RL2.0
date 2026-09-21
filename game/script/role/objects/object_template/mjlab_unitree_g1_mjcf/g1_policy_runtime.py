@@ -87,8 +87,8 @@ def _base_com_offset_range(dr_cfg: dict) -> Optional[dict]:
     }
 
 
-def _wire_encoder_bias_into_action(environment: Any, provider: Any) -> None:
-    bias = getattr(provider, "encoder_bias_wp", None)
+def _wire_encoder_bias_into_action(environment: Any, obs_actor: Any) -> None:
+    bias = getattr(obs_actor, "encoder_bias_wp", None)
     if bias is None:
         return
     players = getattr(environment, "players", None)
@@ -101,27 +101,54 @@ def _wire_encoder_bias_into_action(environment: Any, provider: Any) -> None:
             setter(bias)
 
 
-def _bind_provider_on_environment(environment: Any, provider: Any) -> None:
-    environment.g1_provider = provider
-    environment.obs_dim = provider.obs_dim
-    environment.rl_action_dim = provider.rl_action_dim
-    environment.flat_obs_dim = provider.flat_obs_dim
-    environment.obs_wp = provider.obs_wp
-    environment.obs_torch = provider.obs_torch
-    environment.single_obs_wp = provider.single_obs_wp
-    environment.commands = provider.commands
-    environment.command_labels = provider.command_labels
+def _bind_obs_actor_on_environment(environment: Any, obs_actor: Any) -> None:
+    environment.g1_obs_actor = obs_actor
+    environment.obs_dim = obs_actor.obs_dim
+    environment.rl_action_dim = obs_actor.rl_action_dim
+    environment.flat_obs_dim = obs_actor.flat_obs_dim
+    environment.obs_wp = obs_actor.obs_wp
+    environment.obs_torch = obs_actor.obs_torch
+    environment.single_obs_wp = obs_actor.single_obs_wp
+    environment.commands = obs_actor.commands
+    environment.command_labels = obs_actor.command_labels
     consumers = getattr(environment, "command_consumer_patterns", None)
     if not isinstance(consumers, set):
         consumers = set()
         environment.command_consumer_patterns = consumers
-    pattern = getattr(provider, "pattern", None)
+    pattern = getattr(obs_actor, "pattern", None)
     if pattern:
         consumers.add(normalize_robot_pattern(str(pattern)))
-    environment.policy_actions = provider.policy_actions
-    environment.prev_actions = provider.prev_actions
-    environment.view = provider.view
-    environment.history_len = int(provider.history_len)
+    environment.policy_actions = obs_actor.policy_actions
+    environment.prev_actions = obs_actor.prev_actions
+    environment.view = obs_actor.view
+    environment.history_len = int(obs_actor.history_len)
+
+
+def _bind_obs_index_describe(environment: Any) -> None:
+    """Expose TryGet ``try_describe_obs_index`` on the environment (NaN reports)."""
+
+    def try_describe_obs_index(index: int, group: str = "") -> Optional[str]:
+        actor = getattr(environment, "g1_obs_actor", None)
+        critic = getattr(environment, "g1_obs_critic", None)
+        hosts = (critic, actor) if "critic" in str(group).lower() else (actor, critic)
+        for host in hosts:
+            fn = getattr(host, "try_describe_obs_index", None)
+            if not callable(fn):
+                continue
+            try:
+                text = fn(int(index), group)
+            except TypeError:
+                try:
+                    text = fn(int(index))
+                except Exception:
+                    continue
+            except Exception:
+                continue
+            if text:
+                return str(text)
+        return None
+
+    environment.try_describe_obs_index = try_describe_obs_index
 
 
 def _attach_contact_runtime(environment: Any, bundle: PolicyBundleSpec) -> None:
@@ -163,48 +190,52 @@ def _attach_contact_runtime(environment: Any, bundle: PolicyBundleSpec) -> None:
     )
 
 
-def _attach_critic(environment: Any, bundle: PolicyBundleSpec, provider: Any) -> None:
-    from script.role.policies.critic_obs_provider import CriticObsProviderRegistry
+def _attach_critic(environment: Any, bundle: PolicyBundleSpec, obs_actor: Any) -> None:
+    from script.role.policies.critic_obs import CriticObsRegistry
 
     critic_id = bundle.obs_critic
-    environment.critic_obs_provider = CriticObsProviderRegistry.create(
+    environment.g1_obs_critic = CriticObsRegistry.create(
         critic_id,
-        num_instances=provider.num_instances,
+        num_instances=obs_actor.num_instances,
         policy_obs_dim=environment.flat_obs_dim,
         foot_sensor=getattr(environment, "foot_sensor", None),
         physics_manager=environment.physics_manager,
         device=GameConfig.DEVICE,
     )
-    if environment.critic_obs_provider is not None:
+    if environment.g1_obs_critic is not None:
         print(
             f"[G1PolicyRuntime] asymmetric critic extension active: "
-            f"critic_obs_dim={environment.critic_obs_provider.critic_obs_dim}"
+            f"critic_obs_dim={environment.g1_obs_critic.critic_obs_dim}"
         )
 
 
 class G1PolicyRuntime:
     """Per-environment hook: observation, velocity commands, and previous-action history."""
 
-    def __init__(self, environment: Any, provider: Any):
+    def __init__(self, environment: Any, obs_actor: Any):
         self._environment = environment
-        self.provider = provider
+        self.obs_actor = obs_actor
 
     def get_observation(self):
-        self.provider.get_observation(self._environment.physics_manager)
+        self.obs_actor.get_observation(self._environment.physics_manager)
         return self._environment.obs_torch
 
     def on_reset(self, terminated, current_step) -> None:
         del current_step
-        if isinstance(terminated, torch.Tensor):
+        if isinstance(terminated, wp.array):
+            terminated_int = wp.to_torch(terminated).to(dtype=torch.int32)
+        elif isinstance(terminated, torch.Tensor):
             terminated_int = terminated.to(dtype=torch.int32, device=GameConfig.DEVICE)
         else:
-            terminated_int = torch.tensor(terminated, dtype=torch.int32, device=GameConfig.DEVICE)
-        terminated_wp = wp.from_torch(terminated_int, dtype=wp.int32)
-        self.provider.reset_commands(terminated_wp)
-        self.provider.reset_policy_actions(terminated_int.bool())
+            terminated_int = torch.as_tensor(
+                terminated, dtype=torch.int32, device=GameConfig.DEVICE
+            )
+        terminated_wp = wp.from_torch(terminated_int.contiguous(), dtype=wp.int32)
+        self.obs_actor.reset_commands(terminated_wp)
+        self.obs_actor.reset_policy_actions(terminated_int.bool())
         if getattr(self._environment, "obs_wp", None) is not None:
-            self.provider.compute_single_frame_obs(self._environment.physics_manager)
-            self.provider.reset_history(terminated_wp, self._environment.physics_manager)
+            self.obs_actor.compute_single_frame_obs(self._environment.physics_manager)
+            self.obs_actor.reset_history(terminated_wp, self._environment.physics_manager)
 
         env = self._environment
         pm = getattr(env, "physics_manager", None)
@@ -219,9 +250,10 @@ class G1PolicyRuntime:
     def on_update_game_status(self, physics_manager, reward_calculator, num_env, current_step) -> None:
         del reward_calculator, num_env, current_step
         dt = 1.0 / float(GameConfig.FPS_ACTION)
-        self.provider.update_velocity_commands(physics_manager, dt)
-        clearer = getattr(self.provider, "clear_external_command_hold", None)
-        if callable(clearer):
+        self.obs_actor.update_velocity_commands(physics_manager, dt)
+        clearer = getattr(self.obs_actor, "clear_external_command_hold", None)
+        defer = bool(getattr(self.obs_actor, "defer_command_hold_clear", False))
+        if callable(clearer) and not defer:
             clearer()
         self._update_foot_sensor(physics_manager, dt)
         self._update_angular_momentum(physics_manager)
@@ -231,18 +263,18 @@ class G1PolicyRuntime:
 
         Training writes low-level joint actions here. Play scenes with
         ``Articulation_body_control_rl_assisted`` send high-level commands;
-        that ability already stores the policy's joint actions on its own provider.
+        that ability already stores the policy's joint actions on its own obs_actor.
         """
-        provider = self.provider
-        if provider is None or getattr(provider, "policy_actions", None) is None:
+        obs_actor = self.obs_actor
+        if obs_actor is None or getattr(obs_actor, "policy_actions", None) is None:
             return
-        expected = (int(provider.num_instances), int(provider.rl_action_dim))
+        expected = (int(obs_actor.num_instances), int(obs_actor.rl_action_dim))
         if expected[0] <= 0 or expected[1] <= 0:
             return
         actions_torch = wp.to_torch(actions_wp)
         if tuple(int(d) for d in actions_torch.shape) != expected:
             return
-        provider.store_low_level_actions(wp.from_torch(actions_torch.contiguous()))
+        obs_actor.store_low_level_actions(wp.from_torch(actions_torch.contiguous()))
 
     def on_post_substep(self, substep_idx: int) -> None:
         """Per-substep contact decode for foot air-time and self-collision history."""
@@ -314,7 +346,7 @@ def _bind_post_substep(environment: Any, runtime: G1PolicyRuntime) -> None:
 
 def attach_if_present(environment: Any) -> Optional[G1PolicyRuntime]:
     """Attach G1 obs/command runtime when a G1 player with a policy version is loaded."""
-    if getattr(environment, "g1_provider", None) is not None:
+    if getattr(environment, "g1_obs_actor", None) is not None:
         return None
     player_cfg = _find_g1_player(environment)
     if player_cfg is None:
@@ -335,7 +367,7 @@ def attach_if_present(environment: Any) -> Optional[G1PolicyRuntime]:
     robot_pattern = normalize_robot_pattern(str(object_cfg.get("pattern") or G1_ROBOT_NAME))
     runtime_pattern = resolve_player_runtime_pattern(player_cfg)
     bundle = PolicyBundleRegistry.get(str(version), robot_pattern=robot_pattern)
-    provider = PolicyBundleRegistry.create_obs_actor(
+    obs_actor = PolicyBundleRegistry.create_obs_actor(
         bundle.obs_actor,
         num_env=environment.num_env,
         device=GameConfig.DEVICE,
@@ -347,11 +379,12 @@ def attach_if_present(environment: Any) -> Optional[G1PolicyRuntime]:
         encoder_bias_range=_encoder_bias_range(dr_cfg),
         base_com_offset_range=_base_com_offset_range(dr_cfg),
     )
-    _bind_provider_on_environment(environment, provider)
+    _bind_obs_actor_on_environment(environment, obs_actor)
     _attach_contact_runtime(environment, bundle)
-    _attach_critic(environment, bundle, provider)
-    _wire_encoder_bias_into_action(environment, provider)
-    runtime = G1PolicyRuntime(environment, provider)
+    _attach_critic(environment, bundle, obs_actor)
+    _bind_obs_index_describe(environment)
+    _wire_encoder_bias_into_action(environment, obs_actor)
+    runtime = G1PolicyRuntime(environment, obs_actor)
     _bind_post_substep(environment, runtime)
     hooks = getattr(environment, "_object_template_runtime_hooks", None)
     if hooks is None:

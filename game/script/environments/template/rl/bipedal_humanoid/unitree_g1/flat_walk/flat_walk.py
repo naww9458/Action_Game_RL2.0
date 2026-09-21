@@ -129,10 +129,10 @@ class FlatWalk(Environment):
 
         # Asymmetric critic: attached by the G1 object-template runtime when
         # observation.obs_critic is declared. None degrades to the symmetric critic.
-        self.critic_obs_provider = None
+        self.g1_obs_critic = None
 
-        # Observation/command provider attached by object-template register.setup.
-        self.g1_provider = None
+        # Actor observation / command runtime attached by object-template register.setup.
+        self.g1_obs_actor = None
         self.foot_sensor = None
         self.self_collision_sensor = None
         self.push_timer = None
@@ -178,15 +178,15 @@ class FlatWalk(Environment):
         if isinstance(env_configs, dict):
             dr_cfg = env_configs.get("domain_randomization") or {}
 
-        if self.g1_provider is None:
+        if self.g1_obs_actor is None:
             raise RuntimeError(
                 "Unitree G1 policy runtime was not attached. "
                 "player object.pattern must be unitree_g1 with control_policy_version."
             )
-        follow_stds_fn = getattr(self.g1_provider, "get_command_follow_metric_stds", None)
+        follow_stds_fn = getattr(self.g1_obs_actor, "get_command_follow_metric_stds", None)
         if not callable(follow_stds_fn):
             raise RuntimeError(
-                "G1 policy provider must implement get_command_follow_metric_stds() "
+                "G1 obs actor must implement get_command_follow_metric_stds() "
                 "(stds live in object_template control_configs.yaml "
                 "unitree_g1.velocity_locomotion.command_follow_metrics.std)."
             )
@@ -261,7 +261,7 @@ class FlatWalk(Environment):
 
         # C3: command-velocity curriculum (mjlab commands_vel stages). Applied
         # by ``update_curriculum`` against the global policy-step counter.
-        self._curriculum_base_ranges = dict(self.g1_provider.get_command_velocity_ranges())
+        self._curriculum_base_ranges = dict(self.g1_obs_actor.get_command_velocity_ranges())
         cur_cfg = dr_cfg.get("curriculum") or {}
         stages_raw = cur_cfg.get("command_vel") or []
         self._curriculum_stages = []
@@ -281,7 +281,7 @@ class FlatWalk(Environment):
         self._curriculum_ranges_applied = None
 
         if getattr(self, "view", None) is None:
-            self.view = self.g1_provider.view
+            self.view = self.g1_obs_actor.view
 
         self._apply_foot_friction_randomization()
 
@@ -405,19 +405,20 @@ class FlatWalk(Environment):
                 mu_np[i] = float(rng.uniform(lo, hi))
         model.shape_material_mu.assign(mu_np)
 
-    def _get_critic_observation(self) -> torch.Tensor:
-        """Return the asymmetric critic observation when a provider is registered.
+    def bind_assisted_obs_actor(self, obs_actor) -> None:
+        """Play path: the ability's obs_actor is the one packing observations."""
+        self.g1_obs_actor = obs_actor
 
-        The provider is defined by the robot's object template (e.g. Unitree G1
-        foot-state extras). When no provider is registered (or its buffers are
-        not ready), the environment falls back to the symmetric critic (policy obs).
+    def _get_critic_observation(self) -> torch.Tensor:
+        """Return the asymmetric critic observation when foot extras are attached.
+
+        Foot extras come from the robot object template. If they are missing or
+        not initialised, fall back to the symmetric critic (policy obs).
         """
-        provider = self.critic_obs_provider
-        # Runtime safety: any provider must be fully initialised (setup done)
-        # before use; otherwise fall back to the symmetric critic.
-        if provider is None or getattr(provider, "critic_obs_wp", None) is None:
+        critic_obs = self.g1_obs_critic
+        if critic_obs is None or getattr(critic_obs, "critic_obs_wp", None) is None:
             return self.obs_torch
-        return provider.get_critic_observation(self.g1_provider.noiseless_obs_wp)
+        return critic_obs.get_critic_observation(self.g1_obs_actor.noiseless_obs_wp)
 
     @wp.kernel
     def update_game_status_gpu(current_step: wp.array(dtype=wp.int32)):
@@ -470,12 +471,12 @@ class FlatWalk(Environment):
         """Advance the global policy-step counter and apply curriculum stages.
 
         Mirrors mjlab ``common_step_counter += 1`` / ``commands_vel``: when the
-        counter crosses a stage threshold, the provider's velocity-command
+        counter crosses a stage threshold, the obs actor's velocity-command
         sampling ranges are updated on device (kernels read them by address, so
         the change is picked up by the replayed CUDA graph on the next launch).
         """
         self._global_step_count += 1
-        if not self._curriculum_stages or self.g1_provider is None:
+        if not self._curriculum_stages or self.g1_obs_actor is None:
             return
         stage = None
         for s in self._curriculum_stages:
@@ -489,7 +490,7 @@ class FlatWalk(Environment):
             "ang_vel_z": stage.get("ang_vel_z", self._curriculum_base_ranges["ang_vel_z"]),
         }
         if new_ranges != self._curriculum_ranges_applied:
-            self.g1_provider.set_command_velocity_ranges(new_ranges)
+            self.g1_obs_actor.set_command_velocity_ranges(new_ranges)
             self._curriculum_ranges_applied = new_ranges
             # Invalidate the cached Curriculum/* metric tensors.
             self._curriculum_metric_tensors = None
@@ -558,19 +559,19 @@ class FlatWalk(Environment):
         0-d GPU tensors (mean over envs), consumed by the generic
         ``Game.get_training_log`` public interface.
         """
-        if self.g1_provider is None or self.commands is None or self.view is None:
+        if self.g1_obs_actor is None or self.commands is None or self.view is None:
             return None
         root_tfs = self.view.get_root_transforms(self.physics_manager.state_0)
         root_vels = self.view.get_root_velocities(self.physics_manager.state_0)
         wp.launch(
             kernel=self.compute_twist_error_metrics_kernel,
-            dim=self.g1_provider.num_instances,
+            dim=self.g1_obs_actor.num_instances,
             inputs=[
                 self.commands,
                 root_tfs,
                 root_vels,
-                self.g1_provider.instance_world_indices_wp,
-                self.g1_provider.instance_view_indices_wp,
+                self.g1_obs_actor.instance_world_indices_wp,
+                self.g1_obs_actor.instance_view_indices_wp,
                 self._twist_err_xy_buf,
                 self._twist_err_yaw_buf,
                 self._twist_follow_x_buf,
@@ -600,7 +601,7 @@ class FlatWalk(Environment):
 
     def _build_curriculum_metric_tensors(self) -> dict[str, torch.Tensor]:
         """Build constant 0-d GPU tensors for the command sampling ranges."""
-        ranges = self.g1_provider.get_command_velocity_ranges()
+        ranges = self.g1_obs_actor.get_command_velocity_ranges()
         device = GameConfig.DEVICE
         return {
             "Curriculum/command_vel/lin_vel_x_min": torch.full((), ranges["lin_vel_x"][0], device=device),
@@ -619,7 +620,7 @@ class FlatWalk(Environment):
         stage boundary is crossed, so logged ranges always match the simulated
         commands. Values are 0-d GPU tensors, consumed by ``Game.get_training_log``.
         """
-        if self.g1_provider is None:
+        if self.g1_obs_actor is None:
             return None
         if self._curriculum_metric_tensors is None:
             self._curriculum_metric_tensors = self._build_curriculum_metric_tensors()

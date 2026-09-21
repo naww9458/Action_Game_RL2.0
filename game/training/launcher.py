@@ -25,6 +25,7 @@ def cmd_train(args: argparse.Namespace) -> int:
 
     loaded = TrainingPresetLoader.load(args.preset)
     num_envs = args.num_envs if args.num_envs is not None else loaded.train_cfg.num_envs_default
+    nan_check = bool(getattr(args, "nan_check", False))
     Trainer = loaded.Trainer
     trainer = Trainer(
         device=DEVICE, # TODO Hardcode
@@ -38,6 +39,9 @@ def cmd_train(args: argparse.Namespace) -> int:
         dump_rollouts=bool(getattr(args, "dump_rollouts", False)),
         dump_actions_steps=int(getattr(args, "dump_actions_steps", 0) or 0),
         dump_obs_steps=int(getattr(args, "dump_obs_steps", 0) or 0),
+        nan_check=nan_check,
+        nan_check_guard=nan_check and not bool(getattr(args, "no_nan_check_guard", False)),
+        nan_check_abort=nan_check and not bool(getattr(args, "no_nan_check_abort", False)),
     )
     if args.mode == "custom":
         trainer.train_custom()
@@ -162,6 +166,21 @@ def build_parser() -> argparse.ArgumentParser:
         type=int,
         default=100,
         help="Number of env steps of observations to save when --dump-rollouts is set",
+    )
+    train_p.add_argument(
+        "--nan-check",
+        action="store_true",
+        help="Enable NaN/Inf checks on env outputs (guard and/or abort report)",
+    )
+    train_p.add_argument(
+        "--no-nan-check-guard",
+        action="store_true",
+        help="With --nan-check: do not auto-reset envs that produce non-finite obs/reward",
+    )
+    train_p.add_argument(
+        "--no-nan-check-abort",
+        action="store_true",
+        help="With --nan-check: do not abort training with a detailed NaN report",
     )
     train_p.set_defaults(func=cmd_train)
 

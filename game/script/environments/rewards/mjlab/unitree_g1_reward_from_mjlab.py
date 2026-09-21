@@ -276,8 +276,8 @@ class TrackAngularVelocityReward(RewardComponent):
         _init_mjlab_scaling(self, "TrackAngularVelocityReward")
 
     def bind_environment(self, environment):
-        provider = getattr(environment, "g1_provider", None)
-        getter = getattr(provider, "get_tracking_reward_cfg", None)
+        obs_actor = getattr(environment, "g1_obs_actor", None)
+        getter = getattr(obs_actor, "get_tracking_reward_cfg", None)
         if not callable(getter):
             return
         cfg = getter().get("TrackAngularVelocityReward") or {}

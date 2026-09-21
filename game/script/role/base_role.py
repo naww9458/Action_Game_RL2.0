@@ -329,6 +329,7 @@ class BaseRole(ABC):
                 share_key = ability_cls.share_scope(
                     object_config=object,
                     role_type=role_type,
+                    controller=controller,
                 )
             registry_key = (
                 f"{ability_name}@{share_key}" if share_key else ability_name

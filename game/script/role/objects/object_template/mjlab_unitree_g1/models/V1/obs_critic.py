@@ -3,8 +3,8 @@
 This module lives inside the ``mjlab_unitree_g1`` object template so that the
 robot-specific critic observation (policy obs + foot-state extras) is defined
 next to the robot itself instead of inside a level. Levels discover it through
-``CriticObsProviderRegistry`` and degrade to the symmetric critic when the
-robot has no registered provider.
+``CriticObsRegistry`` and degrade to the symmetric critic when the
+robot has no registered ``obs_critic``.
 """
 
 from __future__ import annotations
@@ -48,13 +48,13 @@ def compute_foot_critic_obs_kernel(
         idx += 1
 
 
-class G1FootCriticObsProvider:
+class G1FootCriticObs:
     """Asymmetric critic observation for Unitree G1 (policy obs + foot extras).
 
     The critic sees the same policy observation plus foot-state extras
     (foot_height, foot_air_time, foot_contact, foot_contact_forces per foot).
     Contact buffers are filled each policy step by ``FootContactSensor``;
-    this provider only packs them into the critic observation.
+    this module only packs them into the critic observation.
     """
 
     def __init__(
@@ -130,5 +130,5 @@ class G1FootCriticObsProvider:
         return self.critic_obs_torch
 
 
-def create_obs_critic(**kwargs) -> G1FootCriticObsProvider:
-    return G1FootCriticObsProvider(**kwargs)
+def create_obs_critic(**kwargs) -> G1FootCriticObs:
+    return G1FootCriticObs(**kwargs)

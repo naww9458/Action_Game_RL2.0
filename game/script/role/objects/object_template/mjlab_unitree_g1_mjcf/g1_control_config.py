@@ -30,7 +30,11 @@ from .g1_actuator_model import (
 )
 
 TEMPLATE_DIR = Path(__file__).resolve().parent
-G1_ROBOT_NAME = "unitree_g1"
+# Distinct from USD ``mjlab_unitree_g1`` (pattern ``unitree_g1``) so both
+# templates can register loaders / policy bundles without overwriting.
+G1_ROBOT_NAME = "unitree_g1_mjcf"
+# Nested key inside models/<version>/control_configs.yaml (shared G1 layout).
+G1_CONTROL_CONFIG_KEY = "unitree_g1"
 G1_DEFAULT_TASK = "velocity_locomotion"
 
 _TASK_CONFIG_CACHE: Dict[Tuple[str, str, str], "G1TaskConfig"] = {}
@@ -152,7 +156,7 @@ def _control_configs_path(version_dir: Path) -> Path:
 
 def _parse_task_mapping(raw: Dict[str, Any], *, task_name: str, path: Path) -> Dict[str, Any]:
     """Read ``unitree_g1.<task>`` (and robot-level ``foot_sensor``) from control_configs.yaml."""
-    robot_cfg = raw.get(G1_ROBOT_NAME, {})
+    robot_cfg = raw.get(G1_CONTROL_CONFIG_KEY, {})
     if isinstance(robot_cfg, dict):
         nested = robot_cfg.get(task_name)
         if isinstance(nested, dict):

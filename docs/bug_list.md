@@ -12,3 +12,5 @@
 10. 核心 ``MjcfModel``（``game/script/role/objects/mjcf.py``）把 ``file_name`` / ``file_path_or_source`` 默認成 G1 的 ``g1.xml`` 路徑，違反隔離原則（核心 loader 不應綁定具體物件）。``UsdModel`` 已用空字符串默認。尚未決定如何與 ``object_template`` 裏的 MJCF 資源聲明兼容（Pydantic 字段默認 vs 模板 YAML 覆蓋）。
 11. Unitree G1 平地行走訓練測試問題：
     穩定性不足，雖然能根據指令完成行走/轉向等動作但抖動幅度較大
+
+12. Articulation_body_control_rl_assisted 中的 self._default_has_target 更多代表的是任務目標/類型，但目前沒想好怎麽改

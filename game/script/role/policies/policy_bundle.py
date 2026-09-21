@@ -6,6 +6,7 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, Callable, Dict, Optional, Tuple, TYPE_CHECKING
 import importlib
+import tempfile
 
 import torch
 import yaml
@@ -34,6 +35,8 @@ class PolicyBundleSpec:
     description: str = ""
     command_labels: Tuple[str, ...] = ()
     command_ranges: Tuple[Tuple[float, float], ...] = ()
+    default_command: Tuple[float, ...] = ()
+    default_has_target: Optional[bool] = None
     human_control: Dict[str, Any] = field(default_factory=dict)
     articulation_ability: Dict[str, Any] = field(default_factory=dict)
     obs_dim: Optional[int] = None
@@ -108,6 +111,17 @@ def _spec_from_version_yaml(
 
     if commands.get("dim") is None:
         raise ValueError(f"Missing required field 'commands.dim' in {config_path}")
+    command_dim = int(commands["dim"])
+    default_cmd = dict(commands.get("default") or {})
+    default_values = tuple(float(v) for v in (default_cmd.get("values") or ()))
+    if default_values and len(default_values) != command_dim:
+        raise ValueError(
+            f"{config_path}: commands.default.values must have "
+            f"{command_dim} entries (got {len(default_values)})"
+        )
+    default_has_target = default_cmd.get("has_target")
+    if default_has_target is not None:
+        default_has_target = bool(default_has_target)
 
     return PolicyBundleSpec(
         bundle_id=version_id,
@@ -117,7 +131,7 @@ def _spec_from_version_yaml(
         obs_actor=_require_str(
             observation, "obs_actor", context=f"{config_path}::observation"
         ),
-        command_dim=int(commands["dim"]),
+        command_dim=command_dim,
         default_checkpoint=_require_str(
             policy, "default_checkpoint", context=f"{config_path}::policy"
         ),
@@ -125,6 +139,8 @@ def _spec_from_version_yaml(
         description=str(policy_data.get("description", "")),
         command_labels=tuple(str(label) for label in (commands.get("labels") or ())),
         command_ranges=_parse_command_ranges(commands.get("ranges")),
+        default_command=default_values,
+        default_has_target=default_has_target,
         human_control=dict(commands.get("human_control") or {}),
         articulation_ability=dict(policy_data.get("articulation_ability") or {}),
         obs_dim=int(observation["obs_dim"]) if observation.get("obs_dim") is not None else None,
@@ -149,6 +165,14 @@ class PolicyBundleRegistry:
         )
 
         key = (normalize_robot_pattern(spec.robot_pattern), spec.bundle_id)
+        existing = cls._bundles.get(key)
+        if existing is not None and existing.config_dir != spec.config_dir:
+            raise ValueError(
+                f"Control policy '{spec.bundle_id}' for robot '{spec.robot_pattern}' "
+                f"already registered from {existing.config_dir}; refusing "
+                f"{spec.config_dir}. Each object template must use a unique "
+                "object.pattern / robot_pattern."
+            )
         cls._bundles[key] = spec
 
     @classmethod
@@ -242,9 +266,9 @@ class PolicyBundleRegistry:
         critic_id = spec.obs_critic
         if not critic_id:
             return
-        from script.role.policies.critic_obs_provider import CriticObsProviderRegistry
+        from script.role.policies.critic_obs import CriticObsRegistry
 
-        if CriticObsProviderRegistry.is_registered(critic_id):
+        if CriticObsRegistry.is_registered(critic_id):
             return
         module = cls._import_version_py(spec, "obs_critic")
         if module is None:
@@ -257,7 +281,7 @@ class PolicyBundleRegistry:
             raise AttributeError(
                 f"{spec.config_dir / 'obs_critic.py'} must export create_obs_critic"
             )
-        CriticObsProviderRegistry.register(critic_id, factory)
+        CriticObsRegistry.register(critic_id, factory)
 
     @classmethod
     def _find_spec(
@@ -394,6 +418,36 @@ def resolve_checkpoint_path(
     )
 
 
+def _maybe_expand_checkpoint_path(
+    checkpoint_path: Path,
+    *,
+    bundle_spec: Optional[PolicyBundleSpec],
+    expected_obs_dim: Optional[int],
+) -> Path:
+    """TryGet a version-local ``checkpoint_expand`` plugin; return the path to load."""
+    if bundle_spec is None:
+        return checkpoint_path
+    expander = PolicyBundleRegistry.import_version_module(bundle_spec, "checkpoint_expand")
+    expand_fn = getattr(expander, "expand_if_needed", None) if expander is not None else None
+    if not callable(expand_fn):
+        return checkpoint_path
+    loaded = torch.load(str(checkpoint_path), map_location="cpu", weights_only=False)
+    target_actor = expected_obs_dim
+    if target_actor is None:
+        cfg_fn = getattr(expander, "expand_cfg", None)
+        if callable(cfg_fn):
+            target_actor = int(cfg_fn()["target_actor_dim"])
+        else:
+            return checkpoint_path
+    expanded, did_expand = expand_fn(loaded, target_actor_dim=int(target_actor))
+    if not did_expand:
+        return checkpoint_path
+    tmp = tempfile.NamedTemporaryFile(prefix="policy_expand_", suffix=".pt", delete=False)
+    tmp.close()
+    torch.save(expanded, tmp.name)
+    return Path(tmp.name)
+
+
 class PolicyRunner:
     """Loads a mjlab-compatible checkpoint once and runs batched inference."""
 
@@ -404,6 +458,7 @@ class PolicyRunner:
         device: str,
         expected_obs_dim: Optional[int] = None,
         expected_action_dim: Optional[int] = None,
+        bundle_spec: Optional[PolicyBundleSpec] = None,
     ) -> None:
         from rl_framework.skrl_script.policy_PPO_g1_velocity import (
             Policy,
@@ -412,12 +467,17 @@ class PolicyRunner:
         )
 
         self.device = torch.device(device)
+        load_path = _maybe_expand_checkpoint_path(
+            checkpoint_path,
+            bundle_spec=bundle_spec,
+            expected_obs_dim=expected_obs_dim,
+        )
         self.checkpoint_path = checkpoint_path
-        self.dims = infer_dims_from_mjlab_checkpoint(str(checkpoint_path), map_location=self.device)
+        self.dims = infer_dims_from_mjlab_checkpoint(str(load_path), map_location=self.device)
 
         if expected_obs_dim is not None and self.dims.actor_obs_dim != expected_obs_dim:
             raise ValueError(
-                f"Checkpoint obs dim {self.dims.actor_obs_dim} != provider obs dim {expected_obs_dim}"
+                f"Checkpoint obs dim {self.dims.actor_obs_dim} != obs actor dim {expected_obs_dim}"
             )
         if expected_action_dim is not None and self.dims.action_dim != expected_action_dim:
             raise ValueError(
@@ -445,7 +505,7 @@ class PolicyRunner:
             str(self.device),
             hidden_dims=self.dims.hidden_dims,
         )
-        load_mjlab_checkpoint(str(checkpoint_path), policy=self.policy, strict=True)
+        load_mjlab_checkpoint(str(load_path), policy=self.policy, strict=True)
         self.policy.to(self.device)
         self.policy.eval()
 
@@ -479,4 +539,5 @@ def load_policy_runner(
         device=device,
         expected_obs_dim=expected_obs_dim,
         expected_action_dim=expected_action_dim,
+        bundle_spec=spec,
     )
